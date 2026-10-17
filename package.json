@@ -1,0 +1,29 @@
+{
+  "name": "civitai-collection-downloader",
+  "version": "1.0.0",
+  "description": "批量下载 Civitai 收藏集/模型列表中的全部文件，支持断点续传与 SHA256 校验",
+  "main": "cli.js",
+  "bin": {
+    "civitai-dl": "cli.js"
+  },
+  "scripts": {
+    "login": "node cli.js login",
+    "list": "node cli.js list",
+    "download": "node cli.js download"
+  },
+  "keywords": [
+    "civitai",
+    "collection",
+    "downloader",
+    "lora"
+  ],
+  "license": "MIT",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "devalue": "^6.0.3",
+    "puppeteer-core": "^25.14.0"
+  }
+}

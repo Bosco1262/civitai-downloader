@@ -1,0 +1,8 @@
+{
+  "site": "https://civitai.red",
+  "outDir": "downloads",
+  "profileDir": ".data/chrome-profile",
+  "chromePath": "",
+  "debugPort": 9222,
+  "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36"
+}
