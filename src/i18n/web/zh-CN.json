@@ -309,5 +309,5 @@
   "web.bannerUrl": "打开 {url}",
   "web.bannerConfig": "配置文件：{file}",
   "web.bannerStop": "按 Ctrl+C 停止服务",
-  "web.usage": "civitai-downloader Web UI\n\n用法:\n  node web.js [选项]\n\n选项:\n  -p, --port <端口>    监听端口（默认 4310；被占用时自动顺延尝试）\n      --host <地址>    监听地址（默认 127.0.0.1，只允许本机访问）\n      --no-open        启动后不自动打开浏览器\n      --lang <语言>    界面语言 zh-CN / en\n  -h, --help           显示本帮助\n\nTUI 与命令行仍然可用: npm run ui / node cli.js <命令>"
+  "web.usage": "civitai-downloader Web UI\n\n用法:\n  npm run webui                    启动本界面（等价于 node web.js）\n  node web.js [选项]               直接启动，下面的选项都可用\n\n选项:\n  -p, --port <端口>    监听端口（默认 4310；被占用时自动顺延尝试）\n      --host <地址>    监听地址（默认 127.0.0.1，只允许本机访问）\n      --no-open        启动后不自动打开浏览器\n      --lang <语言>    界面语言 zh-CN / en\n  -h, --help           显示本帮助\n\nTUI 与命令行仍然可用: npm run tui / node cli.js <命令>"
 }

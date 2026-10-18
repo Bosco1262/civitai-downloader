@@ -5,16 +5,17 @@
  * then optionally download what changed.
  *
  * The collection list is the same interactive picker used everywhere else, so long snapshot lists
- * can be searched and scrolled instead of being printed as a wall of text.
+ * can be searched and scrolled instead of being printed as a wall of text. The check itself is also
+ * reachable from the page of one collection (`checkCollectionsFlow`), which is why the two halves are
+ * separate functions.
  *
  *
  * 「按收藏集检查更新」的 TUI 流程：选收藏集（或全部）→ 快速/深度 → 可选下载变化项。
  *
- * 收藏集列表用的也是全局同一套交互选择器，快照很多时可以搜索与滚动，
- * 而不是直接糊一屏文字。
+ * 收藏集列表用的也是全局同一套交互选择器，快照很多时可以搜索与滚动，而不是直接糊一屏文字。
+ * 检查本身也能从某个收藏集的页面直接发起（`checkCollectionsFlow`），因此这两半是分开的函数。
  */
 
-const prompts = require('prompts');
 const { formatBytes } = require('../util');
 const { checkUpdates, reportLines, changedItems, markForRedownload, summarize } = require('../updater');
 const { listCollectionIds, readCollection } = require('../storage');
@@ -81,20 +82,29 @@ async function askCollectionId(config, message) {
   return manual === null ? null : String(manual).trim();
 }
 
-async function checkFlow(config) {
-  const picked = await askCollectionId(config, t('tui.check.pickCollection'));
-  if (!picked) return;
-  const ids = Array.isArray(picked) ? picked : [picked];
+/**
+ * Check the given collections and offer to download what changed.
+ * 检查给定的收藏集，并询问是否下载变化项。
+ *
+ * @param {string[]} ids collection ids to check
+ */
+async function checkCollectionsFlow(config, ids) {
+  const targets = (Array.isArray(ids) ? ids : [ids]).map(String).filter(Boolean);
+  if (!targets.length) return;
 
-  const mode = await pages.promptMenu(t('tui.check.modeTitle'), [
-    { title: t('tui.check.modeQuick'), value: 'quick', description: t('tui.check.modeQuickDesc') },
-    { title: t('tui.check.modeDeep'), value: 'deep', description: t('tui.check.modeDeepDesc') },
-  ]);
+  const mode = await pages.promptMenu(
+    t('tui.check.modeTitle'),
+    [
+      { title: t('tui.check.modeQuick'), value: 'quick', description: t('tui.check.modeQuickDesc') },
+      { title: t('tui.check.modeDeep'), value: 'deep', description: t('tui.check.modeDeepDesc') },
+    ],
+    { stage: t('tui.app.menuCheck') }
+  );
   if (mode === null) return;
 
   const reports = [];
-  for (const id of ids) {
-    if (ids.length > 1) view.log(t('tui.check.collectionHeader', { id }));
+  for (const id of targets) {
+    if (targets.length > 1) view.log(t('tui.check.collectionHeader', { id }));
     const { report } = await checkUpdates(
       config,
       id,
@@ -138,6 +148,7 @@ async function checkFlow(config) {
     );
     const summary = await runWithProgress(config, {
       collectionId: report.collectionId,
+      name: t('tui.check.collectionLabel', { id: report.collectionId }),
       plan: items,
       outDir: config.outDir,
       force: false,
@@ -153,4 +164,14 @@ async function checkFlow(config) {
   if (failed) view.log(view.colors.red(t('tui.check.failedNotice')));
 }
 
-module.exports = { checkFlow, askCollectionId };
+/**
+ * Standalone entry: ask which collections, then run the check.
+ * 独立入口：先问要检查哪些收藏集，再执行检查。
+ */
+async function checkFlow(config) {
+  const picked = await askCollectionId(config, t('tui.check.pickCollection'));
+  if (!picked) return;
+  return checkCollectionsFlow(config, Array.isArray(picked) ? picked : [picked]);
+}
+
+module.exports = { checkFlow, checkCollectionsFlow, askCollectionId };

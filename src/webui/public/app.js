@@ -2299,8 +2299,8 @@ async function renderHelp() {
       null,
       h('p', { class: 'small muted', text: t('web.help.cliHint') }),
       h('pre', { class: 'job-log', style: { maxHeight: '40vh' } }, [
-        'node web.js                         # this web UI',
-        'npm run ui                          # terminal UI (still available)',
+        'npm run webui                       # this web UI (node web.js)',
+        'npm run tui                         # terminal UI (still available)',
         'node cli.js list <id>               # enumerate a collection',
         'node cli.js download <id>           # download a collection',
         'node cli.js models                  # model library',

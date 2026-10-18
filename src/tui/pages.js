@@ -1,41 +1,40 @@
 'use strict';
 
 /**
- * Shared interaction primitives of the TUI: menus, confirmations, the help page, the pager and the
+ * Shared interaction primitives of the TUI: menus, confirmations, text fields, the help page and the
  * list pickers.
  *
- * Why a module: every flow used to hand-build its own `prompts` calls, so key hints, cancel
- * semantics and pickers drifted apart (some flows answered Esc with the initial value, some
- * pickers were plain two-line prompts). All flows now go through here:
+ * Two rendering paths live here, and both answer the same way:
  *
- *  - `promptMenu` / `promptConfirm` / `promptText` add a consistent key hint and one cancel rule:
- *    Esc always returns null, so a caller can tell "cancelled" from a real answer;
- *  - `pickOne` / `pickMany` use the full-screen picker under a TTY and fall back to the plain
- *    prompts list without one (CI, redirection, dumb terminals);
- *  - `showHelp` renders the key reference, which is reachable from the main menu and from inside
- *    the picker;
- *  - `describeFacts` renders the "field: value" block used by the detail pages.
+ *  - with the app shell active (a real terminal) every primitive renders *inside* the frame, so the
+ *    header, the configured-settings panel and the task view stay visible while the user answers;
+ *  - without one (no TTY, CI, CIVITAI_PLAIN) they fall back to the `prompts` library, which keeps
+ *    scripted runs, tests and redirected output working exactly as before.
+ *
+ * One cancel rule everywhere: Esc returns null, so a caller can tell "cancelled" from a real answer.
  *
  *
- * TUI 的公共交互基元：菜单、确认框、帮助页、分页器与列表选择器。
+ * TUI 的公共交互基元：菜单、确认框、文本输入、帮助页与列表选择器。
  *
- * 独立成模块的原因：此前每个流程各自拼 `prompts` 调用，按键提示、取消语义与选择器风格
- * 逐渐分裂（有的流程里 Esc 会返回初始值，有的选择器只是两行提示）。现在统一走这里：
+ * 这里存在两条渲染路径，但答案完全一致：
  *
- *  - `promptMenu` / `promptConfirm` / `promptText` 统一补上按键提示，并统一取消规则：
- *    Esc 一定返回 null，调用方据此区分「取消」与「真实答案」；
- *  - `pickOne` / `pickMany` 在 TTY 下用全屏选择器，非 TTY 回退到 prompts 列表
- *    （CI、重定向、哑终端）；
- *  - `showHelp` 渲染按键速查，主菜单与选择器内部都能打开；
- *  - `describeFacts` 渲染详情页的「字段: 值」区块。
+ *  - 应用外壳接管时（真实终端），所有基元都渲染在框架「内部」，
+ *    用户作答时页眉、已设置信息面板与任务视图始终可见；
+ *  - 没有外壳时（非 TTY、CI、CIVITAI_PLAIN）回退到 `prompts` 库，
+ *    脚本化运行、测试与重定向输出与以前完全一致。
+ *
+ * 取消规则全局统一：Esc 返回 null，调用方据此区分「取消」与「真实答案」。
  */
 
 const fs = require('fs');
 const { t } = require('../i18n');
+const layout = require('./layout');
 const view = require('./view');
-const { displayWidth } = view;
+const screen = require('./screen');
+const { isTextInput, installRawKeys } = require('./keys');
 const { selectItems, isInteractive } = require('./select');
-const { installRawKeys } = require('./keys');
+
+const { colors, displayWidth, truncateTo, padTo } = layout;
 
 /**
  * Resolve the prompts module on first use instead of at load time.
@@ -55,21 +54,19 @@ function promptLib() {
 }
 
 /**
- * Lazily resolved key-hint lines (the language may change after this module is loaded).
- * 惰性取词的按键提示行（语言可能在本模块加载之后切换）。
+ * Global key hint of the plain (non-shell) path; the shell prints it in the header instead.
+ * 简易（无外壳）路径的全局按键提示；启用外壳时由页眉显示。
  */
-const HINT_KEYS = ['tui.pages.hintMove', 'tui.pages.hintCancel'];
-
 function hintLines() {
-  return HINT_KEYS.map((key) => t(key));
+  return [t('tui.screen.headerHint')];
 }
 
 /**
- * One-line key hint appended to every prompt message: how to move/confirm and how to cancel.
- * 追加在每个提示语后面的一行按键说明：如何移动/确认、如何取消。
+ * One-line key hint appended to every plain prompt message.
+ * 追加在每个简易提问提示语后面的按键说明行。
  */
 function hint() {
-  return view.colors.dim(`\n${hintLines().join(view.separator())}`);
+  return colors.dim(`\n${hintLines().join(view.separator())}`);
 }
 
 /**
@@ -89,19 +86,239 @@ function packageVersion() {
 }
 
 // ---------------------------------------------------------------------------
-// Prompts wrappers
-// 提示封装
+// Shared body pieces
+// 主体公共片段
 // ---------------------------------------------------------------------------
 
 /**
- * Read the answer of a prompt.
+ * Heading of a body: the message in bold plus a rule as long as the text (capped to the width).
+ * 主体的标题：加粗的消息，加一条与文字等长（不超过宽度）的分隔线。
+ */
+function heading(text, width) {
+  const value = String(text === undefined || text === null ? '' : text);
+  const ruleWidth = Math.max(0, Math.min(displayWidth(value) + 2, Math.floor(width) - 2));
+  return [colors.bold(value), ruleWidth > 0 ? colors.dim(layout.glyphs().boxH.repeat(ruleWidth)) : ''];
+}
+
+/**
+ * Scroll window of a list: which slice to draw and where the cursor sits inside it.
+ * 列表的滚动视窗：画哪一段，以及光标在段内的位置。
+ *
+ * @returns {{start:number, end:number, cursor:number}}
+ */
+function windowOf(count, cursor, size) {
+  const total = Math.max(0, count);
+  const room = Math.max(1, Math.floor(size));
+  const clamped = Math.max(0, Math.min(total - 1, Number(cursor) || 0));
+  let start = 0;
+  if (clamped >= room) start = Math.min(clamped - room + 1, Math.max(0, total - room));
+  return { start, end: Math.min(total, start + room), cursor: clamped };
+}
+
+/**
+ * One "cursor + title + description" row, used by every in-body list.
+ * 一行「光标 + 标题 + 说明」，供所有主体列表共用。
+ */
+function rowLine(label, description, opts = {}) {
+  const width = Math.max(20, Math.floor(opts.width) || 80);
+  const cursor = opts.cursor ? colors.cyan(layout.glyphs().cursor) : ' ';
+  const title = opts.cursor ? colors.bold(label) : label;
+  const desc = opts.description === false || !description ? '' : String(description);
+  if (!desc) return `${cursor} ${title}`;
+  const labelWidth = Math.min(Math.max(12, Math.floor(opts.labelWidth) || displayWidth(label)), Math.floor(width * 0.55));
+  const room = width - 2 - labelWidth - 3;
+  if (room < 8) return `${cursor} ${title}`;
+  return `${cursor} ${padTo(truncateTo(title, labelWidth), labelWidth)}   ${colors.dim(truncateTo(desc, room))}`;
+}
+
+// ---------------------------------------------------------------------------
+// Prompts (shell path)
+// 提问（外壳路径）
+// ---------------------------------------------------------------------------
+
+/**
+ * Single-choice menu rendered inside the shell body.
+ * 渲染在外壳主体里的单选菜单。
+ */
+function shellMenu(message, choices, options) {
+  const items = choices.map((choice) => ({
+    label: String(choice.title),
+    value: choice.value,
+    description: choice.description === undefined ? '' : String(choice.description),
+  }));
+  const initial = Number.isFinite(options.initial) ? Math.max(0, Math.min(items.length - 1, options.initial)) : 0;
+  const labelWidth = items.reduce((max, item) => Math.max(max, displayWidth(item.label)), 0);
+
+  return screen.prompt({
+    title: options.stage || '',
+    crumb: !!options.stage,
+    initialState: { cursor: initial },
+    hints: () => [t('tui.pages.hintMenu')],
+    render(state, ctx) {
+      const lines = heading(message, ctx.width);
+      lines.push('');
+      const room = Math.max(1, ctx.rows - lines.length);
+      const win = windowOf(items.length, state.cursor, room);
+      items.slice(win.start, win.end).forEach((item, index) => {
+        lines.push(
+          rowLine(item.label, item.description, {
+            cursor: win.start + index === win.cursor,
+            labelWidth,
+            width: ctx.width,
+          })
+        );
+      });
+      if (win.end - win.start < items.length) {
+        lines.push(colors.dim(t('tui.pages.listPosition', { index: win.cursor + 1, total: items.length })));
+      }
+      return lines;
+    },
+    onKey(text, key, entry) {
+      const state = entry.state;
+      if (key.name === 'up' || text === 'k') state.cursor = Math.max(0, state.cursor - 1);
+      else if (key.name === 'down' || text === 'j') state.cursor = Math.min(items.length - 1, state.cursor + 1);
+      else if (key.name === 'home') state.cursor = 0;
+      else if (key.name === 'end') state.cursor = items.length - 1;
+      else if (key.name === 'pageup') state.cursor = Math.max(0, state.cursor - 10);
+      else if (key.name === 'pagedown') state.cursor = Math.min(items.length - 1, state.cursor + 10);
+      else if (key.name === 'return') entry.settle(items[state.cursor] ? items[state.cursor].value : null);
+      else if (/^[1-9]$/.test(text) && Number(text) <= items.length) entry.settle(items[Number(text) - 1].value);
+      else return;
+      entry.state = state;
+    },
+  });
+}
+
+/**
+ * Yes/no confirmation rendered inside the shell body.
+ * 渲染在外壳主体里的确认框。
+ */
+function shellConfirm(message, options) {
+  const initial = options.initial === undefined ? !options.danger : !!options.initial;
+  const items = [
+    { label: t('common.yes'), value: true },
+    { label: t('common.no'), value: false },
+  ];
+  return screen.prompt({
+    title: options.stage || '',
+    crumb: !!options.stage,
+    initialState: { cursor: initial ? 0 : 1 },
+    hints: () => [t('tui.pages.hintConfirm')],
+    render(state, ctx) {
+      const lines = heading(options.danger ? colors.yellow(message) : message, ctx.width);
+      lines.push('');
+      items.forEach((item, index) => {
+        lines.push(rowLine(item.label, '', { cursor: index === state.cursor, width: ctx.width }));
+      });
+      return lines;
+    },
+    onKey(text, key, entry) {
+      const state = entry.state;
+      if (key.name === 'left' || key.name === 'right' || text === 'h' || text === 'l') {
+        state.cursor = state.cursor === 0 ? 1 : 0;
+      } else if (text === 'y' || text === 'Y') entry.settle(true);
+      else if (text === 'n' || text === 'N') entry.settle(false);
+      else if (key.name === 'return') entry.settle(state.cursor === 0);
+      else return;
+      entry.state = state;
+    },
+  });
+}
+
+/**
+ * Single-line text field rendered inside the shell body.
+ * 渲染在外壳主体里的单行文本输入框。
+ */
+function shellText(message, options) {
+  const initial = options.initial === undefined || options.initial === null ? '' : String(options.initial);
+  return screen.prompt({
+    title: options.stage || '',
+    crumb: !!options.stage,
+    acceptsText: true,
+    initialState: { value: initial, cursor: initial.length, error: '' },
+    hints: () => [t('tui.pages.hintText')],
+    render(state, ctx) {
+      const lines = heading(message, ctx.width);
+      lines.push('');
+      // The field is as wide as the answer needs and never wider than the frame: a path or a URL is
+      // readable without the box stretching across the whole terminal.
+      //
+      // 输入框宽度跟随答案长度，且不超过框架：路径或 URL 读起来舒服，框也不会横跨整个终端。
+      const wanted = Math.max(displayWidth(state.value) + 6, 36);
+      const inner = Math.max(10, Math.min(ctx.width - 4, wanted));
+      const gl = layout.glyphs();
+      // The cursor is drawn as reverse video on the character it sits on (a space at the end), which
+      // every terminal renders and which survives a hidden hardware cursor.
+      //
+      // 光标以反显画在它所在的那个字符上（在末尾时是一个空格），所有终端都支持，
+      // 并且在硬件光标被隐藏时依然可见。
+      const before = state.value.slice(0, state.cursor);
+      const at = state.value.slice(state.cursor, state.cursor + 1) || ' ';
+      const after = state.value.slice(state.cursor + 1);
+      const visible = before.slice(-inner);
+      const shown = `${visible}${colors.reverse(at)}${after}`;
+      lines.push(colors.dim(`${gl.boxTL}${gl.boxH.repeat(inner + 2)}${gl.boxTR}`));
+      lines.push(`${gl.boxV} ${padTo(truncateTo(shown, inner), inner)} ${gl.boxV}`);
+      lines.push(colors.dim(`${gl.boxBL}${gl.boxH.repeat(inner + 2)}${gl.boxBR}`));
+      if (state.error) lines.push('', colors.red(` ${state.error}`));
+      return lines;
+    },
+    onKey(text, key, entry) {
+      const state = entry.state;
+      const value = state.value;
+      if (key.name === 'return') {
+        const answer = options.trim === false ? value : value.trim();
+        if (typeof options.validate === 'function') {
+          const result = options.validate(answer);
+          if (result !== true) {
+            state.error = String(result === false || result === undefined ? t('tui.pages.invalidValue') : result);
+            entry.state = state;
+            return;
+          }
+        }
+        entry.settle(answer);
+        return;
+      }
+      if (key.name === 'left') state.cursor = Math.max(0, state.cursor - 1);
+      else if (key.name === 'right') state.cursor = Math.min(value.length, state.cursor + 1);
+      else if (key.name === 'home') state.cursor = 0;
+      else if (key.name === 'end') state.cursor = value.length;
+      else if (key.ctrl && key.name === 'u') {
+        state.value = '';
+        state.cursor = 0;
+      } else if (key.name === 'backspace') {
+        if (state.cursor > 0) {
+          state.value = value.slice(0, state.cursor - 1) + value.slice(state.cursor);
+          state.cursor -= 1;
+        }
+      } else if (key.name === 'delete') {
+        state.value = value.slice(0, state.cursor) + value.slice(state.cursor + 1);
+      } else if (isTextInput(text, key)) {
+        state.value = value.slice(0, state.cursor) + text + value.slice(state.cursor);
+        state.cursor += text.length;
+      } else {
+        return;
+      }
+      state.error = '';
+      entry.state = state;
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Prompts (public API)
+// 提问（对外接口）
+// ---------------------------------------------------------------------------
+
+/**
+ * Read the answer of a plain (non-shell) prompt.
  *
  * Normally the answer object only carries the requested field (`value` for a menu, `ok` for a
  * confirmation). The extra field names keep scripted/legacy answers working, where the caller
  * supplied a flow-specific key such as `action` or `modelId`.
  *
  *
- * 读取一次提问的答案。
+ * 读取一次简易（无外壳）提问的答案。
  *
  * 正常情况下答案对象只有一个字段（菜单是 `value`，确认是 `ok`）。
  * 额外接受若干个旧字段名，便于脚本化/历史答案继续可用（例如 `action`、`modelId`）。
@@ -141,27 +358,31 @@ function answerId(value) {
 /**
  * Single-choice menu.
  *
- * Returns the chosen value, or null when the user cancelled (Esc / Ctrl+C) — never the initial
- * value, so an accidental Esc can no longer be mistaken for a choice.
+ * Returns the chosen value, or null when the user cancelled (Esc) — never the initial value, so an
+ * accidental Esc can no longer be mistaken for a choice.
  *
  *
  * 单选菜单。
  *
- * 返回选中的值；用户取消（Esc / Ctrl+C）时返回 null，绝不会返回初始值，
+ * 返回选中的值；用户取消（Esc）时返回 null，绝不会返回初始值，
  * 因此误按 Esc 不会再被当成一次选择。
  *
  * @param {string} message
  * @param {Array<{title:string, value:any, description?:string}>} choices
- * @param {{initial?:number, hint?:boolean, name?:string}} [options]
+ * @param {{initial?:number, hint?:boolean, name?:string, stage?:string}} [options]
  * @returns {Promise<any|null>}
  */
 async function promptMenu(message, choices, options = {}) {
+  const list = Array.isArray(choices) ? choices.filter(Boolean) : [];
+  if (!list.length) return null;
+  if (screen.isActive()) return shellMenu(message, list, options);
+
   const name = options.name || 'value';
   const ans = await promptLib()({
     type: 'select',
     name,
     message: options.hint === false ? message : `${message}${hint()}`,
-    choices,
+    choices: list,
     initial: Number.isFinite(options.initial) ? options.initial : 0,
   });
   const answer = answerValue(
@@ -183,15 +404,17 @@ async function promptMenu(message, choices, options = {}) {
  * `danger` 用于有破坏性的默认值：高亮项变成「否」，避免直接回车就删文件。
  *
  * @param {string} message
- * @param {{initial?:boolean, danger?:boolean}} [options]
+ * @param {{initial?:boolean, danger?:boolean, stage?:string}} [options]
  * @returns {Promise<boolean|null>}
  */
 async function promptConfirm(message, options = {}) {
+  if (screen.isActive()) return shellConfirm(message, options);
+
   const initial = options.initial === undefined ? !options.danger : !!options.initial;
   const ans = await promptLib()({
     type: 'confirm',
     name: 'ok',
-    message: `${options.danger ? view.colors.yellow(message) : message}${hint()}`,
+    message: `${options.danger ? colors.yellow(message) : message}${hint()}`,
     initial,
   });
   const answer = answerValue(ans, ['ok', 'value', 'confirm', 'go', 'force', 'deep', 'files', 'open', 'pin']);
@@ -203,6 +426,8 @@ async function promptConfirm(message, options = {}) {
  * 文本输入（带校验）。返回去掉首尾空白后的字符串；取消时返回 null。
  */
 async function promptText(message, options = {}) {
+  if (screen.isActive()) return shellText(message, options);
+
   const ans = await promptLib()({
     type: 'text',
     name: 'text',
@@ -247,14 +472,14 @@ function canPick() {
  *
  * Launcher or network phases can take tens of seconds with nothing to print, which looks exactly
  * like a frozen TUI. This prints the phase once, then a "still waiting (Ns)" line every interval so
- * the screen keeps moving and the user knows Ctrl+C is the way out.
+ * the screen keeps moving and the user knows Esc is the way out.
  *
  *
  * 执行耗时任务时告诉用户「还在动」。
  *
  * 启动浏览器、等网络这类阶段可能几十秒没有任何输出，看起来就像界面卡死。
  * 这里先打印一次阶段说明，之后每隔一段时间补一行「仍在等待（Ns）」，
- * 让屏幕保持有变化，也提示用户按 Ctrl+C 可以退出。
+ * 让屏幕保持有变化，也提示用户按 Esc 可以退出。
  *
  * @param {string} message already translated phase description
  * @param {() => Promise<any>} fn
@@ -266,9 +491,9 @@ async function withSpinner(message, fn, opts = {}) {
   const tick =
     typeof opts.onTick === 'function'
       ? opts.onTick
-      : () => console.log(view.colors.dim(`  ${t('tui.pages.stillWorking', { seconds: elapsedSeconds(started) })}`));
+      : () => view.note(colors.dim(`  ${t('tui.pages.stillWorking', { seconds: elapsedSeconds(started) })}`));
 
-  console.log(view.colors.dim(`  ${message}`));
+  view.note(colors.dim(`  ${message}`));
   const timer = setInterval(() => {
     try {
       tick();
@@ -451,10 +676,10 @@ function describeFacts(facts) {
   if (!rows.length) return [];
   const width = rows.reduce((max, f) => Math.max(max, displayWidth(String(f.label))), 0);
   return rows.map((f) => {
-    const label = view.padTo(String(f.label), width);
+    const label = padTo(String(f.label), width);
     const value = String(f.value);
     const paint = typeof f.color === 'function' ? f.color : (s) => s;
-    return `  ${view.colors.dim(label)}  ${paint(value)}`;
+    return `  ${colors.dim(label)}  ${paint(value)}`;
   });
 }
 
@@ -463,9 +688,9 @@ function describeFacts(facts) {
  * 打印带标题的信息块：标题行 + 缩进正文。
  */
 function printBlock(title, lines) {
-  console.log('');
-  console.log(view.colors.bold(`  ${title}`));
-  for (const line of lines) console.log(`  ${line}`);
+  view.note('');
+  view.note(colors.bold(`  ${title}`));
+  for (const line of lines) view.note(`  ${line}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -483,24 +708,31 @@ const HELP_SECTIONS = [
     items: [
       ['↑/↓ · k/j', 'tui.help.generalMove'],
       ['Home/End', 'tui.help.generalFirstLast'],
-      ['PgUp/PgDn · [ ]', 'tui.help.generalPage'],
+      ['PgUp/PgDn', 'tui.help.generalPage'],
+      ['Enter', 'tui.help.generalConfirm'],
+      ['Esc', 'tui.help.generalBack'],
+      ['Tab', 'tui.help.generalTasks'],
+      ['Ctrl+C', 'tui.help.generalQuit'],
+      ['?', 'tui.help.generalHelp'],
+    ],
+  },
+  {
+    titleKey: 'tui.help.sectionList',
+    items: [
       ['/', 'tui.help.generalSearch'],
       ['t / b', 'tui.help.generalFilter'],
       ['s', 'tui.help.generalSort'],
       ['Space', 'tui.help.generalToggle'],
       ['a / i', 'tui.help.generalAllInvert'],
       ['1-9', 'tui.help.generalQuickSelect'],
-      ['Enter', 'tui.help.generalConfirm'],
-      ['Esc / q', 'tui.help.generalBack'],
-      ['Ctrl+C', 'tui.help.generalQuit'],
-      ['?', 'tui.help.generalHelp'],
     ],
   },
   {
     titleKey: 'tui.help.sectionDownload',
     items: [
       ['s', 'tui.help.runSkip'],
-      ['Ctrl+C', 'tui.help.runCancel'],
+      ['Esc', 'tui.help.runCancel'],
+      ['c', 'tui.help.generalCancelTask'],
     ],
   },
 ];
@@ -520,47 +752,59 @@ function helpLines(opts = {}) {
     (max, section) => Math.max(max, ...section.items.map(([keys]) => displayWidth(keys))),
     0
   );
-  const inner = width - 2;
   const lines = [];
   const top = `${g.boxH.repeat(2)} ${t('tui.help.title')} `;
-  lines.push(`  ${view.truncateTo(top + g.boxH.repeat(Math.max(0, width - displayWidth(top))), width)}`);
+  lines.push(`  ${truncateTo(top + g.boxH.repeat(Math.max(0, width - displayWidth(top))), width)}`);
 
   const version = opts.version === undefined ? packageVersion() : opts.version;
   const subtitle = version ? t('tui.help.version', { version }) : '';
-  if (subtitle) lines.push(`  ${view.colors.dim(view.truncateTo(`  ${subtitle}`, width))}`);
+  if (subtitle) lines.push(`  ${colors.dim(truncateTo(`  ${subtitle}`, width))}`);
 
   for (const section of HELP_SECTIONS) {
-    lines.push(`  ${view.colors.bold(view.truncateTo(`  ${t(section.titleKey)}`, width))}`);
+    lines.push(`  ${colors.bold(truncateTo(`  ${t(section.titleKey)}`, width))}`);
     for (const [keys, descKey] of section.items) {
-      const key = view.padTo(keys, keyWidth);
-      lines.push(`  ${view.truncateTo(`    ${view.colors.cyan(key)}  ${t(descKey)}`, width)}`);
+      const key = padTo(keys, keyWidth);
+      lines.push(`  ${truncateTo(`    ${colors.cyan(key)}  ${t(descKey)}`, width)}`);
     }
   }
 
   const footer = `  ${t('tui.help.footer')}`;
-  lines.push(`  ${view.colors.dim(view.truncateTo(footer, width))}`);
+  lines.push(`  ${colors.dim(truncateTo(footer, width))}`);
   // Keep the visual frame balanced: one blank line above and below the body.
   // 让视觉边框上下对称：正文前后各留一个空行。
   return ['', ...lines, ''];
 }
 
 /**
- * Show the help page and wait for a key when possible.
+ * Show the help page.
  *
- * Under a TTY it takes over the screen (alternate buffer), so closing it brings the menu back
- * untouched instead of leaving twenty lines of key reference in the scrollback. Any key closes it
- * (Ctrl+C still exits the app); without a TTY it is printed and returned immediately, which keeps
- * logs and CI output readable.
+ * With the shell active it is a modal inside the frame, so the menu comes back untouched; without
+ * one it takes over the alternate buffer, and without a TTY it is simply printed.
  *
  *
- * 显示帮助页，并在可用时等待一次按键。
+ * 显示帮助页。
  *
- * TTY 下它会接管屏幕（备用缓冲区），因此关闭后菜单原样回来，而不会在回滚缓冲里留下二十行按键说明。
- * 任意键关闭（Ctrl+C 仍会退出程序）；非 TTY 下直接打印返回，保证日志与 CI 输出可读。
+ * 外壳接管时它是框架内的模态，关闭后菜单原样回来；没有外壳时接管备用缓冲区；
+ * 非 TTY 下则直接打印。
  *
  * @param {{onQuit?:() => void, stream?:NodeJS.ReadStream, out?:NodeJS.WriteStream}} [opts]
  */
 async function showHelp(opts = {}) {
+  if (screen.isActive()) {
+    await screen.prompt({
+      title: t('tui.help.shortTitle'),
+      acceptText: true,
+      hints: () => [t('tui.help.footer')],
+      render(state, ctx) {
+        return helpLines({ columns: ctx.width }).map((line) => line.replace(/^ {2}/, ''));
+      },
+      onKey(text, key, entry) {
+        entry.settle(null);
+      },
+    });
+    return;
+  }
+
   const out = opts.out || process.stdout;
   const stdin = opts.stream || process.stdin;
   const interactive = !!(stdin && stdin.isTTY) && !process.env.CIVITAI_PLAIN;
@@ -624,6 +868,9 @@ async function askRedownload(count) {
 module.exports = {
   hint,
   hintLines,
+  heading,
+  windowOf,
+  rowLine,
   packageVersion,
   promptMenu,
   promptConfirm,

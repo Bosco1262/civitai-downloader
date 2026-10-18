@@ -26,6 +26,7 @@ const { runDownloadJob } = require('../job');
 const { cancelCurrentDownload } = require('../downloader');
 const { t } = require('../i18n');
 const view = require('./view');
+const tasks = require('./tasks');
 const { installRawKeys } = require('./keys');
 
 function itemDir(outDir, item) {
@@ -169,6 +170,23 @@ function buildPanel(state) {
  */
 function installKeyHandler(handlers) {
   const onSkip = handlers && typeof handlers.onSkip === 'function' ? handlers.onSkip : () => {};
+  // Inside the app shell the shell owns the keyboard: a second raw-mode listener would fight it for
+  // the same keypresses (and switching raw mode off on restore would mute the whole UI), so the skip
+  // key is registered as a hook instead. Outside the shell the raw listener is the only way.
+  //
+  // 应用外壳里键盘归外壳所有：再装一个原始模式监听会与它抢同一批按键
+  // （还原时还会关掉原始模式，让整个界面失去输入），因此跳过键改为登记成钩子。
+  // 没有外壳时，原始监听是唯一可行的方式。
+  if (screen.isActive()) {
+    screen.setKeyHook((text) => {
+      if (text === 's' || text === 'S') {
+        onSkip();
+        return true;
+      }
+      return false;
+    });
+    return () => screen.setKeyHook(null);
+  }
   return installRawKeys({
     onKey: (text) => {
       if (text === 's' || text === 'S') onSkip();
@@ -181,10 +199,39 @@ function installKeyHandler(handlers) {
   });
 }
 
+/**
+ * Watch a download job run and report its progress everywhere the TUI can show it.
+ *
+ * Progress goes to two places at once: the legacy three-line status block of the plain path (CI,
+ * redirected runs) and the task registry of the app shell, which renders it in the info panel and in
+ * the task view behind Tab.
+ *
+ *
+ * 观察下载任务的运行，并把进度汇报到 TUI 所有能显示它的地方。
+ *
+ * 进度同时送往两处：简易路径的传统三行状态块（CI、重定向运行），以及应用外壳的任务表——
+ * 后者把它渲染在信息面板与 Tab 打开的任务视图里。
+ *
+ * @param {object} config
+ * @param {{plan:Array, outDir:string, totalBytes:number, name?:string, collectionId?:string}} opts
+ * @returns {Promise<any>}
+ */
 async function runWithProgress(config, opts) {
   const { plan, outDir, totalBytes } = opts;
   const entries = buildFileEntries(outDir, plan);
   const itemTotal = plan.filter((p) => !p.error && !p.skipped).length;
+  // Human label of the run: the collection (or model) name the flows pass in, then the collection id,
+  // then an empty label. The flows start passing `name` later, so the option stays optional.
+  //
+  // 这次运行的人读标签：优先各流程传入的收藏集（或模型）名，其次收藏集 ID，最后留空。
+  // 各流程稍后才会传 `name`，因此该选项保持可选。
+  const taskName = String(opts.name || opts.collectionId || '');
+  // Register the run in the task registry: the shell shows it in the info panel while it lasts and in
+  // the task view afterwards. Without the shell the registry is inert.
+  //
+  // 把这次运行登记到任务表：外壳在运行期间把它显示在信息面板里，结束后仍留在任务视图里。
+  // 没有外壳时任务表不起作用。
+  const taskId = tasks.createTask({ kind: 'download', name: taskName, total: itemTotal, totalBytes });
 
   const started = Date.now();
   let okCount = 0;
@@ -205,9 +252,18 @@ async function runWithProgress(config, opts) {
     return sum;
   };
 
-  const render = () => {
-    const width = Math.max(40, process.stdout.columns || 100);
-    const done = sumBytes();
+  /**
+   * One measurement of the run: bytes on disk, the rate-based ETA, and the file being fetched.
+   *
+   * Both consumers read the same numbers, so the legacy status block, the info panel and the task view
+   * can never disagree about what is going on.
+   *
+   *
+   * 一次运行测量：磁盘上的字节数、按速率推算的剩余时间，以及正在下载的文件。
+   *
+   * 两个消费者读的是同一组数字，传统状态块、信息面板与任务视图因此不会互相矛盾。
+   */
+  const snapshot = (done) => {
     const remaining = Math.max(0, totalBytes - done);
     const elapsedMs = Date.now() - started;
     // ETA mixes the byte rate with the per-item overhead, so a long queue with many small items does
@@ -219,25 +275,38 @@ async function runWithProgress(config, opts) {
     const overhead = finishedItems > 0 ? elapsedMs / finishedItems : 0;
     const pending = Math.max(0, itemTotal - finishedItems - (currentItem ? 1 : 0));
     const etaMs = rate > 0 ? remaining / rate + pending * overhead : 0;
-    const eta = rate > 1024 ? view.formatDuration(etaMs / 1000) : '--';
+    return {
+      bytes: done,
+      eta: rate > 1024 ? view.formatDuration(etaMs / 1000) : '--',
+      elapsed: view.formatDuration(elapsedMs / 1000),
+      model: currentItem ? currentItem.name : '',
+      file: current ? current.name : '',
+      fileBytes: current ? fileSize(current.entry) : 0,
+      fileExpected: current ? current.entry.expected : 0,
+    };
+  };
+
+  const render = () => {
+    const width = Math.max(40, process.stdout.columns || 100);
+    const state = snapshot(sumBytes());
     const summary = buildSummaryLine({
       done: okCount,
       skipped: skipCount,
       failed: failCount,
       total: itemTotal,
-      bytes: done,
+      bytes: state.bytes,
       expected: totalBytes,
       speed,
-      eta,
-      elapsed: view.formatDuration(elapsedMs / 1000),
+      eta: state.eta,
+      elapsed: state.elapsed,
       width,
     });
     const currentLine = buildCurrentLine({
       width,
-      model: currentItem ? currentItem.name : '',
-      file: current ? current.name : '',
-      bytes: current ? fileSize(current.entry) : 0,
-      expected: current ? current.entry.expected : 0,
+      model: state.model,
+      file: state.file,
+      bytes: state.fileBytes,
+      expected: state.fileExpected,
       attempt: attemptInfo,
     });
     return `${summary}\n${currentLine}\n${buildKeysLine()}`;
@@ -252,18 +321,54 @@ async function runWithProgress(config, opts) {
       if (inst >= 0) speed = speed > 0 ? speed * 0.6 + inst * 0.4 : inst;
       lastSample = { t: now, bytes };
     }
+    const state = snapshot(bytes);
+    // The model goes to `scope` (the info panel reads "collection · model") and the model plus the file
+    // to `detail`, which is what the task view prints under the progress line.
+    //
+    // 模型放进 `scope`（信息面板由此显示「收藏集 · 模型」），模型加文件放进 `detail`，
+    // 也就是任务视图在进度行下面打印的内容。
+    tasks.updateTask(taskId, {
+      bytes: state.bytes,
+      speed,
+      eta: state.eta,
+      done: okCount,
+      skipped: skipCount,
+      failed: failCount,
+      scope: state.model,
+      detail: [state.model, state.file].filter(Boolean).join(view.separator()),
+    });
     view.redrawStatus();
   }, 700);
 
-  view.setCancelHandler(() => {
+  /**
+   * Cancel the run: the first press stops the current download, a second one force-quits.
+   *
+   * Esc (through `view.setCancelHandler`) and the task view's `c` key (through the registry) both end
+   * up here, so there is exactly one cancel path.
+   *
+   *
+   * 取消本次运行：第一次停止当前下载，再按一次强制退出。
+   *
+   * Esc（经由 `view.setCancelHandler`）与任务视图的 `c` 键（经由任务表）都走到这里，取消路径只有一条。
+   */
+  const cancelRun = () => {
     if (cancelling) {
-      console.log('');
-      process.exit(130);
+      // Asking twice is not an error: the first request already stopped the transfer, and a forced
+      // process exit is left to Ctrl+C (which the app shell handles).
+      //
+      // 再按一次不算错误：第一次请求已经停下载，强制退出进程交给 Ctrl+C（由应用外壳处理）。
+      view.note(t('tui.run.cancelPending'));
+      return;
     }
     cancelling = true;
     view.log(t('tui.run.cancelNotice'));
     cancelCurrentDownload();
-  });
+  };
+
+  view.setCancelHandler(cancelRun);
+  // The task view's `c` key asks the registry, which forwards to the very same handler.
+  // 任务视图的 `c` 键询问任务表，任务表把它转给同一个回调。
+  tasks.setTaskCancel(taskId, cancelRun);
   const restoreKeys =
     installKeyHandler({
       onSkip: () => {
@@ -320,6 +425,27 @@ async function runWithProgress(config, opts) {
     clearInterval(timer);
     restoreKeys();
     view.setCancelHandler(null);
+    // Final numbers: the run is over, but the task view keeps showing it and the last timer tick may be
+    // almost a second old.
+    //
+    // 收尾数字：运行已经结束，但任务视图仍会显示它，而最后一次定时刷新可能已经过去近一秒。
+    tasks.updateTask(taskId, {
+      bytes: sumBytes(),
+      speed: 0,
+      eta: '',
+      done: okCount,
+      skipped: skipCount,
+      failed: failCount,
+      detail: '',
+    });
+    // A finished task must not stay cancellable: a stale handler would cancel whatever runs next.
+    // 已结束的任务不能还留着取消回调：残留的回调会取消下一次运行。
+    tasks.setTaskCancel(taskId, null);
+    // Cancelled wins over failed: the user asked for it, and the failed count usually also contains the
+    // item that was interrupted.
+    //
+    // 「取消」优先于「失败」：那是用户要求的，而失败计数里通常还包含被打断的那一项。
+    tasks.finishTask(taskId, cancelling ? tasks.CANCELLED : failCount > 0 ? tasks.FAILED : tasks.DONE);
     view.endStatus();
     if (failedNames.length) {
       view.log(

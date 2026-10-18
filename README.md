@@ -10,8 +10,8 @@ Download every model file in a [Civitai](https://civitai.com) collection in bulk
 
 ## Features
 
-- **Web UI** (`npm run web`, or `node web.js`): a local browser interface that covers the same ground as the terminal UI — dashboard, collection enumeration with a filterable pick list, per-model version switching, live progress with logs, model library with version pinning, update checks, verification/repair, settings editor, browser login and an environment check. Dependency-free (Node's own `http` server + vanilla JavaScript, no build step) and bound to `127.0.0.1` by default
-- **Terminal UI** (`npm run ui`): menu-driven operations — login, filtering/picking collection entries to download, live progress bars and logs, completion-state management, version pinning, local verify and repair, environment check, settings editor. No commands to memorize
+- **Web UI** (`npm run webui`, or `node web.js`): a local browser interface that covers the same ground as the terminal UI — dashboard, collection enumeration with a filterable pick list, per-model version switching, live progress with logs, model library with version pinning, update checks, verification/repair, settings editor, browser login and an environment check. Dependency-free (Node's own `http` server + vanilla JavaScript, no build step) and bound to `127.0.0.1` by default
+- **Terminal UI** (`npm run tui`): menu-driven operations — login, filtering/picking collection entries to download, live progress bars and logs, completion-state management, version pinning, local verify and repair, environment check, settings editor. No commands to memorize
 - Enumerate collection entries in one go (automatic paging, dedup and merge, rate limiting)
 - Automatically fetch each model's latest version and its primary Model file's: file name / size / SHA256 / direct download URL
 - **Version selection and pinning**: for models with several versions you can choose which one to download — pick them one by one in the TUI (pinning along the way), or override with `--version <modelId=versionId>` on the CLI; the `pin` command **pins** a version so a newer release on the site can never overwrite it
@@ -81,8 +81,11 @@ npm run doctor                          # recommended as a first check
 ### 0a. Web UI (recommended)
 
 ```powershell
-npm run web
+npm run webui
 ```
+
+> The start commands were renamed: `npm run web` is now **`npm run webui`**, and `npm run ui` is now
+> **`npm run tui`**. Both UIs are kept; they share the same config, session and library.
 
 This starts a local server (default <http://127.0.0.1:4310/>) and opens the browser. The server is
 dependency-free (Node's own `http` module plus one page of vanilla JavaScript — nothing to build),
@@ -113,39 +116,69 @@ Pages:
   probe the saved session
 - **Help**: every workflow and its CLI equivalent
 
-Options:
+Options (with npm, pass arguments after `--`):
 
 ```powershell
-node web.js --port 4310 --host 127.0.0.1   # the defaults
-node web.js --no-open                      # do not open a browser
-node web.js --lang en                      # interface language for this run
+npm run webui                              # defaults: 127.0.0.1:4310
+npm run webui -- --port 5000 --no-open     # custom port, do not open a browser
+
+node web.js --port 4310 --host 127.0.0.1   # same options when started directly
+node web.js --no-open
+node web.js --lang en
 node web.js --help
 ```
 
-> The TUI (`npm run ui`) and the CLI stay available: all three share the same configuration and
+> The TUI (`npm run tui`) and the CLI stay available: all three share the same configuration and
 > library, so they can be mixed freely. The web UI prints its events over SSE and keeps one job at a
 > time, which is what makes the terminal and browser views agree on what is running.
 
 ### 0b. Terminal UI
 
 ```powershell
-npm run ui
+npm run tui
 ```
 
-Menu items:
+The terminal UI is a full-screen app rather than a scrolling log: the screen is cleared once at start-up and the same frame stays on screen afterwards.
 
-- **Download a collection**: enter a collection ID/URL → entries are enumerated automatically with their sizes → **filter and tick them in a full-screen list** (search / by type / by base model / sort) → choose a version strategy (all latest / pick one by one, pinning as you go) → **one confirmation screen** shows the plan and lets you change the output directory, the concurrency and how already-finished items are handled → live progress panel + logs → open the download folder directly when it finishes
-- **Model library**: download single models (paste references, or **pick them from the library**), **browse** one model with its versions, folders and pin state, list the library (optionally filtered by collection membership), check updates, verify/repair, pin/unpin and delete records
-- **Check for updates**: pick a collection snapshot (or all, or one from a searchable list) → choose a fast or deep check → print the report → download only the changed items after confirmation
-- **Verify / repair local files**: verify the library against the files on disk (optionally with deep SHA256 checks) and re-download only the broken/missing ones in one go
-- **Login / refresh login**: walk through the login flow, or just check whether the current session is still valid
-- **Collection members and changes**: show a snapshot's enumeration time and its added/removed/version-changed members, and reset a model for re-download
-- **Settings**: the current values are shown as a summary; open one group (basics / downloads / network / notifications), and every change is listed for review before anything is written to `config.json`
-- **Environment check**: check the runtime environment in one go
-- **Help / shortcuts**: the key reference (also available with `?` inside any list)
-- **Open the download directory**
+```
+  civitai-downloader
+  ↑↓ Select · Enter Select/Confirm · Tab Task view · Esc Cancel/Quit · Ctrl+C Quit
 
-Controls: `↑↓` move, `space` toggles, `enter` confirms, `Esc` goes back one level (in the main menu it quits), `Ctrl+C` cancels the current operation — press it twice in the main menu to exit; during a download `Ctrl+C` cancels safely (already downloaded parts are kept and can be resumed) and `s` skips the current model.
+  ┌── Dashboard ─────────────────────────────────────────────────┐
+  │ Current settings                                             │
+  │ Site          https://civitai.com                            │
+  │ Session       exported (log in again if it reports expired)  │
+  │ Download dir  D:\downloads                                   │
+  │ Concurrency   3                                              │
+  │                                                              │
+  │ Current tasks                                                │
+  │ Collection 12345 · Model A  ███████░░░░░░░░░ 42.5%           │
+  └──────────────────────────────────────────────────────────────┘
+
+  Main menu
+
+  ▸ Download                  Download models or collections: paste a link / ID, tick the items
+    Local model management    Manage local files per model: update, verify, pin, delete records
+    Local collection management  Manage per collection: check, re-download, reset members
+    Settings                  Login, download directory, concurrency, proxy and every option
+    Exit
+
+  Enter opens · Tab task view · Esc quits
+```
+
+The fixed part of the screen: the project name on the first line, the global key hint below it, the **dashboard** in the middle — "Current settings" (site, session, download directory, concurrency), a blank line, then "Current tasks" (the model or collection being downloaded, with a bar and a percentage) — the current screen below that (breadcrumb, content, log pane) and the key hints of that screen at the bottom. The wording follows the configured language; the sample above is the English one.
+
+The main menu has exactly five entries:
+
+- **Download**: one entry point for models and collections. "Download models" accepts model links, `model:<ID>` and `version:<ID>` (several per line or comma separated); "Download a collection" enumerates the items → **filter and tick them in a full-screen list** (search / by type / by base model / sort) → choose a version strategy → **one confirmation screen** for the output directory, the concurrency and how already-finished items are handled
+- **Local model management**: the list of locally known models (Enter opens one), and that model's page holds **everything that concerns this one model** — check for updates, verify/repair its files, download another version, pin/unpin a version, open its folder, delete its record. The library-wide "check every model" and "verify every file" passes sit next to the list
+- **Local collection management**: the list of collections (members, enumeration time, changes); opening one gives **check for updates** (quick/deep), **re-download**, **reset the members for re-download**, and the membership/change report
+- **Settings**: one page listing **every option** (site, download directory, browser, language, concurrency, retries, file types, engine, dedup, rate limit, proxy, User-Agent, notifications) with its current value; Enter edits the selected row, `s` (or the "save" row) writes it, and **Esc goes back without saving**. Login, "open the download directory" and the environment check live here too
+- **Exit**
+
+Keys: `↑↓` move, `Enter` selects/confirms and always moves on to the next screen, `Esc` cancels or goes back one level without saving (in the main menu it quits), `Tab` switches to the task view from anywhere (press again to return; `c` cancels the selected task, `x` clears finished ones), `Ctrl+C` quits the program, `?` opens the key reference. While a download runs, `Esc` cancels it (already downloaded parts are kept and can be resumed) and `s` skips the current model.
+
+Keys on the settings page: `↑↓` select, `Enter` edits or runs the row, `s` saves, `Esc` goes back (with a warning when there are unsaved changes). Edited rows are marked with `*`, and every change is listed for review before anything is written.
 
 Keys in the item-selection screen (useful when there are many entries):
 
@@ -159,11 +192,9 @@ Keys in the item-selection screen (useful when there are many entries):
 | `/` | Search (Enter exits and keeps the keyword, `Esc` exits and clears it, backspace is supported) |
 | `t` / `b` / `s` | Cycle the type / base model / sort order (default, name, largest first, smallest first) |
 | `?` | Show the key reference of the screen you are in |
-| `enter` | Confirm (you are warned when nothing is selected); `Esc`/`q`/`Ctrl+C` cancels |
+| `enter` | Confirm (you are warned when nothing is selected); `Esc`/`q` cancels |
 
-The footer of every list only describes the keys that do something right now, and the status line shows the visible row range, the selection and the totals. The same picker drives every "choose one / choose several" step, so there is only one set of keys to learn.
-
-Full-screen pages (the picker, the library browser and the help page) open in the terminal's alternate screen buffer, like `less` or `vim`: when they close, the menu, the list you were reading and the log lines are restored exactly as they were, and only a one-line echo of your decision is left behind. Nothing has to be re-read after leaving a screen.
+The footer of every list only describes the keys that do something right now, and the list carries its own position and totals. The same picker drives every "choose one / choose several" step, so there is only one set of keys to learn.
 
 > In a non-interactive environment (when output is redirected) the tool falls back to the original step-by-step prompts plus a multi-select list; set `CIVITAI_PLAIN=1` to force that mode.
 
@@ -380,8 +411,8 @@ npm run pin    -- --list                         # list every pinned model
 
 ```
 civitai-collection-downloader/
-├─ web.js                   # web UI entry point (npm run web; local server + browser UI)
-├─ ui.js                    # terminal UI entry point (npm run ui)
+├─ web.js                   # web UI entry point (npm run webui; local server + browser UI)
+├─ ui.js                    # terminal UI entry point (npm run tui)
 ├─ cli.js                   # command-line entry point (login / list / download / check / verify / pin / doctor)
 ├─ config.json              # your configuration (ignored by .gitignore)
 ├─ config.example.json      # configuration sample

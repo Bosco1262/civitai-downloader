@@ -5,14 +5,14 @@
  * Web UI entry point.
  *
  * Starts the local server and prints the URL. The browser is opened unless `--no-open` is given;
- * the TUI (`npm run ui`) and the CLI (`node cli.js …`) keep working unchanged — this entry only adds
+ * the TUI (`npm run tui`) and the CLI (`node cli.js …`) keep working unchanged — this entry only adds
  * a third way in, sharing the same config, session and model library.
  *
  *
  * Web UI 入口。
  *
  * 启动本地服务器并打印 URL。除非指定 `--no-open`，否则自动打开浏览器；
- * TUI（`npm run ui`）与命令行（`node cli.js …`）保持不变——这个入口只是第三条路径，
+ * TUI（`npm run tui`）与命令行（`node cli.js …`）保持不变——这个入口只是第三条路径，
  * 与它们共用同一份配置、登录态和模型库。参数说明见 `node web.js --help`。
  */
 

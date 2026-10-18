@@ -1,39 +1,37 @@
 'use strict';
 
+// Output helpers of the TUI.
+//
+// Every line the flows print goes through here, which is what makes the app shell possible: while the
+// shell owns the terminal these helpers append to its log pane instead of writing to the console, so
+// a stray `console.log` can never break the frame. Outside the shell (no TTY, CI, CIVITAI_PLAIN) they
+// keep printing plainly, which is what the tests and redirected runs expect.
+//
+//
+// TUI 的输出辅助。
+//
+// 各流程打印的每一行都经过这里，这正是应用外壳得以成立的原因：外壳接管终端时，
+// 这些辅助会把内容追加到外壳的日志区，而不是直接写控制台，因此一句漏网的 `console.log`
+// 也不会破坏界面。外壳未启用时（非 TTY、CI、CIVITAI_PLAIN）它们照旧直接打印，
+// 这也是测试与重定向运行所期望的行为。
+
 const readline = require('readline');
 const { spawn } = require('child_process');
 const { ts, formatDuration, truncate } = require('../util');
 const { t } = require('../i18n');
-const glyphSet = require('./layout');
+const layout = require('./layout');
+const screen = require('./screen');
 
 const isTTY = !!process.stdout.isTTY;
-const useColor = isTTY && !process.env.NO_COLOR;
 
-function paint(code) {
-  return (s) => (useColor ? `\u001b[${code}m${s}\u001b[0m` : String(s));
-}
-
-const colors = {
-  bold: paint('1'),
-  dim: paint('2'),
-  red: paint('31'),
-  green: paint('32'),
-  yellow: paint('33'),
-  cyan: paint('36'),
-  magenta: paint('35'),
-  // Reverse video is a cursor highlight, not decoration: it stays on even with NO_COLOR, because a
-  // full-screen list without it shows no cursor at all.
-  //
-  // 反显是光标高亮而不是装饰：即使 NO_COLOR 也保留，否则全屏列表根本看不出光标在哪。
-  reverse: (s) => `\u001b[7m${s}\u001b[0m`,
-};
+const colors = layout.colors;
 
 /**
  * Glyph set of the current console (ASCII when it cannot render the box/cursor characters).
  * 当前控制台使用的字符集（画不出光标/制表字符时退回 ASCII）。
  */
 function glyphs() {
-  return glyphSet.glyphs();
+  return layout.glyphs();
 }
 
 /**
@@ -44,9 +42,9 @@ function glyphs() {
  * 非 TTY 时不做任何事。
  */
 function beginFullScreen() {
-  if (!isTTY || process.env.CIVITAI_PLAIN) return false;
+  if (!isTTY || process.env.CIVITAI_PLAIN || screen.isActive()) return false;
   try {
-    process.stdout.write(`${glyphSet.ANSI_ALT_SCREEN_ON}${glyphSet.ANSI_CLEAR}`);
+    process.stdout.write(`${layout.ANSI_ALT_SCREEN_ON}${layout.ANSI_CLEAR}`);
     return true;
   } catch (e) {
     return false;
@@ -58,9 +56,9 @@ function beginFullScreen() {
  * 退出备用屏幕缓冲区，恢复进入前屏幕上的内容。
  */
 function endFullScreen() {
-  if (!isTTY || process.env.CIVITAI_PLAIN) return;
+  if (!isTTY || process.env.CIVITAI_PLAIN || screen.isActive()) return;
   try {
-    process.stdout.write(glyphSet.ANSI_ALT_SCREEN_OFF);
+    process.stdout.write(layout.ANSI_ALT_SCREEN_OFF);
   } catch (e) {
     // Ignore failures when the terminal is gone.
     // 终端已消失时忽略。
@@ -70,22 +68,25 @@ function endFullScreen() {
 /**
  * Decision line printed after a full-screen screen closes.
  *
- * Full-screen screens run in the alternate buffer, so this short line is the only trace they leave:
- * it confirms what happened and reminds the user that the list output is not lost. Without a TTY the
- * plain prompt path is used and nothing is echoed (the prompt library prints its own answer).
+ * Under the shell it becomes a transient notice inside the frame; without one it is echoed to the
+ * console (the plain prompt path prints its own answer there).
  *
  *
  * 全屏界面关闭后打印的决定回显行。
  *
- * 全屏界面跑在备用缓冲区里，这一行是它留下的唯一痕迹：确认刚才做了什么，
- * 并提醒用户列表输出并没有丢。非 TTY 时走的是简易提问路径，不回显（prompts 自己会打印答案）。
+ * 外壳接管时它变成框架内的临时提示；没有外壳时回显到控制台（简易提问路径自己会打印答案）。
  *
  * @param {string} messageKey e.g. `tui.view.decisionPicked`
  * @param {Record<string, any>} [params]
  */
 function decision(messageKey, params) {
+  const text = t(messageKey, params);
+  if (screen.isActive()) {
+    screen.notice(text, colors.cyan);
+    return;
+  }
   if (!isTTY || process.env.CIVITAI_PLAIN) return;
-  console.log(`${colors.cyan(cursorMark(true))} ${t(messageKey, params)}`);
+  console.log(`${colors.cyan(cursorMark(true))} ${text}`);
 }
 
 /**
@@ -113,23 +114,17 @@ function separator() {
   return glyphs().separator;
 }
 
+const displayWidth = layout.displayWidth;
+const truncateTo = layout.truncateTo;
+const padTo = layout.padTo;
+
 let statusRenderer = null;
 let statusRows = 0;
 
 /**
- * Number of terminal columns the string occupies (ANSI escapes are not counted; CJK
- * double-width characters count as 2 columns).
- *
- * 字符串在终端里占用的列数（ANSI 转义不计；CJK 等宽字符算 2 列）
+ * Number of rows a block of text occupies on screen.
+ * 一段文本在屏幕上占用的行数。
  */
-function displayWidth(s) {
-  let w = 0;
-  for (const ch of s.replace(/\u001b\[[0-9;]*m/g, '')) {
-    w += ch.codePointAt(0) >= 0x2e80 ? 2 : 1;
-  }
-  return w;
-}
-
 function countRows(text) {
   const cols = Math.max(20, process.stdout.columns || 120);
   let rows = 0;
@@ -154,14 +149,33 @@ function drawStatus() {
   statusRows = countRows(text);
 }
 
+/**
+ * Repaint the live status block. With the shell active the block lives in the info panel, so this
+ * only asks for a repaint.
+ *
+ * 重绘实时状态块。外壳接管时该内容由信息面板承担，这里只请求一次重绘。
+ */
 function redrawStatus() {
+  if (screen.isActive()) {
+    screen.refresh();
+    return;
+  }
   if (!statusRenderer) return;
   clearStatus();
   drawStatus();
 }
 
+/**
+ * Append one timestamped line to the session log (the shell's log pane when active).
+ * 往会话日志追加一行带时间戳的文本（外壳接管时写入其日志区）。
+ */
 function log(msg) {
-  const line = `[${ts()}] ${msg}`;
+  const text = String(msg);
+  if (screen.isActive()) {
+    for (const line of text.split('\n')) screen.logLine(`[${ts()}] ${line}`);
+    return;
+  }
+  const line = `[${ts()}] ${text}`;
   if (statusRenderer) {
     clearStatus();
     console.log(line);
@@ -171,7 +185,33 @@ function log(msg) {
   }
 }
 
+/**
+ * Append one line without a timestamp: used for pre-formatted blocks (tables, reports) that are
+ * already laid out.
+ *
+ * 追加一行不带时间戳的文本：用于已经排版好的区块（表格、报告）。
+ */
+function note(msg) {
+  const text = String(msg);
+  if (screen.isActive()) {
+    for (const line of text.split('\n')) screen.logLine(line);
+    return;
+  }
+  if (statusRenderer) {
+    clearStatus();
+    console.log(text);
+    drawStatus();
+  } else {
+    console.log(text);
+  }
+}
+
+/**
+ * Live status block of the legacy (non-shell) full-screen path.
+ * 传统（无外壳）全屏路径的实时状态块。
+ */
 function beginStatus(fn) {
+  if (screen.isActive()) return;
   statusRenderer = fn;
   drawStatus();
 }
@@ -184,30 +224,45 @@ function endStatus() {
 
 let cancelHandler = null;
 
+/**
+ * Register the handler that cancels the running task; Esc uses it while a task is running.
+ * 登记取消当前任务的回调；有任务运行时 Esc 会调用它。
+ */
 function setCancelHandler(fn) {
-  cancelHandler = fn;
+  cancelHandler = typeof fn === 'function' ? fn : null;
+  // The shell asks this handler first when Esc is pressed, so a running job wins over "leave screen".
+  // 按下 Esc 时外壳先问这个回调，因此运行中的任务优先于「离开界面」。
+  screen.setEscapeHandler(
+    cancelHandler
+      ? () => {
+          cancelHandler();
+          return true;
+        }
+      : null
+  );
+}
+
+function hasCancelHandler() {
+  return typeof cancelHandler === 'function';
 }
 
 /**
- * Cancel entry point reused by the raw keyboard mode (during downloads).
+ * Cancel entry point shared by Esc and the task view.
  *
  * When a job registered a cancel handler it runs that; otherwise the key is acknowledged and the
- * process is left alone (a stray Ctrl+C must never kill the app while nothing is running — the
- * app-level handler decides whether a second press should quit).
+ * process is left alone.
  *
  *
- * 供原始键盘模式（下载中）复用的取消入口。
+ * Esc 与任务视图共用的取消入口。
  *
- * 有任务注册了取消回调就调用它；否则只提示一下，不动进程
- * （没有任务运行时按到 Ctrl+C 不应该直接退出程序，是否退出由应用层判断）。
+ * 有任务注册了取消回调就调用它；否则只提示一下，不动进程。
  */
 function triggerCancel() {
   if (cancelHandler) {
     cancelHandler();
     return;
   }
-  console.log('');
-  console.log(t('tui.view.nothingToCancel'));
+  note(t('tui.view.nothingToCancel'));
 }
 
 /**
@@ -223,7 +278,7 @@ function triggerCancel() {
 function restoreTerminal() {
   if (!isTTY) return;
   try {
-    process.stdout.write(`${glyphSet.ANSI_SHOW_CURSOR}${glyphSet.ANSI_ALT_SCREEN_OFF}`);
+    process.stdout.write(`${layout.ANSI_SHOW_CURSOR}${layout.ANSI_ALT_SCREEN_OFF}`);
   } catch (e) {
     // The terminal may already be gone.
     // 终端可能已经没了。
@@ -247,62 +302,28 @@ process.once('exit', restoreTerminal);
  * 进度条文本（实心/空心字符随控制台能力降级）。
  */
 function progressBar(pct, width) {
-  const w = Math.max(4, width);
-  const clamped = Math.max(0, Math.min(100, Number.isFinite(pct) ? pct : 0));
-  const filled = Math.round((clamped / 100) * w);
-  const g = glyphs();
-  const bar = g.barFull.repeat(filled) + g.barEmpty.repeat(w - filled);
-  return useColor ? `\u001b[36m${bar}\u001b[0m` : bar;
+  return screen.progressBar(pct, width);
 }
 
 /**
- * Cut text to a display width, appending an ellipsis when something was dropped.
- * Unlike util.truncate this counts CJK characters as two columns.
+ * Screen width used by the panels (clamped to a readable range). With the shell active this is the
+ * width available *inside* the frame, so nested screens line up with the frame.
  *
- * 按显示宽度裁剪文本，被截断时补省略号。
- * 与 util.truncate 的区别：CJK 字符按 2 列计算。
- */
-function truncateTo(text, width) {
-  const s = String(text === undefined || text === null ? '' : text);
-  const w = Math.floor(Number(width));
-  if (!Number.isFinite(w) || w <= 0) return '';
-  if (displayWidth(s) <= w) return s;
-  if (w === 1) return '…';
-  let out = '';
-  let used = 0;
-  for (const ch of s) {
-    const cw = displayWidth(ch);
-    if (used + cw > w - 1) break;
-    out += ch;
-    used += cw;
-  }
-  return `${out}…`;
-}
-
-/**
- * Pad text to a display width (never truncates).
- * 把文本补齐到指定显示宽度（不截断）。
- */
-function padTo(text, width) {
-  const s = String(text === undefined || text === null ? '' : text);
-  const w = displayWidth(s);
-  return w >= width ? s : s + ' '.repeat(width - w);
-}
-
-/**
- * Screen width used by the panels (clamped to a readable range).
- * 面板使用的屏幕宽度（夹在可读区间内）。
+ * 面板使用的屏幕宽度（夹在可读区间内）。外壳接管时返回框架内部的可用宽度，
+ * 使嵌套界面与框架对齐。
  */
 function screenColumns() {
+  if (screen.isActive()) return screen.bodyGeometry().width;
   return Math.max(60, Math.min(process.stdout.columns || 100, 200));
 }
 
 /**
- * Screen height used by the panels.
- * 面板使用的屏幕高度。
+ * Screen height used by the panels (body rows when the shell is active).
+ * 面板使用的屏幕高度（外壳接管时为框架主体的行数）。
  */
 function screenRows() {
-  return Math.max(glyphSet.MIN_ROWS, process.stdout.rows || 30);
+  if (screen.isActive()) return screen.bodyGeometry().bodyRows;
+  return Math.max(layout.MIN_ROWS, process.stdout.rows || 30);
 }
 
 /**
@@ -310,7 +331,7 @@ function screenRows() {
  * 擦除当前行（临时「正在处理…」提示用）。
  */
 function clearLine() {
-  if (!isTTY) return;
+  if (!isTTY || screen.isActive()) return;
   try {
     readline.clearLine(process.stdout, 0);
     readline.cursorTo(process.stdout, 0);
@@ -334,6 +355,34 @@ function bell() {
   }
 }
 
+/**
+ * Run something that prints with `console.log` while the shell owns the screen.
+ *
+ * Command modules (the environment check, for example) were written for the CLI and print directly;
+ * under the shell those lines would land on top of the frame. This routes them into the log pane for
+ * the duration of the call and restores `console.log` afterwards.
+ *
+ *
+ * 在外壳接管屏幕时运行「用 `console.log` 打印」的代码。
+ *
+ * 命令模块（例如环境体检）是为命令行写的，会直接打印；在外壳里这些行会盖在框架上。
+ * 这里在调用期间把它们导入日志区，结束后恢复 `console.log`。
+ *
+ * @template T
+ * @param {() => T|Promise<T>} fn
+ * @returns {Promise<T>}
+ */
+async function captureOutput(fn) {
+  if (!screen.isActive()) return fn();
+  const original = console.log;
+  console.log = (...args) => note(args.map((arg) => String(arg)).join(' '));
+  try {
+    return await fn();
+  } finally {
+    console.log = original;
+  }
+}
+
 function openDir(dir) {
   const cmd = process.platform === 'win32' ? 'explorer.exe' : process.platform === 'darwin' ? 'open' : 'xdg-open';
   try {
@@ -346,6 +395,7 @@ function openDir(dir) {
 
 module.exports = {
   log,
+  note,
   beginStatus,
   endStatus,
   redrawStatus,
@@ -365,9 +415,11 @@ module.exports = {
   decision,
   beginFullScreen,
   endFullScreen,
+  captureOutput,
   openDir,
   bell,
   setCancelHandler,
+  hasCancelHandler,
   triggerCancel,
   restoreTerminal,
   colors,

@@ -7,7 +7,9 @@
  * sortItems, scrollWindow, toggleSelection, selectAll, invertSelection, clampCursor, layoutColumns,
  * buildRowText, renderListLines, buildHeaderLines, hintLines …), and the interactive layer
  * selectItems() drives raw keyboard mode plus the ANSI full-screen redraw and returns null outside a
- * TTY so the caller can fall back to the plain prompt path.
+ * TTY so the caller can fall back to the plain prompt path. With the app shell active the picker
+ * renders inside the shell body instead, so the header, the info panel and the task view stay visible
+ * while the user is picking.
  *
  * 全屏交互式条目选择器。
  *
@@ -15,12 +17,14 @@
  * toggleSelection、selectAll、invertSelection、clampCursor、layoutColumns、buildRowText、
  * renderListLines、buildHeaderLines、hintLines 等）；交互层 selectItems() 负责原始键盘模式与
  * ANSI 全屏重绘，非 TTY 直接返回 null，由调用方回退到 prompts 老路径。
+ * 应用外壳接管时它改为渲染在外壳主体里，挑选条目时页眉、信息面板与任务视图始终可见。
  * 列表以「跟随光标的视窗」滚动（光标不会再跑到绘制区域之外），
  * 页脚只描述当前状态下真正可用的按键，`?` 打开界面内按键速查。 */
 
 const { formatBytes } = require('../util');
 const { t } = require('../i18n');
 const view = require('./view');
+const screen = require('./screen');
 const layout = require('./layout');
 const { installRawKeys, debugLog, isTextInput, isBackspace } = require('./keys');
 
@@ -41,6 +45,15 @@ const CHROME_ROWS = 4;
  * 页脚下方绘制的按键提示行数。
  */
 const HINT_ROWS = 3;
+/**
+ * Rows the hosted picker spends besides its list: title + filters + summary, the column header and the
+ * position footer. Under the shell the frame (header, info panel, log pane, key hints) is already
+ * subtracted from the body, so only this much is left for the picker itself.
+ *
+ * 托管选择器除列表之外占用的行数：标题 + 过滤 + 合计、列头与位置页脚。
+ * 外壳接管时框架（页眉、信息面板、日志区、按键提示）已经从主体里扣掉，只剩这些留给选择器自己。
+ */
+const HOSTED_CHROME_ROWS = 5;
 /**
  * Treat the terminal as at least this many rows (so the list still has a few lines to show).
  * 终端最少按这么多行处理（保证列表至少还有几行可显示）。
@@ -762,27 +775,79 @@ function toSet(value) {
 }
 
 /**
+ * Print the context lines a flow hands over in `opts.onEnter` (the enumeration summary of the download
+ * flow) as the picker opens.
+ *
+ * That callback writes with `console.log`, which would tear the frame apart while the shell owns the
+ * terminal; in hosted mode the console is therefore redirected to the shell log for the duration of the
+ * call and restored afterwards — including when the callback throws.
+ *
+ *
+ * 打开选择器时打印流程通过 `opts.onEnter` 交过来的上下文行（下载流程里的枚举摘要）。
+ *
+ * 该回调用 `console.log` 输出，而外壳接管终端时那会撕坏界面；因此托管模式下在调用期间把控制台
+ * 重定向到外壳日志，调用结束（回调抛错也一样）立即恢复。
+ *
+ * @param {boolean} hosted
+ * @param {(() => void)|undefined} onEnter
+ */
+function emitEnterContext(hosted, onEnter) {
+  if (typeof onEnter !== 'function') return;
+  if (!hosted) {
+    // The standalone picker owns the screen, so whatever the caller prints is exactly what it wants.
+    // 独立选择器占着整屏，调用方自己打印正合它意。
+    try {
+      onEnter();
+    } catch (e) {
+      // Context lines are cosmetic: a failure there must not break the picker.
+      // 上下文行只是锦上添花：打印失败不能拖垮选择器。
+    }
+    return;
+  }
+  const write = console.log;
+  console.log = (...args) => view.note(args.map((value) => str(value)).join(' '));
+  try {
+    onEnter();
+  } catch (e) {
+    // Context lines are cosmetic: a failure there must not break the picker.
+    // 上下文行只是锦上添花：打印失败不能拖垮选择器。
+  } finally {
+    console.log = write;
+  }
+}
+
+/**
  * Full-screen interactive picker (multi-select or single-choice).
  *
  * Items need a modelId (or an id) plus a name; type, baseModel and totalBytes are optional. The
  * accepted options are mode (multi|single), pageSize, initialSelected, title, describe, state,
  * selected, search, type, baseModel, sort, columns, rows, colorize, minHeight, initialCursor, label,
- * idOf, sizeFormatter and onLog — the same fields the flows pass in.
+ * idOf, sizeFormatter and onLog — the same fields the flows pass in. With the app shell active the
+ * picker ignores `columns` / `rows` and renders in the body the shell hands it.
  *
  * 全屏交互式选择器（多选 / 单选）。
  *
  * 条目需要 modelId（或 id）与名称，type、baseModel、totalBytes 可选。
  * 其余可用选项为：mode（multi 或 single）、pageSize、initialSelected、title、describe、state、
  * selected、search、type、baseModel、sort、columns、rows、colorize、minHeight、initialCursor、
- * label、idOf、sizeFormatter、onLog，与各流程传入的字段一致。 */
+ * label、idOf、sizeFormatter、onLog，与各流程传入的字段一致。
+ * 应用外壳接管时选择器忽略 `columns` / `rows`，改按外壳交给它的主体区域渲染。 */
 async function selectItems(items, opts = {}) {
   const list = Array.isArray(items) ? items.filter(Boolean) : [];
-  const onLog = typeof opts.onLog === 'function' ? opts.onLog : () => {};
+  // Under the shell the picker must not touch the terminal: it renders in the body of the frame and the
+  // shell owns the keyboard, so the header, the info panel and the task view survive the picker.
+  //
+  // 外壳接管终端时选择器不能碰终端：它渲染在框架主体里，键盘也由外壳负责，
+  // 页眉、信息面板与任务视图因此不会选择器一起消失。
+  const hosted = screen.isActive();
+  const onLog = typeof opts.onLog === 'function' ? opts.onLog : hosted ? view.log : () => {};
   if (!list.length) {
     onLog(t('tui.select.noItems'));
     return null;
   }
-  if (!isInteractive()) return null; // 非 TTY：交给调用方的回退路径 / not a TTY: leave it to the caller's fallback path
+  // Without the shell the picker needs a TTY of its own; otherwise the caller falls back to prompts.
+  // 没有外壳时选择器需要自己的 TTY；否则由调用方回退到 prompts。
+  if (!hosted && !isInteractive()) return null;
 
   const stdin = process.stdin;
   const stdout = process.stdout;
@@ -839,9 +904,17 @@ async function selectItems(items, opts = {}) {
     message: '',
   };
 
+  // Geometry: the standalone picker sizes itself from the terminal, the hosted one from the box the
+  // shell hands to `render` (ctx.width / ctx.rows, refreshed on every paint). The seed below covers the
+  // moment before the first paint, when a queued keypress may already arrive.
+  //
+  // 几何信息：独立选择器按终端尺寸计算；托管选择器按外壳交给 `render` 的区域
+  // （ctx.width / ctx.rows，每次绘制时刷新）计算。下面的初值用于第一次绘制之前——
+  // 那时可能已经有按键排着队了。
+  const shellBox = hosted ? screen.bodyGeometry() : null;
   const dims = {
-    columns: layout.terminalColumns(opts.columns),
-    rows: layout.terminalRows(opts.rows),
+    columns: shellBox ? Math.max(20, Math.floor(shellBox.width) || 0) : layout.terminalColumns(opts.columns),
+    rows: shellBox ? Math.max(1, Math.floor(shellBox.bodyRows) || 1) : layout.terminalRows(opts.rows),
   };
 
   let finish = () => {};
@@ -859,8 +932,20 @@ async function selectItems(items, opts = {}) {
       st.sort,
       rowOpts
     );
-    const chrome = CHROME_ROWS + HINT_ROWS + (st.searching ? 1 : 0);
-    const size = Math.max(minHeight, Math.min(requestedPageSize, dims.rows - chrome));
+    // Rows the picker spends on everything but the list. Under the shell the frame (header, info panel,
+    // log pane and key hints) is already subtracted from `dims.rows`, so only the picker's own chrome is
+    // left there — and `minHeight` must not push the list past the body, or the shell clips the position
+    // line away.
+    //
+    // 选择器除列表之外占用的行数。外壳接管时页眉、信息面板、日志区与按键提示已经从 `dims.rows` 里
+    // 扣掉，这里只剩选择器自身的框架；此时 `minHeight` 不能把列表顶出主体，否则位置行会被外壳裁掉。
+    const chrome = hosted
+      ? HOSTED_CHROME_ROWS + (st.searching ? 1 : 0)
+      : CHROME_ROWS + HINT_ROWS + (st.searching ? 1 : 0);
+    const room = dims.rows - chrome;
+    const size = hosted
+      ? Math.max(1, Math.min(requestedPageSize, room))
+      : Math.max(minHeight, Math.min(requestedPageSize, room));
     let win = scrollWindow(visible.length, st.cursor, size, st.windowStart);
     // Leaving the last row half-visible looks like a bug: re-run with one row less.
     // 最后一行只露出半截会像渲染出错：少显示一行再算一次。
@@ -892,14 +977,28 @@ async function selectItems(items, opts = {}) {
     return HELP_ITEMS.map((text) => clipToWidth(`  ${text}`, dims.columns));
   }
 
-  function screenText(state) {
+  /**
+   * Body lines of the picker, shared by both paths.
+   *
+   * `standalone` (the default) is the classic full-screen body: it erases the display first and ends
+   * with the key hints. The hosted variant leaves both out — the shell repaints the frame itself and
+   * prints the hints in its footer — but keeps the header, the column header, the list rows and the
+   * position line.
+   *
+   *
+   * 选择器的主体行，两条路径共用。
+   *
+   * `standalone`（默认）是经典整屏主体：先擦除显示，末尾附上按键提示。
+   * 托管变体去掉这两者——外壳自己重绘框架并把提示放在页脚——但保留表头、列头、列表行与位置行。
+   */
+  function screenLines(state, standalone = true) {
     const cursorRow = state.window.cursor - state.window.start;
     // Repaint from the top-left corner: erase the display (keeping the cursor where it is) and draw
     // every line again, which keeps rows in sync after filtering or scrolling.
     //
     // 从左上角整屏重绘：擦除显示内容（光标位置不变）后重新画每一行，
     // 这样过滤或滚动之后各列仍然对齐。
-    const lines = [layout.ansi().eraseDisplay];
+    const lines = standalone ? [layout.ansi().eraseDisplay] : [];
     const header = withNotice(
       buildHeaderLines({
         title: opts.title,
@@ -978,10 +1077,21 @@ async function selectItems(items, opts = {}) {
         )
       )
     );
+    // The shell prints the same hints in its footer, so the hosted body stops before them.
+    // 外壳会在页脚打印同样的提示，因此托管主体到此为止。
+    if (!standalone) return lines;
     for (const hintText of hintLines({ help: st.help, searching: st.searching })) {
       lines.push(view.colors.dim(clipToWidth(hintText, dims.columns)));
     }
-    return lines.join('\n');
+    return lines;
+  }
+
+  /**
+   * Whole standalone body as one string (what the picker writes to the terminal).
+   * 独立主体的完整字符串（选择器写到终端的内容）。
+   */
+  function screenText(state) {
+    return screenLines(state).join('\n');
   }
 
   const write = (text) => {
@@ -996,10 +1106,21 @@ async function selectItems(items, opts = {}) {
 
   function render() {
     rendered = derive();
+    // Under the shell the frame is repainted by the shell itself: the picker only refreshes its derived
+    // state here instead of writing to the terminal.
+    //
+    // 外壳接管时框架由外壳自己重绘：选择器在这里只刷新派生状态，不再往终端写内容。
+    if (hosted) return;
     write(screenText(rendered));
   }
 
-  const visibleList = () => (rendered ? rendered.visible : []);
+  // The derived state of the last paint. A key may arrive before the first paint (both paths install
+  // their keyboard after the first render, but the shell repaints on its own schedule), so the list is
+  // derived on demand when it is still missing.
+  //
+  // 最近一次绘制的派生状态。第一次绘制之前也可能来按键（两条路径都在首次渲染后才装键盘，
+  // 但外壳的重绘有自己的节奏），因此还缺的时候按需推导一次。
+  const visibleList = () => (rendered || derive()).visible;
   const pageSize = () => (rendered ? rendered.pageSize : requestedPageSize);
 
   const moveCursor = (delta) => {
@@ -1210,14 +1331,7 @@ async function selectItems(items, opts = {}) {
     if (screenTaken) return;
     screenTaken = true;
     debugLog(`screen-enter items=${list.length} mode=${single ? 'single' : 'multi'}`);
-    if (typeof opts.onEnter === 'function') {
-      try {
-        opts.onEnter();
-      } catch (e) {
-        // Context lines are cosmetic: a failure there must not break the picker.
-        // 上下文行只是锦上添花：打印失败不能拖垮选择器。
-      }
-    }
+    emitEnterContext(false, opts.onEnter);
     write(layout.ansi().altScreenOn + layout.ansi().clear + layout.ansi().hideCursor);
   }
 
@@ -1262,6 +1376,60 @@ async function selectItems(items, opts = {}) {
     prepareScreen();
     render();
   }
+
+  /**
+   * Hosted picker: the very same state machine, rendered inside the body of the app shell.
+   *
+   * The shell owns the keyboard and the repaint, so this path only describes the body lines, the footer
+   * hints and the key handling. Esc is settled by the shell before `onKey` runs, and `q` cancels here.
+   *
+   *
+   * 托管选择器：同一套状态机，渲染在应用外壳的主体里。
+   *
+   * 键盘与重绘都由外壳负责，因此这条路径只描述主体行、页脚提示与按键处理。
+   * Esc 在外壳调用 `onKey` 之前就已结束提问，`q` 则在这里取消。
+   */
+  function hostedPicker() {
+    emitEnterContext(true, opts.onEnter);
+    return screen.prompt({
+      title: str(opts.title),
+      // The list repeats the title as its own header line, so it does not go into the breadcrumb as
+      // well: the breadcrumb keeps the flow stage ("main menu › download") instead.
+      //
+      // 列表自身会把标题作为表头再画一次，因此不再重复进面包屑：
+      // 面包屑保留流程阶段（「主菜单 › 下载」）。
+      crumb: false,
+      hints: () => hintLines({ help: st.help, searching: st.searching }),
+      render(promptState, ctx) {
+        // The shell hands over exactly the room that is left for the body, so the geometry comes from
+        // there and not from the terminal: header, info panel, log pane and hints are already gone.
+        //
+        // 外壳给出的正是主体剩下的空间，因此几何信息取自它而不是终端：
+        // 页眉、信息面板、日志区与按键提示都已经扣掉了。
+        const box = ctx || {};
+        const columns = Math.floor(Number(box.width));
+        const rows = Math.floor(Number(box.rows));
+        if (Number.isFinite(columns) && columns > 0) dims.columns = Math.max(20, columns);
+        if (Number.isFinite(rows) && rows > 0) dims.rows = rows;
+        rendered = derive();
+        // Never draw more lines than the shell gave us, or the frame is pushed off the terminal.
+        // 绝不画出超过外壳给定行数的内容，否则框架会被挤出终端。
+        return screenLines(rendered, false).slice(0, Math.max(1, dims.rows));
+      },
+      onKey(text, key, entry) {
+        // Every key drives the shared state machine; `finish` settles the shell prompt instead of
+        // resolving the standalone answer promise.
+        //
+        // 所有按键都交给同一套状态机；`finish` 改为结束外壳提问，而不是兑现独立路径的答案 promise。
+        finish = (value) => entry.settle(value);
+        onKeypress(text, key);
+      },
+    });
+  }
+
+  // Under the shell the picker never takes the terminal over: it goes straight into the shell prompt.
+  // 外壳接管时选择器绝不接管终端：直接进入外壳提问。
+  if (hosted) return hostedPicker();
 
   // Wait for the user's decision: confirm and cancel both go through finish(), which fires only once.
   // 等待用户决定：确认 / 取消都走 finish()，只会生效一次

@@ -64,6 +64,7 @@ const LANGUAGE_AT_LOAD = i18n.getLanguage();
  */
 const TUI_FILES = [
   'app.js',
+  'screen.js',
   'view.js',
   'select.js',
   'run.js',
@@ -86,6 +87,7 @@ const TUI_KEYS = Object.keys(zh).filter((key) => key.startsWith('tui.'));
  */
 const TUI_MODULES = new Set([
   'app',
+  'screen',
   'view',
   'select',
   'run',
@@ -107,6 +109,7 @@ const TUI_MODULES = new Set([
  */
 const SAME_IN_BOTH = new Set([
   'tui.app.bannerTitle',
+  'tui.screen.nameSeparator',
   'tui.download.versionDescription',
   'tui.manage.modelIdLabel',
   'tui.manage.brokenLine',
@@ -334,21 +337,15 @@ test('i18n-tui: 滚动视窗 / 单选模式 / 快捷跳行等新增纯逻辑可�
   assert.equal(select.filterItems(rows, { keyword: 'v10' }).length, 1);
 });
 
-test('i18n-tui: 主菜单 / 横幅文案逐字一致且 app.js 已接线', () => {
+test('i18n-tui: 主菜单 / 固定页眉文案逐字一致且 app.js 已接线', () => {
   assert.equal(tr('tui.app.bannerTitle'), 'civitai-downloader');
-  assert.equal(tr('tui.app.bannerHint'), '↑↓ 选择 · 回车确认 · Ctrl+C 取消/退出；下载中按 s 跳过当前模型');
+  assert.equal(tr('tui.screen.headerHint'), '↑↓ 选择 · 回车选中/确认 · Tab切换任务视图 · Esc 取消/退出 · Ctrl+C 退出程序');
   assert.equal(tr('tui.app.menuTitle'), '主菜单');
   const menu = [
-    ['tui.app.menuDownload', '下载收藏集'],
-    ['tui.app.menuModels', '模型库'],
-    ['tui.app.menuCheck', '检查更新'],
-    ['tui.app.menuVerify', '校验 / 修复本地文件'],
-    ['tui.app.menuLogin', '登录 / 更新登录'],
-    ['tui.app.menuManage', '收藏集成员与变化'],
+    ['tui.app.menuDownload', '下载'],
+    ['tui.app.menuModels', '本地模型管理'],
+    ['tui.app.menuCollections', '本地收藏集管理'],
     ['tui.app.menuSettings', '设置'],
-    ['tui.app.menuDoctor', '环境体检'],
-    ['tui.app.menuOpen', '打开下载目录'],
-    ['tui.app.menuHelp', '帮助 / 快捷键'],
     ['tui.app.menuExit', '退出'],
   ];
   for (const [key, value] of menu) assert.equal(tr(key), value, key);
@@ -370,11 +367,56 @@ test('i18n-tui: 主菜单 / 横幅文案逐字一致且 app.js 已接线', () =>
   for (const key of [
     'tui.app.menuTitle',
     'tui.app.menuDownload',
-    'tui.app.menuHelp',
+    'tui.app.menuModels',
+    'tui.app.menuCollections',
+    'tui.app.menuSettings',
+    'tui.app.menuExit',
     'tui.app.contextLine',
     'tui.app.goodbye',
   ]) {
     assert.ok(source.includes(`'${key}'`), `app.js 应引用 ${key}`);
+  }
+  // The five entries are the whole top level: the old single-purpose entries are gone.
+  // 顶层就是这五项：旧的一堆单项入口已移除。
+  assert.equal(app.MAIN_MENU.length, 5);
+  assert.deepEqual(
+    app.MAIN_MENU.map((item) => item.key),
+    ['download', 'models', 'collections', 'settings', 'exit']
+  );
+});
+
+test('i18n-tui: 仪表盘 / 任务视图 / 日志区文案逐字一致', () => {
+  assert.equal(tr('tui.screen.infoTitle'), '仪表盘');
+  assert.equal(tr('tui.screen.infoSettings'), '当前配置');
+  assert.equal(tr('tui.screen.infoTasks'), '当前任务');
+  assert.equal(tr('tui.screen.infoIdle'), '空闲 · 没有进行中的任务');
+  assert.equal(
+    tr('tui.screen.headerHint'),
+    '↑↓ 选择 · 回车选中/确认 · Tab切换任务视图 · Esc 取消/退出 · Ctrl+C 退出程序'
+  );
+  assert.equal(tr('tui.screen.taskTitle'), '任务视图');
+  assert.equal(tr('tui.screen.taskCounts', { done: 2, skipped: 1, failed: 0, total: 9 }), '完成 2 · 跳过 1 · 失败 0 / 共 9 项');
+  assert.equal(tr('tui.screen.taskElapsed', { elapsed: '00:03' }), '已用 00:03');
+  assert.equal(tr('tui.screen.statusRunning'), '进行中');
+  assert.equal(tr('tui.screen.statusDone'), '已完成');
+  assert.equal(tr('tui.screen.statusCancelled'), '已取消');
+  assert.equal(tr('tui.screen.statusFailed'), '失败');
+  assert.equal(tr('tui.screen.logTitle'), '日志');
+  assert.equal(tr('tui.screen.promptFailed', { error: 'boom' }), '界面渲染失败: boom');
+  assert.equal(tr('tui.screen.taskCancelRequested', { name: 'Model A' }), '已请求取消：Model A');
+
+  // The shell is wired to the catalog like every other TUI file
+  // 外壳与其它 TUI 文件一样接入了文案表
+  const source = readTui('screen.js');
+  for (const key of [
+    'tui.screen.headerHint',
+    'tui.screen.infoTitle',
+    'tui.screen.infoSettings',
+    'tui.screen.infoTasks',
+    'tui.screen.taskTitle',
+    'tui.screen.logTitle',
+  ]) {
+    assert.ok(source.includes(`'${key}'`), `screen.js 应引用 ${key}`);
   }
 });
 
@@ -417,20 +459,30 @@ test('i18n-tui: 下载进度面板文案逐字一致', () => {
   assert.equal(tr('tui.run.remaining', { eta: '00:12' }), '剩余 00:12');
   assert.equal(tr('tui.run.elapsed', { elapsed: '00:03' }), '已用 00:03');
   assert.equal(` ${tr('tui.run.retry', { attempt: 2, max: 3, code: 429 })}`, ' [第 2/3 次尝试 HTTP 429]');
-  assert.equal(tr('tui.run.waiting'), '当前 · 等待下一项…（按 s 跳过当前模型，Ctrl+C 取消）');
+  assert.equal(tr('tui.run.waiting'), '当前 · 等待下一项…（按 s 跳过当前模型，Esc 取消）');
   assert.equal(tr('tui.run.fileLabel'), '当前文件');
-  assert.equal(tr('tui.run.cancelNotice'), '收到 Ctrl+C，正在取消（再按一次强制退出）…');
+  assert.equal(tr('tui.run.cancelNotice'), '已请求取消，正在停止下载（已下载部分保留，可续传）…');
+  assert.equal(tr('tui.run.cancelPending'), '正在取消，请稍候…（已下载部分保留，可续传）');
   assert.equal(tr('tui.run.skipNotice'), '收到跳过请求，将跳过当前模型（已下载部分保留）…');
 });
 
 test('i18n-tui: 公共交互基元（按键提示 / 信息块 / 状态栏 / 帮助页）', () => {
   // Every prompt ends with the same two-line key hint
-  // 每个提示后面都跟着同一套两行按键说明
+  // The plain (non-shell) path appends the same global key hint to every prompt
+  //
+  // 简易（无外壳）路径给每个提问追加同一行全局按键提示
   const hints = pages.hintLines();
-  assert.equal(hints.length, 2);
-  assert.equal(hints[0], '↑↓ 选择 · 回车确认 · Esc 取消返回');
-  assert.equal(hints[1], 'Ctrl+C 取消当前操作（主菜单再按一次退出程序）');
+  assert.equal(hints.length, 1);
+  assert.equal(hints[0], '↑↓ 选择 · 回车选中/确认 · Tab切换任务视图 · Esc 取消/退出 · Ctrl+C 退出程序');
   assert.ok(pages.hint().includes('Esc'));
+
+  // The shell renders prompts inside the frame, so each prompt type has its own footer hint
+  // 外壳把提问渲染在框架内，因此每种提问都有自己的页脚提示
+  assert.equal(tr('tui.pages.hintMenu'), '↑↓ 选择 · 回车确认 · Esc 返回');
+  assert.equal(tr('tui.pages.hintConfirm'), '←→ 选择 · y / n 快捷 · 回车确认 · Esc 返回');
+  assert.equal(tr('tui.pages.hintText'), '直接输入 · 回车确认 · Esc 取消');
+  assert.equal(tr('tui.pages.listPosition', { index: 3, total: 12 }), '第 3 / 12 项');
+  assert.equal(tr('tui.app.menuHint'), '回车进入 · Tab 任务视图 · Esc 退出');
 
   // Fact blocks align their label column and skip empty values
   // 信息块的标签列对齐，空值不输出
@@ -456,7 +508,11 @@ test('i18n-tui: 公共交互基元（按键提示 / 信息块 / 状态栏 / 帮�
     const status = app.statusFacts(config);
     assert.ok(status.compact.includes('https://civitai.com'));
     assert.equal(status.facts.length, 4);
-    assert.equal(status.facts[3].value, '未登录');
+    // The panel order is fixed: site, session, directory, concurrency.
+    // 面板顺序固定：站点、登录态、本地目录、并发。
+    assert.equal(status.facts[1].value, '未登录');
+    assert.equal(status.facts[2].value, 'D:\\out');
+    assert.equal(status.facts[3].value, '2');
   });
 
   // Help page: a boxed key reference with the version line, in both languages
@@ -535,7 +591,10 @@ test('i18n-tui: 切到 en 后 TUI 文案为英文、非空且与 zh 不同', () 
     assert.ok(i18n.t('tui.settings.engineCurl').includes('curl'));
     assert.ok(i18n.t('tui.settings.notifyWebhook').includes('Webhook'));
     assert.ok(i18n.t('tui.settings.languageAuto').includes('CIVITAI_LANG'));
-    assert.ok(i18n.t('tui.run.cancelNotice').includes('Ctrl+C'));
+    // Cancelling is Esc's job in the redesigned TUI, and the header says so.
+    // 新版 TUI 里取消由 Esc 负责，页眉也是这么写的。
+    assert.ok(i18n.t('tui.screen.headerHint').includes('Esc'));
+    assert.ok(i18n.t('tui.run.cancelNotice').length > 0);
     // The program name is a brand: it stays the same in both languages.
     // 程序名是品牌名：中英文都保持同一写法。
     assert.equal(i18n.t('tui.app.bannerTitle'), 'civitai-downloader');

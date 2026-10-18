@@ -189,7 +189,7 @@ async function pickItems(plan, state) {
       // as the first line of the takeover.
       //
       // 选择器会接管整屏，之前的枚举摘要会消失：把它作为接管后的第一行打印出来。
-      onEnter: () => console.log(view.colors.dim(`  ${prefilterSummary(available, state)}`)),
+      onEnter: () => view.note(view.colors.dim(`  ${prefilterSummary(available, state)}`)),
     });
     if (!picked) {
       view.decision('tui.view.decisionCancelled');
@@ -339,15 +339,15 @@ async function askOptions(config, selectedPlan, state) {
         [formatBytes(p.totalBytes || 0), mark].filter(Boolean).join(view.separator())
       )}`;
     });
-    console.log('');
-    console.log(
+    view.note('');
+    view.note(
       view.colors.bold(
         `  ${t('tui.download.planTitle', { count: selectedPlan.length, size: formatBytes(selectedBytes) })}`
       )
     );
-    for (const line of lines) console.log(line);
+    for (const line of lines) view.note(line);
     if (selectedPlan.length > lines.length) {
-      console.log(view.colors.dim(`  ${t('tui.download.planMore', { count: selectedPlan.length - lines.length })}`));
+      view.note(view.colors.dim(`  ${t('tui.download.planMore', { count: selectedPlan.length - lines.length })}`));
     }
 
     const choice = await pages.promptMenu(t('tui.download.optionPrompt'), [
@@ -416,15 +416,26 @@ async function askOptions(config, selectedPlan, state) {
   }
 }
 
-async function downloadFlow(config) {
-  const rawId = await pages.promptText(t('tui.download.collectionIdPrompt'), {
-    validate: (v) => (parseCollectionId(v) ? true : t('tui.download.invalidCollectionId')),
-  });
-  if (rawId === null) return;
-  const collectionId = parseCollectionId(rawId);
+/**
+ * Download one collection: enumerate → pick items → pick versions → start.
+ * 下载单个收藏集：枚举 → 勾选条目 → 选版本 → 开始。
+ *
+ * @param {{collectionId?:string|number}} [opts] `collectionId` skips the first question (used when the
+ *   download is started from a collection's own page)
+ */
+async function downloadFlow(config, opts = {}) {
+  let collectionId = opts.collectionId === undefined || opts.collectionId === null ? '' : String(opts.collectionId);
+  if (collectionId) collectionId = parseCollectionId(collectionId) || collectionId;
   if (!collectionId) {
-    view.log(t('tui.download.invalidCollectionId'));
-    return;
+    const rawId = await pages.promptText(t('tui.download.collectionIdPrompt'), {
+      validate: (v) => (parseCollectionId(v) ? true : t('tui.download.invalidCollectionId')),
+    });
+    if (rawId === null) return;
+    collectionId = parseCollectionId(rawId);
+    if (!collectionId) {
+      view.log(t('tui.download.invalidCollectionId'));
+      return;
+    }
   }
 
   const items = await pages.withSpinner(t('tui.download.enumerating', { collectionId }), () =>
@@ -491,6 +502,7 @@ async function downloadFlow(config) {
 
   const summary = await runWithProgress(config, {
     collectionId,
+    name: t('tui.check.collectionLabel', { id: collectionId }),
     plan: selectedPlan,
     outDir: options.outDir,
     force: options.force,

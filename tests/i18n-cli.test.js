@@ -97,9 +97,9 @@ function callUsage(name) {
 // ---------------------------------------------------------------------------
 
 test('i18n-cli: cli.usage 覆盖全部命令与 npm 用法示例', () => {
-  // The npm section of cli.usage lists only these 6 scripts (pin has no npm script; legacy behaviour).
-  // cli.usage 的 npm 段落只列出这 6 个脚本（pin 没有 npm script，属于历史行为）
-  const npmScripts = ['login', 'list', 'download', 'check', 'verify', 'doctor'];
+  // The npm section lists the command scripts plus the two UI entry points (pin has no npm script).
+  // cli.usage 的 npm 段落列出各命令脚本，以及两个界面入口（pin 没有 npm script）。
+  const npmScripts = ['login', 'list', 'download', 'check', 'verify', 'doctor', 'tui', 'webui'];
   for (const lang of ['zh-CN', 'en']) {
     const text = withLanguage(lang, () => i18n.t('cli.usage'));
     assert.ok(text.startsWith('civitai-downloader\n'), `${lang}: 首行应为程序名`);

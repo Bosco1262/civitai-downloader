@@ -309,5 +309,5 @@
   "web.bannerUrl": "Open {url}",
   "web.bannerConfig": "Config file: {file}",
   "web.bannerStop": "Press Ctrl+C to stop the server",
-  "web.usage": "civitai-downloader web UI\n\nUsage:\n  node web.js [options]\n\nOptions:\n  -p, --port <port>    Port to listen on (default 4310; the next free port is tried when taken)\n      --host <address> Bind address (default 127.0.0.1, local access only)\n      --no-open        Do not open the browser after start-up\n      --lang <tag>     UI language: zh-CN / en\n  -h, --help           Show this help\n\nThe TUI and the CLI keep working: npm run ui / node cli.js <command>"
+  "web.usage": "civitai-downloader web UI\n\nUsage:\n  npm run webui                    Start this UI (same as node web.js)\n  node web.js [options]            Start it directly; every option below applies\n\nOptions:\n  -p, --port <port>    Port to listen on (default 4310; the next free port is tried when taken)\n      --host <address> Bind address (default 127.0.0.1, local access only)\n      --no-open        Do not open the browser after start-up\n      --lang <tag>     UI language: zh-CN / en\n  -h, --help           Show this help\n\nThe TUI and the CLI keep working: npm run tui / node cli.js <command>"
 }

@@ -7,8 +7,8 @@
     "civitai-dl": "cli.js"
   },
   "scripts": {
-    "ui": "node ui.js",
-    "web": "node web.js",
+    "tui": "node ui.js",
+    "webui": "node web.js",
     "login": "node cli.js login",
     "list": "node cli.js list",
     "download": "node cli.js download",

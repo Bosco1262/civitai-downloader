@@ -176,7 +176,7 @@ async function pickModel(config, message, opts = {}) {
     state: libraryEntries(config),
     initialCursor: opts.initialCursor,
     onEnter:
-      opts.recap === false ? undefined : () => console.log(view.colors.dim(`  ${librarySummary(rows)}`)),
+      opts.recap === false ? undefined : () => view.note(view.colors.dim(`  ${librarySummary(rows)}`)),
   });
   return chosen ? String(chosen.modelId) : null;
 }
@@ -407,6 +407,7 @@ async function runItems(config, items, outDir, force) {
   for (const item of items) {
     const summary = await runWithProgress(config, {
       collectionId: `model-${item.modelId}`,
+      name: item.name || modelLabel(config, item.modelId),
       plan: [item],
       outDir,
       force,
@@ -423,8 +424,14 @@ async function runItems(config, items, outDir, force) {
   return failed;
 }
 
-async function downloadFlow(config) {
-  const refs = await askRefs(config);
+/**
+ * Download one or more models by reference.
+ * 按引用下载一个或多个模型。
+ *
+ * @param {{refs?:string[]}} [opts] preset references (used by a model's own page)
+ */
+async function downloadFlow(config, opts = {}) {
+  const refs = Array.isArray(opts.refs) && opts.refs.length ? opts.refs : await askRefs(config);
   if (!refs) return;
 
   const items = await buildItems(config, refs);
@@ -545,7 +552,7 @@ function printModelDetail(config, modelId) {
   for (const v of versions) {
     const bytes = (v.files || []).reduce((sum, f) => sum + (Number(f.bytes) || 0), 0);
     const pinned = String(v.versionId) === String(entry.pinnedVersionId) ? ` ${t('tui.manage.pinnedMark')}` : '';
-    console.log(
+    view.note(
       `  ${view.colors.dim('·')} ${view.truncateTo(String(v.versionName || v.versionId), 40)}${pinned}  ` +
         view.colors.dim(
           [
@@ -557,14 +564,22 @@ function printModelDetail(config, modelId) {
     );
     const dir = v.outDir || config.outDir;
     if (v.dirName || dir) {
-      console.log(`      ${view.colors.dim(t('tui.manage.dirLine', { dir: path.join(dir, v.dirName || '') }))}`);
+      view.note(`      ${view.colors.dim(t('tui.manage.dirLine', { dir: path.join(dir, v.dirName || '') }))}`);
     }
   }
 }
 
 /**
- * Menu shown after picking one model in the browser: what to do with it.
- * 在浏览页选中一个模型后显示的菜单：接下来做什么。
+ * Menu shown after picking one model in the library: everything that can be done to a single model.
+ *
+ * This is the "one project" page of the TUI: it maps to one Civitai model link, so every action here
+ * is about that model — update it, verify its files, pin a version, open its folder, forget it.
+ *
+ *
+ * 在模型库里选中一个模型后显示的菜单：针对单个模型能做的一切。
+ *
+ * 这是 TUI 里的「单个项目」页：它对应 Civitai 上的一个模型链接，
+ * 因此这里的每个动作都围绕这个模型——更新、校验文件、固定版本、打开目录、删除记录。
  */
 async function modelActions(config, modelId) {
   // The detail page is printed once; re-printing it after every action used to push the page up by
@@ -575,37 +590,76 @@ async function modelActions(config, modelId) {
 
   for (;;) {
     const entry = readEntry(config, modelId);
-    const action = await pages.promptMenu(t('tui.models.actionPrompt', { name: modelLabel(config, modelId) }), [
-      {
-        title: t('tui.models.actionDownload'),
-        value: 'download',
-        description: t('tui.models.actionDownloadDesc'),
-      },
-      {
-        title: entry && entry.pinnedVersionId ? t('tui.manage.unpinAction') : t('tui.manage.pinAction'),
-        value: 'pin',
-        description: entry && entry.pinnedVersionId ? t('tui.manage.unpinActionDesc') : t('tui.manage.pinActionDesc'),
-      },
-      {
-        title: t('tui.models.actionCheck'),
-        value: 'check',
-        description: t('tui.models.actionCheckDesc'),
-      },
-      {
-        title: t('tui.models.menuForget'),
-        value: 'forget',
-        description: t('tui.models.menuForgetDesc'),
-      },
-      { title: t('tui.manage.back'), value: 'back' },
-    ]);
+    if (!entry) {
+      view.log(t('tui.models.recordMissing', { modelId }));
+      return;
+    }
+    const firstDir = entryVersions(entry)
+      .map((v) => path.join(v.outDir || config.outDir, v.dirName || ''))
+      .find(Boolean);
+    const action = await pages.promptMenu(
+      t('tui.models.actionPrompt', { name: modelLabel(config, modelId) }),
+      [
+        {
+          title: t('tui.models.actionCheck'),
+          value: 'update',
+          description: t('tui.models.actionCheckDesc'),
+        },
+        {
+          title: t('tui.app.menuVerify'),
+          value: 'verify',
+          description: t('tui.app.menuVerifyDesc'),
+        },
+        {
+          title: t('tui.models.actionDownload'),
+          value: 'download',
+          description: t('tui.models.actionDownloadDesc'),
+        },
+        {
+          title: entry.pinnedVersionId ? t('tui.manage.unpinAction') : t('tui.manage.pinAction'),
+          value: 'pin',
+          description: entry.pinnedVersionId ? t('tui.manage.unpinActionDesc') : t('tui.manage.pinActionDesc'),
+        },
+        {
+          title: t('tui.models.actionOpenDir'),
+          value: 'open',
+          description: t('tui.models.actionOpenDirDesc', { dir: firstDir || config.outDir }),
+        },
+        {
+          title: t('tui.models.menuForget'),
+          value: 'forget',
+          description: t('tui.models.menuForgetDesc'),
+        },
+        { title: t('tui.manage.back'), value: 'back' },
+      ],
+      { stage: t('tui.app.menuModels') }
+    );
     if (action === null || action === 'back') return;
-    if (action === 'download') return downloadFlow(config);
+    if (action === 'update') {
+      await checkFlow(config, { modelIds: [String(modelId)] });
+      printModelDetail(config, modelId);
+      continue;
+    }
+    if (action === 'verify') {
+      await verifyFlow(config, { modelIds: [String(modelId)] });
+      continue;
+    }
+    if (action === 'download') {
+      await downloadFlow(config, { refs: [`model:${modelId}`] });
+      printModelDetail(config, modelId);
+      continue;
+    }
     if (action === 'pin') {
       await togglePin(config, modelId);
       printModelDetail(config, modelId);
       continue;
     }
-    if (action === 'check') return checkFlow(config, { modelIds: [String(modelId)] });
+    if (action === 'open') {
+      const dir = firstDir || config.outDir;
+      if (view.openDir(dir)) view.log(t('tui.app.opened', { dir }));
+      else view.log(t('tui.app.openFailed'));
+      continue;
+    }
     if (action === 'forget') return forgetFlow(config, { preset: [String(modelId)] });
   }
 }
@@ -613,11 +667,25 @@ async function modelActions(config, modelId) {
 /**
  * Interactive library browser: list → detail page → action.
  * 交互式模型库浏览：列表 → 详情页 → 操作。
+ *
+ * @param {{skipFilter?:boolean}} [opts] `skipFilter` jumps straight to the library (used by the
+ *   "本地模型管理" main-menu entry, where the picker's own search replaces the collection filter)
  */
-async function browseFlow(config) {
-  const filter = await askCollectionFilter(config);
-  if (!filter) return;
-  const rows = libraryRows(config, filter.ids);
+async function browseFlow(config, opts = {}) {
+  if (!opts.skipFilter) {
+    const filter = await askCollectionFilter(config);
+    if (!filter) return;
+    return browseRows(config, filter.ids);
+  }
+  return browseRows(config, null);
+}
+
+/**
+ * Library browser over an already-resolved row set.
+ * 在已解析好的行集上浏览模型库。
+ */
+async function browseRows(config, collectionIds) {
+  const rows = libraryRows(config, collectionIds);
   if (!rows.length) {
     view.log(t('tui.models.noRecords'));
     return;
@@ -625,31 +693,21 @@ async function browseFlow(config) {
   view.log(t('tui.models.browseHint'));
   const chosen = await pages.pickOne(rows, {
     message: t('tui.models.browsePick'),
-    title: t('tui.models.menuTitle'),
+    title: t('tui.app.menuModels'),
     describe: describeRow,
     state: libraryEntries(config),
-    onEnter: () => console.log(view.colors.dim(`  ${librarySummary(rows)}`)),
+    onEnter: () => view.note(view.colors.dim(`  ${librarySummary(rows)}`)),
   });
   if (!chosen) return;
   return modelActions(config, String(chosen.modelId));
 }
 
-async function listFlow(config) {
-  const all = collectModels(config);
-  if (!all.length) {
-    view.log(t('tui.models.noRecords'));
-    return;
-  }
-
-  const filter = await askCollectionFilter(config);
-  if (!filter) return;
-  const scoped = filter.ids ? all.filter((m) => filter.ids.includes(m.modelId)) : all;
-
-  const keyword = await pages.promptText(t('tui.download.keywordPrompt', { count: scoped.length }), {
-    initial: '',
-  });
-  if (keyword === null) return;
-  printList(sortModels(filterModels(scoped, keyword), 'recent'), { filtered: !!keyword });
+/**
+ * Entry point of the local-model-management section: the model list, then one model's page.
+ * 本地模型管理分区的入口：先看模型列表，再进入某个模型的页面。
+ */
+async function libraryFlow(config) {
+  return browseFlow(config, { skipFilter: true });
 }
 
 // ---------------------------------------------------------------------------
@@ -739,6 +797,7 @@ async function checkFlow(config, opts = {}) {
     );
     const summary = await runWithProgress(config, {
       collectionId: `model-${report.modelId}`,
+      name: modelLabel(config, report.modelId),
       plan,
       outDir: config.outDir,
       force: false,
@@ -759,22 +818,31 @@ async function checkFlow(config, opts = {}) {
 // 校验 / 修复
 // ---------------------------------------------------------------------------
 
-async function verifyFlow(config) {
+/**
+ * Verify the local files of the library (or of the models a caller preset).
+ * 校验模型库（或调用方预先指定的模型）的本地文件。
+ *
+ * @param {{modelIds?:string[]}} [opts] preset targets (used by the per-model page)
+ */
+async function verifyFlow(config, opts = {}) {
   const ids = libraryModelIds(config);
   if (!ids.length) {
     view.log(t('tui.models.noRecords'));
     return;
   }
-  const scope = await pages.promptMenu(t('tui.models.verifyPick'), [
-    { title: t('tui.models.verifyAll', { count: ids.length }), value: '__all__' },
-    { title: t('tui.models.checkOne'), value: '__one__' },
-  ]);
-  if (scope === null) return;
-  let targets = ids;
-  if (scope === '__one__') {
-    const picked = await pickModel(config, t('tui.models.checkPick'));
-    if (!picked) return;
-    targets = [picked];
+  let targets = Array.isArray(opts.modelIds) && opts.modelIds.length ? opts.modelIds.map(String) : null;
+  if (!targets) {
+    const scope = await pages.promptMenu(t('tui.models.verifyPick'), [
+      { title: t('tui.models.verifyAll', { count: ids.length }), value: '__all__' },
+      { title: t('tui.models.checkOne'), value: '__one__' },
+    ]);
+    if (scope === null) return;
+    targets = ids;
+    if (scope === '__one__') {
+      const picked = await pickModel(config, t('tui.models.checkPick'));
+      if (!picked) return;
+      targets = [picked];
+    }
   }
 
   const deep = await pages.promptConfirm(t('tui.manage.hashConfirm'));
@@ -800,24 +868,24 @@ async function verifyFlow(config) {
       }),
     { intervalMs: 15000 }
   );
-  console.log('');
-  console.log(
+  view.note('');
+  view.note(
     t('tui.manage.verifySummary', {
       label: result.label,
       total: result.total,
       size: formatBytes(result.totalBytes),
     })
   );
-  if (result.corrupt) console.log(`  ! ${result.corrupt}`);
-  console.log(`  ${t('tui.manage.verifyCounts', { ok: result.ok.length, broken: result.broken.length })}`);
+  if (result.corrupt) view.note(`  ! ${result.corrupt}`);
+  view.note(`  ${t('tui.manage.verifyCounts', { ok: result.ok.length, broken: result.broken.length })}`);
   for (const b of result.broken) {
-    console.log(
+    view.note(
       `  ! ${t('tui.manage.brokenLine', {
         name: b.name,
         reasons: b.reasons.join(t('tui.manage.reasonSeparator')),
       })}`
     );
-    console.log(`    ${t('tui.manage.dirLine', { dir: b.dir })}`);
+    view.note(`    ${t('tui.manage.dirLine', { dir: b.dir })}`);
   }
   if (!result.broken.length) {
     view.log(t('tui.manage.verifyAllOk'));
@@ -841,6 +909,7 @@ async function verifyFlow(config) {
     }
     const summary = await runWithProgress(config, {
       collectionId: `model-${item.modelId}`,
+      name: prev.name || modelLabel(config, item.modelId),
       plan: [
         {
           modelId: item.modelId,
@@ -988,35 +1057,42 @@ async function forgetFlow(config, opts = {}) {
 // 入口
 // ---------------------------------------------------------------------------
 
+/**
+ * Section home of local model management.
+ *
+ * The list is the important part (one row per locally known model, Enter opens that model's page),
+ * and the two library-wide passes stay reachable next to it.
+ *
+ *
+ * 「本地模型管理」的分区首页。
+ *
+ * 重点是那张列表（每个本地已知模型一行，回车进入该模型的页面），
+ * 两个针对整个模型库的操作放在旁边，仍然可达。
+ */
 async function modelsFlow(config) {
-  const action = await pages.promptMenu(t('tui.models.menuTitle'), [
-    {
-      title: t('tui.models.menuDownload'),
-      value: 'download',
-      description: t('tui.models.menuDownloadDesc'),
-    },
-    { title: t('tui.models.menuBrowse'), value: 'browse', description: t('tui.models.menuBrowseDesc') },
-    { title: t('tui.models.menuList'), value: 'list', description: t('tui.models.menuListDesc') },
-    { title: t('tui.models.menuCheck'), value: 'check', description: t('tui.models.menuCheckDesc') },
-    { title: t('tui.models.menuVerify'), value: 'verify', description: t('tui.models.menuVerifyDesc') },
-    { title: t('tui.models.menuPin'), value: 'pin', description: t('tui.models.menuPinDesc') },
-    { title: t('tui.models.menuForget'), value: 'forget', description: t('tui.models.menuForgetDesc') },
-    { title: t('tui.manage.back'), value: 'back' },
-  ]);
+  const action = await pages.promptMenu(
+    t('tui.models.menuTitle'),
+    [
+      { title: t('tui.models.menuBrowse'), value: 'browse', description: t('tui.models.menuBrowseDesc') },
+      { title: t('tui.models.menuCheck'), value: 'check', description: t('tui.models.menuCheckDesc') },
+      { title: t('tui.models.menuVerify'), value: 'verify', description: t('tui.models.menuVerifyDesc') },
+      { title: t('tui.manage.back'), value: 'back' },
+    ],
+    { stage: t('tui.app.menuModels') }
+  );
   if (action === null || action === 'back') return;
 
-  if (action === 'download') return downloadFlow(config);
-  if (action === 'browse') return browseFlow(config);
-  if (action === 'list') return listFlow(config);
+  if (action === 'browse') return libraryFlow(config);
   if (action === 'check') return checkFlow(config);
   if (action === 'verify') return verifyFlow(config);
-  if (action === 'pin') return pinFlow(config);
-  if (action === 'forget') return forgetFlow(config);
   return undefined;
 }
 
 module.exports = {
   modelsFlow,
+  libraryFlow,
+  modelActions,
+  browseFlow,
   parseRefs,
   resolveRefs,
   chooseVersion,
@@ -1031,6 +1107,5 @@ module.exports = {
   versionRows,
   printModelDetail,
   togglePin,
-  browseFlow,
   verifyFlow,
 };

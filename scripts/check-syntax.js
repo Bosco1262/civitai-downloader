@@ -12,7 +12,7 @@ const vm = require('vm');
 
 const ROOT = path.resolve(__dirname, '..');
 const SCAN_DIRS = ['src', 'tests', 'scripts'];
-const SCAN_FILES = ['cli.js', 'ui.js'];
+const SCAN_FILES = ['cli.js', 'ui.js', 'web.js'];
 
 // Collect every .js file under a directory.
 // 收集某个目录下的所有 .js 文件。

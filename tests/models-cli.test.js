@@ -730,18 +730,30 @@ async function runFlow(fn, ...scripted) {
   }
 }
 
-test('tui/models: 菜单取消不抛错；列出记录（含过滤）', async () => {
+test('tui/models: 菜单取消不抛错；模型列表与单个模型的页面', async () => {
   const config = makeConfig();
   const cancelled = await runFlow(() => tuiModels.modelsFlow(config), {});
   assert.equal(cancelled, '');
 
-  const empty = await runFlow(() => tuiModels.modelsFlow(config), { action: 'list' });
+  // Empty library: the browser explains it instead of opening an empty list.
+  // 模型库为空：浏览入口直接说明，而不是打开一张空列表。
+  const empty = await runFlow(() => tuiModels.modelsFlow(config), { action: 'browse' });
   assert.match(empty, /模型库暂无记录/);
 
   seed(config, 900, { versionId: 5, versionName: 'v5', fileName: 'a.bin', content: 'aaaa', dirName: 'A' });
-  const listed = await runFlow(() => tuiModels.modelsFlow(config), { action: 'list' }, { kw: '' });
-  assert.match(listed, /Model 900/);
-  assert.match(listed, /v5（5，4 B）/);
+  // Local model management is: the list, then the page of one model (update / verify / pin / open /
+  // forget).
+  //
+  // 本地模型管理 = 列表 → 该模型的页面（更新 / 校验 / 固定 / 打开目录 / 删除记录）。
+  const opened = await runFlow(
+    () => tuiModels.modelsFlow(config),
+    { action: 'browse' },
+    { value: '900' },
+    { action: 'back' }
+  );
+  assert.match(opened, /Model 900/);
+  assert.match(opened, /v5/);
+  assert.match(opened, /4 B/);
 });
 
 test('tui/models: 检查更新（全部 + 快速）输出报告且无变化时不下载', async () => {
@@ -788,32 +800,38 @@ test('tui/models: 固定版本与删除记录（只删记录，不动文件）',
   const config = makeConfig();
   seed(config, 900, { versionId: 5, versionName: 'v5', fileName: 'a.bin', content: 'aaaa', dirName: 'A' });
 
-  // The pin flow is one screen: pick the model, then pick the version (no separate pin/unpin menu —
-  // whether it pins or unpins follows from the record).
+  // Everything below happens on the page of one model: pick it in the list, then choose the action.
+  // Whether "pin" pins or unpins follows from the record, so there is no separate direction menu.
   //
-  // 固定流程只有两屏：选模型、选版本（不再单独问「固定还是取消固定」，方向由记录决定）。
+  // 下面全部发生在单个模型的页面上：先在列表里选中它，再选动作。
+  // 「固定」是固定还是取消固定由记录决定，因此没有单独的方向菜单。
   const pinned = await runFlow(
     () => tuiModels.modelsFlow(config),
+    { action: 'browse' },
+    { value: '900' },
     { action: 'pin' },
-    { modelId: '900' },
-    { versionId: '5' }
+    { value: '5' },
+    { action: 'back' }
   );
   assert.match(pinned, /已固定: Model 900 → v5/);
   assert.equal(readLibrary(config).entries['900'].pinnedVersionId, '5');
 
   const unpinned = await runFlow(
     () => tuiModels.modelsFlow(config),
+    { action: 'browse' },
+    { value: '900' },
     { action: 'pin' },
-    { modelId: '900' },
-    { ok: true }
+    { ok: true },
+    { action: 'back' }
   );
   assert.match(unpinned, /已取消固定/);
   assert.equal(readLibrary(config).entries['900'].pinnedVersionId, null);
 
   const forgotten = await runFlow(
     () => tuiModels.modelsFlow(config),
+    { action: 'browse' },
+    { value: '900' },
     { action: 'forget' },
-    { ids: ['900'] },
     { ok: true },
     { files: false }
   );

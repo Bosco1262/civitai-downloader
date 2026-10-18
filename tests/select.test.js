@@ -618,7 +618,12 @@ test('buildPanel: 进度面板三行结构（总进度 / 当前文件 / 按键�
   assert.ok(lines[1].includes('[Model A]'), lines[1]);
   assert.ok(lines[1].includes('a.safetensors'), lines[1]);
   assert.ok(lines[1].includes('第 2/3 次尝试'), lines[1]);
-  assert.ok(lines[2].includes('Ctrl+C'), lines[2]);
+  // Cancelling belongs to Esc in the redesigned TUI; the plain panel says so instead of promising a
+  // Ctrl+C that now quits the program.
+  //
+  // 新版 TUI 里取消由 Esc 负责；简易面板据此说明，而不再宣传现在会退出程序的 Ctrl+C。
+  assert.ok(lines[2].includes('Esc'), lines[2]);
+  assert.ok(lines[2].includes('s 跳过当前模型'), lines[2]);
   // Waiting state has no per-file line content but keeps the three-line shape
   // 等待状态没有单文件信息，但仍是三行
   const waiting = run.buildPanel({ width: 80, bytes: 0, expected: 0, speed: 0, eta: '--', elapsed: '00:00' }).split('\n');
