@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: [20, 22, 24]
+    env:
+      # Several tests compare Chinese wording verbatim; pin the language so results are stable.
+      #
+      # 部分测试逐字比对中文文案，固定语言以保证结果稳定。
+      CIVITAI_LANG: zh-CN
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - name: Syntax check / 语法检查
+        run: node -e "const fs=require('fs'),path=require('path');const walk=d=>fs.readdirSync(d,{withFileTypes:true}).flatMap(e=>e.isDirectory()?walk(path.join(d,e.name)):[path.join(d,e.name)]);const files=[...walk('src'),'cli.js','ui.js'].filter(f=>f.endsWith('.js'));for(const f of files)new (require('vm').Script)(fs.readFileSync(f,'utf8'),{filename:f});console.log('syntax ok: '+files.length+' files');"
+      - name: Bilingual comments / 双语注释规范
+        run: node scripts/check-comments.js
+      - name: Unit and integration tests / 单元与集成测试
+        run: npm test

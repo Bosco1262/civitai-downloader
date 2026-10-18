@@ -1,51 +1,68 @@
 #!/usr/bin/env node
 'use strict';
 
+// CLI entry point: dispatch a subcommand, resolve the UI language, then hand over to the command module.
+// 命令行入口：分发子命令、解析界面语言，然后交给命令模块执行。
+
 const { loadConfig } = require('./src/config');
 const { parseArgs } = require('./src/util');
-
-const COMMANDS = {
-  login: () => require('./src/commands/login'),
-  list: () => require('./src/commands/list'),
-  download: () => require('./src/commands/download'),
-};
+const { configureRuntime, printConfigWarnings, handleFatal } = require('./src/runtime');
+const { COMMANDS, loadCommand } = require('./src/commandSpec');
+const { t, extractLanguageArg, setLanguage } = require('./src/i18n');
 
 function usage() {
-  console.log(`civitai-collection-downloader
-
-用法:
-  node cli.js login                         打开浏览器完成登录并保存会话
-  node cli.js list <收藏集ID> [--json] [--plan]
-  node cli.js download <收藏集ID> [--out <目录>] [--only <id,id>] [--force] [--dry-run]
-
-npm 用法（传参需要 -- 分隔）:
-  npm run login
-  npm run list -- 161131
-  npm run download -- 161131
-  npm run download -- 161131 --only 276011 --force
-`);
+  console.log(t('cli.usage'));
 }
 
 async function main() {
-  const [cmd, ...rest] = process.argv.slice(2);
-  if (!cmd || cmd === 'help' || cmd === '--help' || cmd === '-h') {
+  // `-l` / `--lang` / `--language` are global switches, so pull them out before parsing the rest.
+  // `-l` / `--lang` / `--language` 是全局开关，先摘出来再解析其余参数。
+  const { lang, rest } = extractLanguageArg(process.argv.slice(2));
+  const [cmd, ...cmdArgs] = rest;
+  const isHelp = !cmd || cmd === 'help' || cmd === '--help' || cmd === '-h';
+
+  if (isHelp) {
+    // Help must still work when config.json is broken, so failures here are tolerated.
+    // config.json 损坏时帮助信息仍应可用，因此这里容忍失败。
+    try {
+      configureRuntime(loadConfig(), { language: lang });
+    } catch (e) {
+      if (lang) setLanguage(lang);
+    }
     usage();
     process.exitCode = cmd ? 0 : 1;
     return;
   }
-  const loader = COMMANDS[cmd];
-  if (!loader) {
-    console.error(`未知命令: ${cmd}\n`);
+
+  const config = loadConfig();
+  configureRuntime(config, { language: lang });
+  printConfigWarnings(config);
+
+  const entry = COMMANDS[cmd];
+  if (!entry) {
+    console.error(t('cli.unknownCommand', { cmd }));
     usage();
     process.exitCode = 1;
     return;
   }
-  const config = loadConfig();
-  const args = parseArgs(rest);
-  await loader().main(config, args);
+
+  // Per-command flag declaration: valueFlags decides whether a flag consumes the next argument;
+  // booleanFlags only suppresses the unknown-flag warning.
+  //
+  // 命令级旗标声明：valueFlags 决定是否消费下一个参数，booleanFlags 只用于抑制未知旗标告警。
+  const knownFlags = [...entry.flags, ...(entry.booleanFlags || []), ...(entry.valueFlags || []), 'help'];
+  const args = parseArgs(cmdArgs, { knownFlags, valueFlags: entry.valueFlags || [] });
+  for (const unknown of args.unknown) {
+    console.error(t('cli.unknownFlag', { flag: unknown }));
+  }
+
+  if (args.flags.help) {
+    const mod = loadCommand(cmd);
+    (mod && mod.usage ? mod.usage : usage)();
+    return;
+  }
+
+  await loadCommand(cmd).main(config, args);
 }
 
-main().catch((e) => {
-  console.error(`错误: ${e && e.message ? e.message : e}`);
-  process.exitCode = 1;
-});
+main().catch((e) => handleFatal(e));
