@@ -27,7 +27,7 @@
 
 const devalue = require('devalue');
 const { log } = require('./util');
-const { AuthError, ChallengeError, SiteInterfaceError } = require('./errors');
+const { AuthError, ChallengeError, NetworkError, SiteInterfaceError } = require('./errors');
 const { ensureSitePage } = require('./browser');
 const { t } = require('./i18n');
 
@@ -108,14 +108,89 @@ function isUnauthorized(status, text) {
 }
 
 /**
- * Single page request: fetch with the login state inside the page context.
- * 单页请求：在页面上下文里带登录态 fetch。
+ * Default deadline of one page request, in milliseconds. A request that never settles would freeze
+ * the whole TUI with no output at all, so every page call is bounded twice: inside the page (the
+ * fetch is aborted) and outside it (the caller stops waiting even if the tab is wedged).
+ *
+ * 单页请求的默认时限（毫秒）。请求永不返回会让整个 TUI 毫无输出地卡死，因此每次都设两道时限：
+ * 页面内（中止 fetch）与页面外（即使标签页卡住，调用方也会停止等待）。
  */
-async function requestPage(page, url) {
-  return page.evaluate(async (target) => {
-    const res = await fetch(target, { credentials: 'include' });
-    return { status: res.status, text: await res.text() };
-  }, url);
+const DEFAULT_REQUEST_TIMEOUT_MS = 30000;
+
+/**
+ * Single page request: fetch with the login state inside the page context.
+ *
+ * The fetch is aborted after `timeoutMs` and a status of 0 is returned, so a hanging connection or
+ * a page that is stuck in a long script cannot block the caller forever.
+ *
+ *
+ * 单页请求：在页面上下文里带登录态 fetch。
+ *
+ * 超过 `timeoutMs` 会中止 fetch 并返回 status 0，因此连接挂起或页面卡在长脚本里都不会让调用方永久阻塞。
+ */
+async function requestPage(page, url, opts = {}) {
+  const timeoutMs = Math.max(1000, Number(opts.timeoutMs) || DEFAULT_REQUEST_TIMEOUT_MS);
+  // Grace beyond the in-page deadline: if the tab stopped answering entirely, the caller gives up a
+  // little later instead of waiting forever. Overridable for tests.
+  //
+  // 页面内时限之外的宽限：如果标签页完全不响应，调用方晚一点放弃，而不是永远等下去。测试可覆盖。
+  const graceMs = Math.max(0, Number(opts.graceMs === undefined ? 5000 : opts.graceMs) || 0);
+  const work = page.evaluate(
+    async (target, limitMs) => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), limitMs);
+      try {
+        const res = await fetch(target, { credentials: 'include', signal: controller.signal });
+        const text = await res.text();
+        return { status: res.status, text };
+      } catch (e) {
+        // Distinguish "the request never finished" from an HTTP error: the caller reports both.
+        // 区分「请求没跑完」与「HTTP 错误」：调用方分别处理。
+        return { status: 0, text: '', error: String((e && e.message) || e) };
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+    url,
+    timeoutMs
+  );
+
+  // Outside guard: a wedged tab (or a debugger connection that stopped answering) would otherwise
+  // keep the promise pending forever. The abandoned evaluate is told to stay quiet.
+  //
+  // 外层保护：标签页卡死（或调试连接不再响应）时这个 promise 会永远 pending。被放弃的 evaluate 结果直接丢弃。
+  const guarded = await withDeadline(work, timeoutMs + graceMs);
+  if (guarded.timedOut) return { status: 0, text: '', error: t('collection.requestTimeout', { ms: timeoutMs }) };
+  return guarded.value;
+}
+
+/**
+ * Resolve `promise` or give up after `ms`; never rejects.
+ * 在 `ms` 内等待 `promise`，超时则放弃；不会 reject。
+ *
+ * @param {Promise<any>} promise
+ * @param {number} ms
+ * @returns {Promise<{timedOut:boolean, value?:any}>}
+ */
+async function withDeadline(promise, ms) {
+  const limit = Math.max(1, Number(ms) || 1);
+  let timer = null;
+  const guard = new Promise((resolve) => {
+    timer = setTimeout(() => resolve({ timedOut: true }), limit);
+    if (typeof timer.unref === 'function') timer.unref();
+  });
+  try {
+    const value = await Promise.race([
+      Promise.resolve(promise).then(
+        (result) => ({ timedOut: false, value: result }),
+        (error) => ({ timedOut: false, value: { status: 0, text: '', error: String((error && error.message) || error) } })
+      ),
+      guard,
+    ]);
+    return value;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**
@@ -130,8 +205,11 @@ async function probeLogin(browser, site, opts = {}) {
     json: { ...DEFAULT_TRPC_INPUT, ...(opts.trpcInput || {}), collectionId: Number(opts.collectionId) || 1 },
   };
   const url = `/api/trpc/${trpcPath}?input=${encodeURIComponent(JSON.stringify(input))}`;
-  const result = await requestPage(page, url);
+  const result = await requestPage(page, url, { timeoutMs: opts.requestTimeoutMs || opts.timeoutMs });
 
+  if (result.status === 0) {
+    return { ok: false, reason: result.error || t('collection.timeoutShort'), status: 0 };
+  }
   if (looksLikeChallenge(result.status, result.text)) {
     return { ok: false, reason: t('collection.challengeProbe'), status: result.status };
   }
@@ -171,7 +249,16 @@ async function fetchCollectionItems(browser, site, collectionId, opts = {}) {
 
     if (limit && limit.enabled) await limit.acquire();
     const url = `/api/trpc/${trpcPath}?input=${encodeURIComponent(JSON.stringify(input))}`;
-    const result = await requestPage(page, url);
+    const result = await requestPage(page, url, { timeoutMs: opts.requestTimeoutMs || opts.timeoutMs });
+
+    // status 0 means the request never produced an HTTP response (connection stalled, tab wedged,
+    // or the page-level deadline fired): report it as a network problem instead of "HTTP 0".
+    //
+    // status 0 表示请求没有拿到任何 HTTP 响应（连接挂起、标签页卡死、或页面内时限已到）：
+    // 按网络问题上报，而不是说成「HTTP 0」。
+    if (result.status === 0) {
+      throw new NetworkError(result.error || t('collection.timeoutShort'));
+    }
 
     if (looksLikeChallenge(result.status, result.text)) {
       throw new ChallengeError(t('collection.challenge'));
@@ -230,9 +317,12 @@ async function fetchCollectionItems(browser, site, collectionId, opts = {}) {
 module.exports = {
   DEFAULT_TRPC_PATH,
   DEFAULT_TRPC_INPUT,
+  DEFAULT_REQUEST_TIMEOUT_MS,
   fetchCollectionItems,
   parseTrpcText,
   probeLogin,
+  requestPage,
+  withDeadline,
   isUnauthorized,
   looksLikeChallenge,
   ensureSitePage,

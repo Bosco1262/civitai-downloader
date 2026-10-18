@@ -1,0 +1,23 @@
+{
+  "site": "https://civitai.red",
+  "outDir": "undefined",
+  "profileDir": ".data/chrome-profile",
+  "chromePath": "undefined",
+  "debugPort": null,
+  "userAgent": "undefined",
+  "jobs": null,
+  "metaConcurrency": null,
+  "apiRateLimit": null,
+  "proxy": "undefined",
+  "fileTypes": [
+    "undefined"
+  ],
+  "downloadAttempts": null,
+  "engine": "undefined",
+  "dedup": "undefined",
+  "notifyWebhook": "",
+  "notifyToast": false,
+  "language": "",
+  "headless": "auto",
+  "configVersion": 1
+}

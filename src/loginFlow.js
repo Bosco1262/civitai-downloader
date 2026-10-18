@@ -69,6 +69,7 @@ async function performLogin(config, hooks = {}) {
       page,
       trpcPath: config.trpcPath,
       trpcInput: config.trpcInput,
+      requestTimeoutMs: config.requestTimeoutMs,
     });
     if (!probe.ok) {
       logFn(t('loginFlow.probeFailed', { reason: probe.reason }));

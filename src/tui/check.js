@@ -1,48 +1,84 @@
 'use strict';
 
+/**
+ * TUI flow for "check for updates" by collection: pick one collection (or all), choose quick/deep,
+ * then optionally download what changed.
+ *
+ * The collection list is the same interactive picker used everywhere else, so long snapshot lists
+ * can be searched and scrolled instead of being printed as a wall of text.
+ *
+ *
+ * 「按收藏集检查更新」的 TUI 流程：选收藏集（或全部）→ 快速/深度 → 可选下载变化项。
+ *
+ * 收藏集列表用的也是全局同一套交互选择器，快照很多时可以搜索与滚动，
+ * 而不是直接糊一屏文字。
+ */
+
 const prompts = require('prompts');
 const { formatBytes } = require('../util');
 const { checkUpdates, reportLines, changedItems, markForRedownload, summarize } = require('../updater');
 const { listCollectionIds, readCollection } = require('../storage');
 const { t } = require('../i18n');
 const view = require('./view');
+const pages = require('./pages');
 const { runWithProgress } = require('./run');
 
+/**
+ * Ask which collection(s) to check. Returns a single id, an array of ids, or null when cancelled.
+ * 询问要检查哪个（些）收藏集。返回单个 ID、ID 数组，或取消时的 null。
+ */
 async function askCollectionId(config, message) {
   const ids = listCollectionIds(config);
   if (!ids.length) {
     view.log(t('tui.check.noRecords'));
     return null;
   }
-  const ans = await prompts({
-    type: 'select',
-    name: 'id',
-    message,
-    choices: [
-      ...ids.map((id) => {
-        const { snapshot } = readCollection(config, id, { allowCorrupt: true });
-        return {
-          title: t('tui.check.collectionLabel', { id }),
-          value: id,
-          description: t('tui.check.completionRecords', { count: snapshot ? snapshot.items.length : 0 }),
-        };
-      }),
-      { title: t('tui.check.manualId'), value: '__manual__' },
-      { title: t('tui.check.allCollections'), value: '__all__' },
-    ],
+  const rows = ids.map((id) => {
+    const { snapshot } = readCollection(config, id, { allowCorrupt: true });
+    const changes = (snapshot && snapshot.changes) || { added: [], removed: [], versionChanged: [] };
+    return {
+      modelId: String(id),
+      name: t('tui.check.collectionLabel', { id }),
+      type: `${snapshot ? snapshot.items.length : 0}`,
+      baseModel: '',
+      totalBytes: 0,
+      members: snapshot ? snapshot.items.length : 0,
+      fetchedAt: (snapshot && snapshot.fetchedAt) || null,
+      changed: changes.added.length + changes.removed.length + changes.versionChanged.length,
+    };
   });
-  if (!ans || ans.id === undefined) return null;
-  if (ans.id === '__all__') return ids;
-  if (ans.id !== '__manual__') return String(ans.id);
 
-  const input = await prompts({
-    type: 'text',
-    name: 'id',
-    message: t('tui.check.collectionIdLabel'),
+  const scope = await pages.promptMenu(message, [
+    { title: t('tui.check.allCollections'), value: '__all__', description: t('tui.check.allCollectionsDesc', { count: ids.length }) },
+    { title: t('tui.check.pickOne'), value: '__pick__', description: t('tui.check.pickOneDesc') },
+    { title: t('tui.check.manualId'), value: '__manual__' },
+  ]);
+  if (scope === null) return null;
+  if (scope === '__all__') return ids;
+
+  if (scope === '__pick__') {
+    const chosen = await pages.pickOne(rows, {
+      message: t('tui.check.pickCollection'),
+      title: t('tui.check.pickCollection'),
+      describe: (row) =>
+        [
+          t('tui.check.completionRecords', { count: row.members }),
+          row.fetchedAt ? String(row.fetchedAt) : t('tui.manage.unknownTime'),
+          row.changed ? t('tui.check.changesShort', { count: row.changed }) : t('tui.check.noChangesShort'),
+        ].join(view.separator()),
+      // The picker echoes the row label, which here is "Collection 12345" — the id is clearer.
+      // 选择器默认回显行标题（这里是「收藏集 12345」），直接报 ID 更清楚。
+      decidedMessage: 'tui.check.selected',
+      decidedParams: (row) => ({ id: row.modelId }),
+    });
+    if (!chosen) return null;
+    return String(chosen.modelId);
+  }
+
+  const manual = await pages.promptText(t('tui.check.collectionIdLabel'), {
     validate: (v) => (/^\d+$/.test(String(v).trim()) ? true : t('tui.check.invalidId')),
   });
-  if (!input || input.id === undefined) return null;
-  return String(input.id).trim();
+  return manual === null ? null : String(manual).trim();
 }
 
 async function checkFlow(config) {
@@ -50,29 +86,21 @@ async function checkFlow(config) {
   if (!picked) return;
   const ids = Array.isArray(picked) ? picked : [picked];
 
-  const mode = await prompts({
-    type: 'select',
-    name: 'deep',
-    message: t('tui.check.modeTitle'),
-    choices: [
-      {
-        title: t('tui.check.modeQuick'),
-        value: false,
-        description: t('tui.check.modeQuickDesc'),
-      },
-      {
-        title: t('tui.check.modeDeep'),
-        value: true,
-        description: t('tui.check.modeDeepDesc'),
-      },
-    ],
-  });
-  if (!mode || mode.deep === undefined) return;
+  const mode = await pages.promptMenu(t('tui.check.modeTitle'), [
+    { title: t('tui.check.modeQuick'), value: 'quick', description: t('tui.check.modeQuickDesc') },
+    { title: t('tui.check.modeDeep'), value: 'deep', description: t('tui.check.modeDeepDesc') },
+  ]);
+  if (mode === null) return;
 
   const reports = [];
   for (const id of ids) {
     if (ids.length > 1) view.log(t('tui.check.collectionHeader', { id }));
-    const { report } = await checkUpdates(config, id, { verifyFiles: !!mode.deep, withPlan: true }, { log: view.log });
+    const { report } = await checkUpdates(
+      config,
+      id,
+      { verifyFiles: mode === 'deep', withPlan: true },
+      { log: view.log }
+    );
     report.stats = summarize(report);
     reports.push(report);
     for (const line of reportLines(report)) view.log(line);
@@ -84,13 +112,8 @@ async function checkFlow(config) {
     return;
   }
 
-  const go = await prompts({
-    type: 'confirm',
-    name: 'go',
-    message: t('tui.check.downloadConfirm', { count: allChanges.length }),
-    initial: true,
-  });
-  if (!go || !go.go) return;
+  const go = await pages.promptConfirm(t('tui.check.downloadConfirm', { count: allChanges.length }));
+  if (!go) return;
 
   let failed = 0;
   for (const report of reports) {

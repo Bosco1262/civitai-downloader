@@ -217,6 +217,7 @@ async function runDownloadJob(config, opts, hooks = {}) {
       items = await deps.fetchCollectionItems(browser, config.site, collectionId, {
         trpcPath: config.trpcPath,
         trpcInput: config.trpcInput,
+        requestTimeoutMs: config.requestTimeoutMs,
         onLog: logFn,
       });
       // A collection is only a membership list: remember it (with the change report) as soon as

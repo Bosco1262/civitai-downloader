@@ -14,11 +14,11 @@
  * （新增 / 移除 / 版本变化），并可重置某个模型的记录，让下次下载重新拉取。
  */
 
-const prompts = require('prompts');
 const { readLibrary, readCollection, listCollectionIds } = require('../storage');
 const { markForRedownload } = require('../updater');
 const { t } = require('../i18n');
 const view = require('./view');
+const pages = require('./pages');
 
 /**
  * Print the snapshot time and the change report of one collection.
@@ -70,44 +70,43 @@ async function resetModels(config, collectionId) {
     return;
   }
 
-  const ans = await prompts({
-    type: 'multiselect',
-    name: 'ids',
-    message: t('tui.manage.resetPick'),
-    instructions: t('tui.manage.unpinInstructions'),
-    choices: members.map((it) => {
+  const chosen = await pages.pickMany(
+    members.map((it) => {
       const entry = entries[it.modelId];
-      const versions = Object.keys((entry && entry.versions) || {}).length;
       return {
-        title: view.truncate(entry.name || t('tui.manage.modelIdLabel', { modelId: it.modelId }), 70),
-        value: String(it.modelId),
-        description: t('tui.manage.memberVersions', {
-          versions,
-          pinned: entry.pinnedVersionId ? t('tui.manage.pinnedVersion') : t('tui.manage.notPinned'),
-        }),
+        modelId: String(it.modelId),
+        name: entry.name || t('tui.manage.modelIdLabel', { modelId: it.modelId }),
+        type: entry.type || '',
+        baseModel: '',
+        totalBytes: 0,
+        versions: Object.keys((entry && entry.versions) || {}).length,
+        pinned: entry.pinnedVersionId ? t('tui.manage.pinnedVersion') : t('tui.manage.notPinned'),
       };
     }),
-  });
-  if (!ans || ans.ids === undefined) return;
-  const chosen = ans.ids.map(String);
-  if (!chosen.length) {
+    {
+      message: t('tui.manage.resetPick'),
+      title: t('tui.manage.resetPick'),
+      describe: (row) =>
+        t('tui.manage.memberVersions', { versions: row.versions, pinned: row.pinned }),
+    }
+  );
+  if (chosen === null) return;
+  const chosenIds = chosen.map((row) => String(row.modelId));
+  if (!chosenIds.length) {
     view.log(t('tui.manage.noChanges'));
     return;
   }
 
-  const confirm = await prompts({
-    type: 'confirm',
-    name: 'ok',
-    message: t('tui.manage.resetConfirm', { count: chosen.length }),
-    initial: true,
+  const confirm = await pages.promptConfirm(t('tui.manage.resetConfirm', { count: chosenIds.length }), {
+    danger: true,
   });
-  if (!confirm || !confirm.ok) {
+  if (!confirm) {
     view.log(t('tui.manage.cancelled'));
     return;
   }
 
-  const n = markForRedownload(config, chosen);
-  const names = chosen
+  const n = markForRedownload(config, chosenIds);
+  const names = chosenIds
     .map((modelId) => {
       const entry = entries[modelId];
       return (entry && entry.name) || t('tui.manage.modelIdLabel', { modelId });
@@ -123,11 +122,9 @@ async function manageFlow(config) {
     return;
   }
 
-  const pick = await prompts({
-    type: 'select',
-    name: 'id',
-    message: t('tui.manage.pickCollection'),
-    choices: ids.map((id) => {
+  const picked = await pages.promptMenu(
+    t('tui.manage.pickCollection'),
+    ids.map((id) => {
       const { snapshot } = readCollection(config, id, { allowCorrupt: true });
       const changes = (snapshot && snapshot.changes) || { added: [], removed: [], versionChanged: [] };
       return {
@@ -135,33 +132,29 @@ async function manageFlow(config) {
         value: id,
         description:
           t('tui.manage.memberCount', { count: snapshot ? snapshot.items.length : 0 }) +
-          ` · ${t('tui.manage.changesShort', {
+          ` ${view.separator()}${t('tui.manage.changesShort', {
             added: changes.added.length,
             removed: changes.removed.length,
             versionChanged: changes.versionChanged.length,
           })}`,
       };
-    }),
-  });
-  if (!pick || pick.id === undefined) return;
-  const collectionId = String(pick.id);
+    })
+  );
+  if (picked === null) return;
+  const collectionId = String(picked);
 
   console.log('');
   const { snapshot } = readCollection(config, collectionId, { allowCorrupt: true });
   printSnapshot(snapshot);
 
-  const action = await prompts({
-    type: 'select',
-    name: 'action',
-    message: t('tui.manage.actionPrompt', { collectionId }),
-    choices: [
-      { title: t('tui.manage.resetAction'), value: 'reset', description: t('tui.manage.resetActionDesc') },
-      { title: t('tui.manage.back'), value: 'back' },
-    ],
-  });
-  if (!action || action.action === undefined || action.action === 'back') return;
+  const action = await pages.promptMenu(t('tui.manage.actionPrompt', { collectionId }), [
+    { title: t('tui.manage.resetAction'), value: 'reset', description: t('tui.manage.resetActionDesc') },
+    { title: t('tui.manage.back'), value: 'back' },
+  ]);
+  if (action === null || action === 'back') return;
 
-  if (action.action === 'reset') return resetModels(config, collectionId);
+  if (action === 'reset') return resetModels(config, collectionId);
+  return undefined;
 }
 
 module.exports = { manageFlow, printSnapshot, resetModels };

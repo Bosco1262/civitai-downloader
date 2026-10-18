@@ -42,6 +42,8 @@ const en = require('../src/i18n/en');
 const util = require('../src/util');
 const view = require('../src/tui/view');
 const select = require('../src/tui/select');
+const pages = require('../src/tui/pages');
+const app = require('../src/tui/app');
 
 /**
  * CJK characters and full-width punctuation: used to tell whether a message contains Chinese.
@@ -54,8 +56,11 @@ const CJK = /[\u3000-\u303f\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]
  */
 const LANGUAGE_AT_LOAD = i18n.getLanguage();
 /**
- * TUI files covered by this extraction.
- * 本次抽取涉及的 TUI 文件
+ * TUI files covered by this extraction. Only files that emit user-visible text belong here:
+ * keys.js / layout.js are pure key-handling and layout helpers with no catalog entries.
+ *
+ * 本次抽取涉及的 TUI 文件。这里只列会输出用户可见文案的文件：
+ * keys.js / layout.js 是纯按键处理与布局助手，不含文案表条目。
  */
 const TUI_FILES = [
   'app.js',
@@ -68,6 +73,7 @@ const TUI_FILES = [
   'login.js',
   'manage.js',
   'settings.js',
+  'pages.js',
 ];
 /**
  * Keys added by this change.
@@ -89,6 +95,8 @@ const TUI_MODULES = new Set([
   'login',
   'manage',
   'settings',
+  'pages',
+  'help',
 ]);
 /**
  * Keys whose English and Chinese text is identical (pure format strings / proper nouns / language endonyms);
@@ -173,8 +181,28 @@ test('i18n-tui: view.log 保留 [时间] 前缀，再见文案走文案表', (t)
   const lines = captureLog(() => view.log('中文消息'));
   assert.equal(lines.length, 1);
   assert.match(lines[0], /^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\] 中文消息$/);
-  assert.equal(tr('tui.view.goodbye'), '再见。');
   assert.equal(tr('tui.app.goodbye'), '再见。');
+});
+
+test('i18n-tui: 全屏界面退出后的决定回显（非 TTY 静默、文案逐字一致）', () => {
+  // The decision echo belongs to the alternate screen buffer: it must stay silent when there is no
+  // TTY (the plain prompt path prints its own answer).
+  //
+  // 决定回显属于备用缓冲区场景：非 TTY 下必须保持静默（简易提问路径自己会打印答案）。
+  assert.equal(view.beginFullScreen(), false);
+  const lines = captureLog(() => {
+    view.decision('tui.view.decisionPicked', { count: 3 });
+    view.beginFullScreen();
+    view.endFullScreen();
+  });
+  assert.deepEqual(lines, []);
+
+  assert.equal(tr('tui.view.decisionCancelled'), '已取消选择');
+  assert.equal(tr('tui.view.decisionSelected', { name: 'Model A' }), '已选择：Model A');
+  assert.equal(tr('tui.view.decisionPicked', { count: 3 }), '已勾选 3 项');
+  assert.equal(tr('tui.check.selected', { id: 777 }), '已选择收藏集：777');
+  assert.equal(tr('tui.download.prefilterSummary', { count: 12, size: '3.00 MiB', done: '' }).trim(), '共 12 项 · 合计 3.00 MiB');
+  assert.equal(tr('tui.models.pickerSummary', { count: 4, size: '2.00 MiB', pinned: '' }).trim(), '模型库 4 项 · 合计 2.00 MiB');
 });
 
 test('i18n-tui: select.js 排序标签与键位提示逐字一致', () => {
@@ -188,8 +216,25 @@ test('i18n-tui: select.js 排序标签与键位提示逐字一致', () => {
   assert.deepEqual(Array.from(select.KEY_HINTS), [
     '↑/↓·k/j 移动｜Home/End 首尾｜PgUp/PgDn·[ ] 翻页',
     '空格 勾选｜a 全选/全不选｜i 反选｜/ 搜索',
-    't 类型｜b 模型｜s 排序｜回车 确认｜Esc/q/Ctrl+C 取消',
+    't 类型｜b 模型｜s 排序｜1-9 跳行｜回车 确认｜? 帮助｜Esc/q/Ctrl+C 取消',
   ]);
+});
+
+test('i18n-tui: select.js 按键提示随状态切换（输入中 / 帮助浮层）', () => {
+  assert.deepEqual(select.hintLines({}), select.KEY_HINTS);
+  const typing = select.hintLines({ searching: true });
+  assert.equal(typing.length, 2);
+  assert.ok(typing.join(' ').includes('回退键'));
+  const help = select.hintLines({ help: true });
+  assert.equal(help.length, 3);
+  assert.ok(help[0].includes('任意键返回'));
+  // The help overlay itself carries a readable key reference in both languages
+  // 帮助浮层本身在两种语言下都给出可读的按键速查
+  assert.equal(select.HELP_ITEMS.length, 10);
+  for (const item of select.HELP_ITEMS) assert.ok(item.trim().length > 0, item);
+  withLanguage('en', () => {
+    for (const item of select.HELP_ITEMS) assert.ok(!CJK.test(item), `en: 帮助行不应含中文：${item}`);
+  });
 });
 
 test('i18n-tui: select.js 状态文案与表头/页脚逐字一致', () => {
@@ -219,21 +264,74 @@ test('i18n-tui: select.js 状态文案与表头/页脚逐字一致', () => {
   });
   assert.equal(lines.length, 3);
   assert.equal(lines[0], '选择要下载的条目');
-  assert.equal(lines[1], '搜索：“lora” · 类型：LORA · 基础模型：SDXL 1.0 · 排序：按大小↓ · 第 2/4 页');
+  const sep = view.separator();
+  assert.equal(
+    lines[1],
+    ['搜索：“lora”', '类型：LORA', '基础模型：SDXL 1.0', '排序：按大小↓', '第 2/4 页'].join(sep)
+  );
   assert.equal(lines[2], '已选 3 项 / 共 40 项 · 过滤后 12 项 · 合计 2048B（全部 4096B）');
 
   // Default title and status when nothing is searched or filtered
   // 未搜索 / 未过滤时的默认标题与状态
   const plain = select.buildHeaderLines({ sizeFormatter: (n) => `${n}B` });
   assert.equal(plain[0], '选择要下载的条目');
-  assert.equal(plain[1], '搜索：未启用 · 排序：默认排序 · 第 1/1 页');
+  assert.equal(plain[1], ['搜索：未启用', '排序：默认排序', '第 1/1 页'].join(sep));
   assert.equal(plain[2], '已选 0 项 / 共 0 项 · 过滤后 0 项 · 合计 0B（全部 0B）');
+
+  // The scrolling window replaces the page counter once the caller passes a position
+  // 调用方传入可见区间后，行号区间取代页码
+  const windowed = select.buildHeaderLines({ position: { start: 4, end: 14, size: 10 }, visibleCount: 40 });
+  assert.ok(windowed[1].includes('第 5-14/40 行'), windowed[1]);
+
+  // A transient message is appended to the summary line and never adds a line
+  // 临时消息追加在汇总行，不会多出一行
+  const noticed = select.withNotice(plain, 200, '已勾选');
+  assert.equal(noticed.length, 3);
+  assert.ok(noticed[2].endsWith('已勾选'));
+
   assert.equal(tr('tui.select.footer', { page: 2, pageCount: 4, count: 15, selected: 3, total: 40 }),
     '第 2/4 页 · 本页 15 项 · 已选 3/40');
   assert.equal(tr('tui.select.columnIndex'), '序号');
   assert.equal(tr('tui.select.columnName'), '名称');
   assert.equal(tr('tui.select.columnDetail'), '状态 / 类型 / 基础模型');
   assert.equal(tr('tui.select.columnSize'), '大小');
+});
+
+test('i18n-tui: 滚动视窗 / 单选模式 / 快捷跳行等新增纯逻辑可用', () => {
+  // scrollWindow keeps the cursor visible while leaving the window still whenever possible
+  // 滚动视窗保证光标可见，同时尽量不动视窗
+  assert.deepEqual(select.scrollWindow(100, 0, 10, 0), { start: 0, end: 10, size: 10, cursor: 0 });
+  assert.deepEqual(select.scrollWindow(100, 9, 10, 0), { start: 0, end: 10, size: 10, cursor: 9 });
+  assert.deepEqual(select.scrollWindow(100, 10, 10, 0), { start: 1, end: 11, size: 10, cursor: 10 });
+  assert.deepEqual(select.scrollWindow(100, 99, 10, 0), { start: 90, end: 100, size: 10, cursor: 99 });
+  assert.deepEqual(select.scrollWindow(4, 3, 10, 0), { start: 0, end: 4, size: 4, cursor: 3 });
+  assert.deepEqual(select.scrollWindow(0, 0, 10, 0), { start: 0, end: 0, size: 0, cursor: 0 });
+
+  // Digit shortcuts address the 1st..9th row of the list
+  // 数字快捷键对应列表第 1-9 行
+  assert.equal(select.quickIndex('1'), 0);
+  assert.equal(select.quickIndex('9'), 8);
+  assert.equal(select.quickIndex('0'), null);
+  assert.equal(select.quickIndex('12'), null);
+  assert.equal(select.quickIndex('a'), null);
+
+  // Range selection toggles a contiguous block without touching the input set
+  // 区间选择只改一段连续行，且不修改入参
+  const items = [1, 2, 3, 4].map((id) => ({ modelId: id, name: `m${id}` }));
+  const before = new Set(['1']);
+  const after = select.rangeSelection(before, items, 1, 3);
+  assert.deepEqual([...before], ['1']);
+  assert.deepEqual([...after].sort(), ['1', '2', '3', '4']);
+  assert.deepEqual([...select.rangeSelection(after, items, 3, 1, false)].sort(), ['1']);
+
+  // Custom rows (no modelId) still get a stable identity and label
+  // 没有 modelId 的自定义行同样有稳定标识与名称
+  const rows = [{ id: 'v10', title: '版本 A', totalBytes: 10 }];
+  assert.equal(
+    select.buildRowText(rows[0], { columns: 60, number: 1, nameWidth: 20, detailWidth: 0, sizeWidth: 5 }),
+    `  ${view.checkbox(false)}  1 版本 A 10 B`
+  );
+  assert.equal(select.filterItems(rows, { keyword: 'v10' }).length, 1);
 });
 
 test('i18n-tui: 主菜单 / 横幅文案逐字一致且 app.js 已接线', () => {
@@ -250,10 +348,16 @@ test('i18n-tui: 主菜单 / 横幅文案逐字一致且 app.js 已接线', () =>
     ['tui.app.menuSettings', '设置'],
     ['tui.app.menuDoctor', '环境体检'],
     ['tui.app.menuOpen', '打开下载目录'],
+    ['tui.app.menuHelp', '帮助 / 快捷键'],
     ['tui.app.menuExit', '退出'],
   ];
   for (const [key, value] of menu) assert.equal(tr(key), value, key);
   assert.equal(tr('tui.app.contextLine', { site: 's', outDir: 'd', jobs: 4, logged: 'l' }), '站点 s · 输出目录 d · 并发 4 · 登录态 l');
+  assert.equal(tr('tui.app.factSite'), '站点');
+  assert.equal(tr('tui.app.factOutDir'), '下载目录');
+  assert.equal(tr('tui.app.factJobs'), '并发');
+  assert.equal(tr('tui.app.factSession'), '登录态');
+  assert.equal(tr('tui.app.interruptNotice'), '已取消当前操作（在主菜单再按一次 Ctrl+C 退出程序）');
   assert.equal(tr('tui.app.loggedIn'), '已导出（如提示过期请重新登录）');
   assert.equal(tr('tui.app.notLoggedIn'), '未登录');
   assert.equal(tr('tui.app.operationFailed', { error: 'boom' }), '操作失败: boom');
@@ -263,7 +367,13 @@ test('i18n-tui: 主菜单 / 横幅文案逐字一致且 app.js 已接线', () =>
   // Source wiring: menu entries really go through t() instead of keeping hard-coded text
   // 源码接线：菜单项确实通过 t() 取词，而不是残留硬编码
   const source = readTui('app.js');
-  for (const key of ['tui.app.menuTitle', 'tui.app.menuDownload', 'tui.app.contextLine', 'tui.app.goodbye']) {
+  for (const key of [
+    'tui.app.menuTitle',
+    'tui.app.menuDownload',
+    'tui.app.menuHelp',
+    'tui.app.contextLine',
+    'tui.app.goodbye',
+  ]) {
     assert.ok(source.includes(`'${key}'`), `app.js 应引用 ${key}`);
   }
 });
@@ -281,10 +391,7 @@ test('i18n-tui: 下载完成摘要与数量占位符逐字一致', () => {
   assert.equal(tr('tui.download.selectTitle', { count: 12, size: '3.00 MiB' }), '选择要下载的条目（共 12 项，合计 3.00 MiB）');
   assert.equal(tr('tui.download.elapsed', { elapsed: '1 分 2 秒', file: 'logs/a.log' }), '用时 1 分 2 秒；日志文件: logs/a.log');
   assert.equal(tr('tui.download.fileCount', { count: 2 }), '2 个文件');
-  assert.equal(
-    tr('tui.download.startConfirmForce', { count: 2, size: '1.00 MiB', dir: 'D:\\out' }),
-    '开始下载 2 项，共 1.00 MiB → D:\\out？（强制重下）'
-  );
+  assert.equal(tr('tui.download.planTitle', { count: 2, size: '1.00 MiB' }), '本次计划：2 项，共 1.00 MiB');
   assert.equal(tr('tui.download.doneCount', { count: 5 }), '其中 5 项已完成（默认不勾选；如需重下可在后面选择强制重下）');
   assert.equal(tr('tui.download.currentMark'), '（当前）');
   assert.equal(tr('tui.download.unknownDate'), '未知日期');
@@ -308,11 +415,62 @@ test('i18n-tui: 下载进度面板文案逐字一致', () => {
   assert.equal(tr('tui.run.downloading'), '下载中');
   assert.equal(tr('tui.run.counts', { ok: 2, skipped: 1, failed: 0, total: 9 }), '完成 2 · 跳过 1 · 失败 0 / 共 9 项');
   assert.equal(tr('tui.run.remaining', { eta: '00:12' }), '剩余 00:12');
+  assert.equal(tr('tui.run.elapsed', { elapsed: '00:03' }), '已用 00:03');
   assert.equal(` ${tr('tui.run.retry', { attempt: 2, max: 3, code: 429 })}`, ' [第 2/3 次尝试 HTTP 429]');
   assert.equal(tr('tui.run.waiting'), '当前 · 等待下一项…（按 s 跳过当前模型，Ctrl+C 取消）');
-  assert.equal(tr('tui.run.current', { name: 'a.safetensors' }), '当前 a.safetensors');
+  assert.equal(tr('tui.run.fileLabel'), '当前文件');
   assert.equal(tr('tui.run.cancelNotice'), '收到 Ctrl+C，正在取消（再按一次强制退出）…');
   assert.equal(tr('tui.run.skipNotice'), '收到跳过请求，将跳过当前模型（已下载部分保留）…');
+});
+
+test('i18n-tui: 公共交互基元（按键提示 / 信息块 / 状态栏 / 帮助页）', () => {
+  // Every prompt ends with the same two-line key hint
+  // 每个提示后面都跟着同一套两行按键说明
+  const hints = pages.hintLines();
+  assert.equal(hints.length, 2);
+  assert.equal(hints[0], '↑↓ 选择 · 回车确认 · Esc 取消返回');
+  assert.equal(hints[1], 'Ctrl+C 取消当前操作（主菜单再按一次退出程序）');
+  assert.ok(pages.hint().includes('Esc'));
+
+  // Fact blocks align their label column and skip empty values
+  // 信息块的标签列对齐，空值不输出
+  const facts = pages.describeFacts([
+    { label: '站点', value: 'https://civitai.com' },
+    { label: '下载目录', value: 'D:\\out' },
+    { label: '代理', value: '' },
+    { label: '空值', value: null },
+  ]);
+  assert.equal(facts.length, 2);
+  assert.ok(facts[0].includes('站点') && facts[0].includes('https://civitai.com'));
+  // The value column starts at the same display column on every row (code-unit offsets differ,
+  // CJK labels are two columns wide each)
+  //
+  // 值列在每一行的「显示列」位置相同（码元下标会不同：中文标签每个字占 2 列）
+  const valueColumn = (line, value) => view.displayWidth(line.slice(0, line.indexOf(value)));
+  assert.equal(valueColumn(facts[0], 'https://civitai.com'), valueColumn(facts[1], 'D:\\out'));
+
+  // The status block of the main menu is built from the live config
+  // 主菜单的状态块由当前配置生成
+  const config = { cookiesFile: 'no-such-file-here', site: 'https://civitai.com', outDir: 'D:\\out', jobs: 2 };
+  withLanguage('zh-CN', () => {
+    const status = app.statusFacts(config);
+    assert.ok(status.compact.includes('https://civitai.com'));
+    assert.equal(status.facts.length, 4);
+    assert.equal(status.facts[3].value, '未登录');
+  });
+
+  // Help page: a boxed key reference with the version line, in both languages
+  // 帮助页：带边框的按键速查与版本行，中英双语都可用
+  const lines = pages.helpLines({ version: '1.2.3', columns: 80 });
+  const text = lines.join('\n');
+  assert.ok(text.includes('帮助 / 快捷键'), text);
+  assert.ok(text.includes('1.2.3'));
+  assert.ok(text.includes('Ctrl+C'));
+  withLanguage('en', () => {
+    const englishText = pages.helpLines({ version: '1.2.3', columns: 80 }).join('\n');
+    assert.ok(englishText.includes('Help / shortcuts'));
+    assert.ok(!CJK.test(englishText), `en: 帮助页不应含中文：${englishText}`);
+  });
 });
 
 test('i18n-tui: manage / login / settings 文案逐字一致', () => {

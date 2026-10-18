@@ -1,5 +1,21 @@
 'use strict';
 
+/**
+ * TUI flow for "download a collection": enumerate → pick items → pick versions → start.
+ *
+ * The flow is deliberately short: one question in, one full-screen confirmation out. Everything the
+ * user may want to change (output directory, concurrency, already-finished items) is collected on
+ * that confirmation screen instead of being asked one question at a time, and Esc at any point
+ * returns without starting a download.
+ *
+ *
+ * 「下载收藏集」的 TUI 流程：枚举 → 勾选条目 → 选版本 → 开始。
+ *
+ * 流程刻意做短：进来一个问题，出去一屏确认。所有可能想改的东西
+ * （输出目录、并发、已完成项）都收在这一屏里，不再逐个追问；
+ * 任何一步按 Esc 都直接返回，不会开始下载。
+ */
+
 const prompts = require('prompts');
 const { writeJson, formatBytes, mapPool } = require('../util');
 const { dataPaths, readLibrary, getVersion } = require('../storage');
@@ -13,12 +29,13 @@ const { setPin } = require('../updater');
 const { freeSpaceBytes } = require('../job');
 const { t } = require('../i18n');
 const view = require('./view');
-const { selectItems } = require('./select');
+const pages = require('./pages');
+const { selectItems, isInteractive } = require('./select');
 const { runWithProgress } = require('./run');
 
 /**
- * Rows per page in the full-screen picker (shrinks when the terminal is short).
- * 全屏选择器每页行数（终端太矮时会自动收缩）
+ * Rows per screen in the full-screen picker (shrinks when the terminal is short).
+ * 全屏选择器每屏行数（终端太矮时会自动缩小）
  */
 const PICK_PAGE_SIZE = 15;
 
@@ -32,16 +49,18 @@ function stateMatches(planItem, state) {
   return !!getVersion(prev, planItem.versionId);
 }
 
-function hasTTY() {
-  return !!(process.stdout.isTTY && process.stdin.isTTY);
-}
-
 async function fetchItems(config, collectionId) {
+  // Browser launch/navigation can stay silent for many seconds; say what is happening so a slow
+  // start is not mistaken for a frozen TUI.
+  //
+  // 浏览器启动/导航可能好几秒没有任何输出；先把正在做什么说清楚，以免把慢启动误认为卡死。
+  view.log(t('tui.download.connectingBrowser'));
   const browser = await ensureBrowser(config);
   try {
     return await fetchCollectionItems(browser, config.site, collectionId, {
       trpcPath: config.trpcPath,
       trpcInput: config.trpcInput,
+      requestTimeoutMs: config.requestTimeoutMs,
       limit: createSiteLimiter(config),
       onLog: view.log,
     });
@@ -60,53 +79,41 @@ async function prefilter(plan) {
   const available = plan.filter((p) => !p.error);
   if (available.length <= 20) return available;
 
-  if (hasTTY()) {
+  if (isInteractive()) {
     view.log(t('tui.download.prefilterHint'));
     return available;
   }
 
-  const kwAns = await prompts({
-    type: 'text',
-    name: 'kw',
-    message: t('tui.download.keywordPrompt', { count: available.length }),
+  const keyword = await pages.promptText(t('tui.download.keywordPrompt', { count: available.length }), {
+    initial: '',
   });
-  if (!kwAns || kwAns.kw === undefined) return null;
-  const keyword = String(kwAns.kw).trim().toLowerCase();
+  if (keyword === null) return null;
   let filtered = available;
   if (keyword) {
+    const needle = keyword.toLowerCase();
     filtered = filtered.filter(
-      (p) => String(p.name).toLowerCase().includes(keyword) || String(p.modelId).includes(keyword)
+      (p) => String(p.name).toLowerCase().includes(needle) || String(p.modelId).includes(needle)
     );
   }
 
   const types = [...new Set(available.map((p) => p.type).filter(Boolean))];
   if (types.length > 1) {
-    const ans = await prompts({
-      type: 'select',
-      name: 'type',
-      message: t('tui.download.filterByType'),
-      choices: [
-        { title: t('tui.download.allTypes'), value: '__all__' },
-        ...types.map((type) => ({ title: type, value: type })),
-      ],
-    });
-    if (!ans || ans.type === undefined) return null;
-    if (ans.type !== '__all__') filtered = filtered.filter((p) => p.type === ans.type);
+    const type = await pages.promptMenu(t('tui.download.filterByType'), [
+      { title: t('tui.download.allTypes'), value: '__all__' },
+      ...types.map((type_) => ({ title: type_, value: type_ })),
+    ]);
+    if (type === null) return null;
+    if (type !== '__all__') filtered = filtered.filter((p) => p.type === type);
   }
 
   const baseModels = [...new Set(available.map((p) => p.baseModel).filter(Boolean))];
   if (baseModels.length > 1 && baseModels.length <= 12) {
-    const ans = await prompts({
-      type: 'select',
-      name: 'base',
-      message: t('tui.download.filterByBaseModel'),
-      choices: [
-        { title: t('tui.download.allBaseModels'), value: '__all__' },
-        ...baseModels.map((b) => ({ title: b, value: b })),
-      ],
-    });
-    if (!ans || ans.base === undefined) return null;
-    if (ans.base !== '__all__') filtered = filtered.filter((p) => p.baseModel === ans.base);
+    const base = await pages.promptMenu(t('tui.download.filterByBaseModel'), [
+      { title: t('tui.download.allBaseModels'), value: '__all__' },
+      ...baseModels.map((b) => ({ title: b, value: b })),
+    ]);
+    if (base === null) return null;
+    if (base !== '__all__') filtered = filtered.filter((p) => p.baseModel === base);
   }
 
   if (!filtered.length) {
@@ -119,11 +126,25 @@ async function prefilter(plan) {
   return filtered;
 }
 
-async function pickItems(plan, totalBytes, state) {
+/**
+ * One-line recap of the enumerated items, shown as the picker takes over the screen.
+ * 枚举结果的一行摘要，在选择器接管屏幕时显示。
+ */
+function prefilterSummary(available, state) {
+  const bytes = available.reduce((sum, p) => sum + (p.totalBytes || 0), 0);
+  const done = available.filter((p) => stateMatches(p, state)).length;
+  return t('tui.download.prefilterSummary', {
+    count: available.length,
+    size: formatBytes(bytes),
+    done: done ? t('tui.download.prefilterDone', { count: done }) : '',
+  }).trim();
+}
+
+async function pickItems(plan, state) {
   const failed = plan.filter((p) => p.error);
   if (failed.length) view.log(t('tui.download.metaExcluded', { count: failed.length }));
 
-  let available = await prefilter(plan);
+  const available = await prefilter(plan);
   if (!available) return null;
   if (!available.length) {
     view.log(t('tui.download.noDownloadable'));
@@ -147,34 +168,41 @@ async function pickItems(plan, totalBytes, state) {
       state[item.modelId] && state[item.modelId].pinnedVersionId ? t('tui.download.statusPinned') : null,
     ]
       .filter(Boolean)
-      .join(' · ');
+      .join(view.separator());
 
   const selected = new Set();
   const selectTitle = t('tui.download.selectTitle', { count: available.length, size: formatBytes(bytes) });
+  const initialSelected = available.filter((p) => !state[p.modelId]).map((p) => String(p.modelId));
 
-  // Prefer the full-screen interactive picker (search, sort and paging are all built in);
+  // Prefer the full-screen interactive picker (search, sort and scrolling are all built in);
   // fall back to the prompts multiselect when there is no TTY or the terminal misbehaves.
   //
-  // 首选全屏交互选择器（搜索/排序/翻页都在里面）；非 TTY 或终端异常时回退到 prompts 多选
-  if (hasTTY()) {
+  // 首选全屏交互选择器（搜索/排序/滚动都在里面）；非 TTY 或终端异常时回退到 prompts 多选
+  if (isInteractive()) {
     const picked = await selectItems(available, {
       pageSize: PICK_PAGE_SIZE,
-      initialSelected: available.filter((p) => !state[p.modelId]).map((p) => String(p.modelId)),
+      initialSelected,
       title: selectTitle,
       state,
       describe,
+      // The picker takes over the whole screen, so the enumeration summary would be gone: print it
+      // as the first line of the takeover.
+      //
+      // 选择器会接管整屏，之前的枚举摘要会消失：把它作为接管后的第一行打印出来。
+      onEnter: () => console.log(view.colors.dim(`  ${prefilterSummary(available, state)}`)),
     });
     if (!picked) {
-      view.log(t('tui.download.selectionCancelled'));
+      view.decision('tui.view.decisionCancelled');
       return null;
     }
     for (const id of picked.selected) selected.add(String(id));
+    view.decision('tui.view.decisionPicked', { count: selected.size });
   } else {
     const ans = await prompts({
       type: 'multiselect',
       name: 'ids',
-      message: selectTitle,
-      instructions: t('tui.download.multiselectInstructions'),
+      message: `${selectTitle}${pages.hint()}`,
+      instructions: t('tui.pages.multiselectInstructions'),
       choices: available.map((p) => ({
         title: view.truncate(p.name, 70),
         value: p.modelId,
@@ -215,6 +243,30 @@ async function fetchVersions(config, selectedPlan) {
   });
 }
 
+/**
+ * Version rows of one plan item, shaped for the shared picker.
+ * 把计划项的版本转成公共选择器需要的行。
+ */
+function versionChoices(config, item) {
+  return (item.versions || []).map((v) => {
+    const files = extractFiles(v.raw, config.site, {
+      fileTypes: config.fileTypes,
+      primaryOnly: config.primaryOnly,
+    });
+    return {
+      modelId: String(v.id),
+      name: view.truncate(String(v.name), 64),
+      type: item.type || '',
+      baseModel: v.baseModel || '',
+      totalBytes: files.reduce((sum, f) => sum + (Number(f.bytes) || 0), 0),
+      fileCount: files.length,
+      publishedAt: v.publishedAt || null,
+      current: String(v.id) === String(item.versionId),
+      raw: v.raw,
+    };
+  });
+}
+
 async function chooseVersions(config, selectedPlan) {
   const multi = selectedPlan.filter((p) => p.versions && p.versions.length > 1);
   if (!multi.length) {
@@ -225,40 +277,29 @@ async function chooseVersions(config, selectedPlan) {
 
   const pinned = [];
   for (const item of multi) {
-    const versions = item.versions;
-    const choices = versions.map((v) => {
-      const files = extractFiles(v.raw, config.site, {
-        fileTypes: config.fileTypes,
-        primaryOnly: config.primaryOnly,
-      });
-      const bytes = files.reduce((sum, f) => sum + f.bytes, 0);
-      const current = String(v.id) === String(item.versionId) ? t('tui.download.currentMark') : '';
-      return {
-        title: view.truncate(`${v.name}${current}`, 64),
-        value: v.id,
-        description: t('tui.download.versionDescription', {
-          baseModel: v.baseModel || '-',
-          files: t('tui.download.fileCount', { count: files.length }),
-          size: formatBytes(bytes),
-          date: v.publishedAt ? String(v.publishedAt).slice(0, 10) : t('tui.download.unknownDate'),
-        }),
-      };
-    });
-    const initial = Math.max(
+    const rows = versionChoices(config, item);
+    const initialCursor = Math.max(
       0,
-      versions.findIndex((v) => String(v.id) === String(item.versionId))
+      rows.findIndex((row) => String(row.modelId) === String(item.versionId))
     );
-    const ans = await prompts({
-      type: 'select',
-      name: 'versionId',
+    const chosen = await pages.pickOne(rows, {
       message: t('tui.download.chooseVersionTitle', { name: view.truncate(item.name, 56) }),
-      choices,
-      initial,
+      title: t('tui.download.chooseVersionTitle', { name: view.truncate(item.name, 56) }),
+      describe: (row) =>
+        [
+          row.baseModel || '-',
+          t('tui.download.fileCount', { count: row.fileCount }),
+          formatBytes(row.totalBytes || 0),
+          row.publishedAt ? String(row.publishedAt).slice(0, 10) : t('tui.download.unknownDate'),
+          row.current ? t('tui.download.currentMark') : null,
+        ]
+          .filter(Boolean)
+          .join(view.separator()),
+      initialCursor,
     });
-    if (!ans || ans.versionId === undefined) return false;
+    if (!chosen) return false;
 
-    if (String(ans.versionId) !== String(item.versionId)) {
-      const chosen = versions.find((v) => String(v.id) === String(ans.versionId));
+    if (String(chosen.modelId) !== String(item.versionId)) {
       Object.assign(
         item,
         versionToItem(config.site, chosen.raw, {
@@ -267,18 +308,13 @@ async function chooseVersions(config, selectedPlan) {
         })
       );
       view.log(t('tui.download.versionSwitched', { name: item.name, version: item.versionName }));
-      pinned.push({ item, versionId: ans.versionId });
+      pinned.push({ item, versionId: chosen.modelId });
     }
   }
 
   if (pinned.length) {
-    const ans = await prompts({
-      type: 'confirm',
-      name: 'pin',
-      message: t('tui.download.pinConfirm', { count: pinned.length }),
-      initial: true,
-    });
-    if (ans && ans.pin) {
+    const pin = await pages.promptConfirm(t('tui.download.pinConfirm', { count: pinned.length }));
+    if (pin) {
       for (const p of pinned) p.item.pinVersionId = p.versionId;
       view.log(t('tui.download.pinMarked'));
     }
@@ -286,87 +322,114 @@ async function chooseVersions(config, selectedPlan) {
   return true;
 }
 
+/**
+ * Output directory + concurrency + plan, asked on a single confirmation screen.
+ * 输出目录 + 并发 + 计划，收在一屏确认里。
+ */
 async function askOptions(config, selectedPlan, state) {
-  const outAns = await prompts({
-    type: 'text',
-    name: 'dir',
-    message: t('tui.download.outDirPrompt', { root: config.root }),
-    initial: config.outDir,
-    validate: (v) => (String(v).trim() ? true : t('tui.download.notEmpty')),
-  });
-  if (!outAns || outAns.dir === undefined) return null;
-  const outDir = resolveOutDir(config, String(outAns.dir).trim());
-
-  let force = false;
+  let outDir = resolveOutDir(config, config.outDir);
   const completedSelected = selectedPlan.filter((p) => stateMatches(p, state)).length;
-  if (completedSelected) {
-    const fAns = await prompts({
-      type: 'confirm',
-      name: 'force',
-      message: t('tui.download.forceConfirm', { count: completedSelected }),
-      initial: false,
-    });
-    if (!fAns) return null;
-    force = !!fAns.force;
-  }
-
+  let force = false;
   const selectedBytes = selectedPlan.reduce((sum, p) => sum + (p.totalBytes || 0), 0);
-  const free = freeSpaceBytes(config.outDir);
-  if (free !== null && selectedBytes > free) {
-    view.log(
-      view.colors.yellow(
-        t('tui.download.lowSpace', {
-          planned: formatBytes(selectedBytes),
-          dir: outDir,
-          free: formatBytes(free),
-        })
+
+  for (;;) {
+    const lines = selectedPlan.slice(0, 5).map((p) => {
+      const mark = stateMatches(p, state) ? t('tui.download.statusDownloaded') : '';
+      return `  ${view.colors.dim('·')} ${view.truncateTo(p.name, 44)}  ${view.colors.dim(
+        [formatBytes(p.totalBytes || 0), mark].filter(Boolean).join(view.separator())
+      )}`;
+    });
+    console.log('');
+    console.log(
+      view.colors.bold(
+        `  ${t('tui.download.planTitle', { count: selectedPlan.length, size: formatBytes(selectedBytes) })}`
       )
     );
-  }
+    for (const line of lines) console.log(line);
+    if (selectedPlan.length > lines.length) {
+      console.log(view.colors.dim(`  ${t('tui.download.planMore', { count: selectedPlan.length - lines.length })}`));
+    }
 
-  let concurrency = Number(config.jobs) || 1;
-  if (concurrency <= 1 && selectedPlan.length > 1) {
-    const jobsAns = await prompts({
-      type: 'select',
-      name: 'jobs',
-      message: t('tui.download.concurrencyPrompt'),
-      choices: [
+    const choice = await pages.promptMenu(t('tui.download.optionPrompt'), [
+      {
+        title: t('tui.download.startNow'),
+        value: 'go',
+        description: t('tui.download.startNowDesc', { count: selectedPlan.length }),
+      },
+      {
+        title: t('tui.download.changeDir'),
+        value: 'dir',
+        description: t('tui.download.changeDirDesc', { root: config.root, dir: outDir }),
+      },
+      {
+        title: t('tui.download.changeJobs'),
+        value: 'jobs',
+        description: t('tui.download.jobsCurrent', { jobs: Number(config.jobs) || 1 }),
+      },
+      ...(completedSelected
+        ? [
+            {
+              title: force ? t('tui.download.forceOn') : t('tui.download.forceOff'),
+              value: 'force',
+              description: t('tui.download.forceToggleDesc', { count: completedSelected }),
+            },
+          ]
+        : []),
+      { title: t('tui.manage.back'), value: 'back' },
+    ]);
+    if (choice === null || choice === 'back') return null;
+
+    if (choice === 'dir') {
+      const text = await pages.promptOutDir(config, outDir);
+      if (text !== null) outDir = resolveOutDir(config, text);
+      continue;
+    }
+    if (choice === 'jobs') {
+      const jobs = await pages.promptMenu(t('tui.download.concurrencyPrompt'), [
         { title: t('tui.download.jobsOne'), value: 1 },
         { title: t('tui.download.jobsTwo'), value: 2 },
         { title: t('tui.download.jobsThree'), value: 3 },
-      ],
-      initial: 0,
-    });
-    if (!jobsAns || jobsAns.jobs === undefined) return null;
-    concurrency = jobsAns.jobs;
+      ]);
+      if (jobs !== null) config.jobs = jobs;
+      continue;
+    }
+    if (choice === 'force') {
+      force = !force;
+      continue;
+    }
+
+    const free = freeSpaceBytes(outDir);
+    if (free !== null && selectedBytes > free) {
+      view.log(
+        view.colors.yellow(
+          t('tui.download.lowSpace', {
+            planned: formatBytes(selectedBytes),
+            dir: outDir,
+            free: formatBytes(free),
+          })
+        )
+      );
+      const anyway = await pages.promptConfirm(t('tui.download.lowSpaceConfirm'));
+      if (!anyway) continue;
+    }
+    return { outDir, force, selectedBytes, jobs: Number(config.jobs) || 1 };
   }
-
-  const go = await prompts({
-    type: 'confirm',
-    name: 'ok',
-    message: t(force ? 'tui.download.startConfirmForce' : 'tui.download.startConfirm', {
-      count: selectedPlan.length,
-      size: formatBytes(selectedBytes),
-      dir: outDir,
-    }),
-    initial: true,
-  });
-  if (!go || !go.ok) return null;
-
-  return { outDir, force, selectedBytes, jobs: concurrency };
 }
 
 async function downloadFlow(config) {
-  const idAns = await prompts({
-    type: 'text',
-    name: 'id',
-    message: t('tui.download.collectionIdPrompt'),
+  const rawId = await pages.promptText(t('tui.download.collectionIdPrompt'), {
     validate: (v) => (parseCollectionId(v) ? true : t('tui.download.invalidCollectionId')),
   });
-  if (!idAns || idAns.id === undefined) return;
-  const collectionId = parseCollectionId(idAns.id);
+  if (rawId === null) return;
+  const collectionId = parseCollectionId(rawId);
+  if (!collectionId) {
+    view.log(t('tui.download.invalidCollectionId'));
+    return;
+  }
 
-  const items = await fetchItems(config, collectionId);
+  const items = await pages.withSpinner(t('tui.download.enumerating', { collectionId }), () =>
+    fetchItems(config, collectionId)
+  );
   if (!items.length) {
     view.log(t('tui.download.collectionEmpty'));
     return;
@@ -392,28 +455,23 @@ async function downloadFlow(config) {
   });
 
   const { entries: state } = readLibrary(config, { allowCorrupt: true });
-  const selectedPlan = await pickItems(plan, totalBytes, state);
+  const selectedPlan = await pickItems(plan, state);
   if (!selectedPlan) return;
 
-  const strategy = await prompts({
-    type: 'select',
-    name: 'mode',
-    message: t('tui.download.versionStrategy'),
-    choices: [
-      {
-        title: t('tui.download.strategyLatest'),
-        value: 'latest',
-        description: t('tui.download.strategyLatestDesc'),
-      },
-      {
-        title: t('tui.download.strategyChoose'),
-        value: 'choose',
-        description: t('tui.download.strategyChooseDesc'),
-      },
-    ],
-  });
-  if (!strategy || strategy.mode === undefined) return;
-  if (strategy.mode === 'choose') {
+  const strategy = await pages.promptMenu(t('tui.download.versionStrategy'), [
+    {
+      title: t('tui.download.strategyLatest'),
+      value: 'latest',
+      description: t('tui.download.strategyLatestDesc'),
+    },
+    {
+      title: t('tui.download.strategyChoose'),
+      value: 'choose',
+      description: t('tui.download.strategyChooseDesc'),
+    },
+  ]);
+  if (strategy === null) return;
+  if (strategy === 'choose') {
     view.log(t('tui.download.fetchVersions'));
     await fetchVersions(config, selectedPlan);
     if (!(await chooseVersions(config, selectedPlan))) return;
@@ -473,15 +531,10 @@ async function downloadFlow(config) {
   );
   view.bell();
 
-  const openAns = await prompts({
-    type: 'confirm',
-    name: 'open',
-    message: t('tui.download.openDirConfirm'),
-    initial: false,
-  });
-  if (openAns && openAns.open && view.openDir(options.outDir)) {
+  const openIt = await pages.promptConfirm(t('tui.download.openDirConfirm'), { initial: false });
+  if (openIt && view.openDir(options.outDir)) {
     view.log(t('tui.download.opened', { dir: options.outDir }));
   }
 }
 
-module.exports = { downloadFlow, prefilter };
+module.exports = { downloadFlow, prefilter, askOptions, versionChoices };

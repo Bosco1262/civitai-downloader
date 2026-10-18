@@ -10,6 +10,7 @@ Download every model file in a [Civitai](https://civitai.com) collection in bulk
 
 ## Features
 
+- **Web UI** (`npm run web`, or `node web.js`): a local browser interface that covers the same ground as the terminal UI — dashboard, collection enumeration with a filterable pick list, per-model version switching, live progress with logs, model library with version pinning, update checks, verification/repair, settings editor, browser login and an environment check. Dependency-free (Node's own `http` server + vanilla JavaScript, no build step) and bound to `127.0.0.1` by default
 - **Terminal UI** (`npm run ui`): menu-driven operations — login, filtering/picking collection entries to download, live progress bars and logs, completion-state management, version pinning, local verify and repair, environment check, settings editor. No commands to memorize
 - Enumerate collection entries in one go (automatic paging, dedup and merge, rate limiting)
 - Automatically fetch each model's latest version and its primary Model file's: file name / size / SHA256 / direct download URL
@@ -77,7 +78,55 @@ npm run doctor                          # recommended as a first check
 
 > Tip: if Chinese text is garbled in your terminal, run `chcp 65001` first, or switch to Windows Terminal / the VS Code terminal.
 
-### 0. Interactive UI (recommended)
+### 0a. Web UI (recommended)
+
+```powershell
+npm run web
+```
+
+This starts a local server (default <http://127.0.0.1:4310/>) and opens the browser. The server is
+dependency-free (Node's own `http` module plus one page of vanilla JavaScript — nothing to build),
+listens on `127.0.0.1` only, and shares the same `config.json`, session and model library as the CLI
+and the TUI.
+
+Pages:
+
+- **Dashboard**: site, output directory, free space, session state, library totals, a doctor run, a
+  session probe, and the collection snapshots — click one to see its members and what changed
+  (added / removed / version changed) and to reset the changed records, or jump straight into the
+  download page
+- **Download**: paste a collection ID/URL → the server enumerates it and fetches every item's files →
+  filter by keyword/type/base model, sort, select all/new/none, **switch the version of any item**,
+  choose the output directory and concurrency → start. The same page also accepts **pasted single
+  models** (model URL / `model:<id>` / `version:<id>`, one per line) for downloads that need no
+  collection. Progress, speed, ETA, the file being written and the full log stream live in a bottom
+  drawer; the download can be cancelled from there
+- **Library**: searchable table (by collection too); click a row for versions, folders, pinning,
+  "download this version", per-model check/verify and record deletion (optionally with files)
+- **Updates**: pick collection snapshots and/or library models, choose fast or deep (SHA256) →
+  reports per target → **download only the changed items** in one click
+- **Verify**: verify the whole library or selected models, deep or size-only → broken files listed
+  with reasons and a one-click re-download
+- **Settings**: grouped form for `config.json`; values are validated before they are written, and a
+  language change reloads the interface
+- **Login**: start the browser login, then press "I have finished logging in" when done; or just
+  probe the saved session
+- **Help**: every workflow and its CLI equivalent
+
+Options:
+
+```powershell
+node web.js --port 4310 --host 127.0.0.1   # the defaults
+node web.js --no-open                      # do not open a browser
+node web.js --lang en                      # interface language for this run
+node web.js --help
+```
+
+> The TUI (`npm run ui`) and the CLI stay available: all three share the same configuration and
+> library, so they can be mixed freely. The web UI prints its events over SSE and keeps one job at a
+> time, which is what makes the terminal and browser views agree on what is running.
+
+### 0b. Terminal UI
 
 ```powershell
 npm run ui
@@ -85,30 +134,38 @@ npm run ui
 
 Menu items:
 
-- **Download a collection**: enter a collection ID/URL → entries are enumerated automatically with their sizes → **filter and tick them in a full-screen list** (search / by type / by base model / sort / paginate) → choose a version strategy (all latest / pick one by one, pinning as you go) → choose the output directory and concurrency → live progress bars + logs → open the download folder directly when it finishes
-- **Model library**: download single models, list the library (optionally filtered by collection membership), check updates, verify/repair, pin/unpin and delete records
-- **Check for updates**: pick a collection snapshot (or all) → choose a fast or deep check → print the report → download only the changed items after confirmation
+- **Download a collection**: enter a collection ID/URL → entries are enumerated automatically with their sizes → **filter and tick them in a full-screen list** (search / by type / by base model / sort) → choose a version strategy (all latest / pick one by one, pinning as you go) → **one confirmation screen** shows the plan and lets you change the output directory, the concurrency and how already-finished items are handled → live progress panel + logs → open the download folder directly when it finishes
+- **Model library**: download single models (paste references, or **pick them from the library**), **browse** one model with its versions, folders and pin state, list the library (optionally filtered by collection membership), check updates, verify/repair, pin/unpin and delete records
+- **Check for updates**: pick a collection snapshot (or all, or one from a searchable list) → choose a fast or deep check → print the report → download only the changed items after confirmation
 - **Verify / repair local files**: verify the library against the files on disk (optionally with deep SHA256 checks) and re-download only the broken/missing ones in one go
 - **Login / refresh login**: walk through the login flow, or just check whether the current session is still valid
 - **Collection members and changes**: show a snapshot's enumeration time and its added/removed/version-changed members, and reset a model for re-download
-- **Settings**: edit `config.json` right in the UI (output directory, site, concurrency, proxy, rate limit, file types, …)
+- **Settings**: the current values are shown as a summary; open one group (basics / downloads / network / notifications), and every change is listed for review before anything is written to `config.json`
 - **Environment check**: check the runtime environment in one go
+- **Help / shortcuts**: the key reference (also available with `?` inside any list)
+- **Open the download directory**
 
-Controls: `↑↓` move, `space` toggles, `enter` confirms, `Ctrl+C` cancels the current operation or exits; during a download `Ctrl+C` cancels safely (already downloaded parts are kept and can be resumed) and `s` skips the current model.
+Controls: `↑↓` move, `space` toggles, `enter` confirms, `Esc` goes back one level (in the main menu it quits), `Ctrl+C` cancels the current operation — press it twice in the main menu to exit; during a download `Ctrl+C` cancels safely (already downloaded parts are kept and can be resumed) and `s` skips the current model.
 
 Keys in the item-selection screen (useful when there are many entries):
 
 | Key | Action |
 |---|---|
-| `↑`/`↓`, `k`/`j` | Move the cursor; `Home`/`End` jump to the first/last item |
-| `PgUp`/`PgDn`, `[`/`]` | Page up / down |
-| `space` | Tick / untick the current item |
+| `↑`/`↓`, `k`/`j` | Move the cursor (the list scrolls along so the cursor stays visible); `Home`/`End` jump to the first/last item |
+| `PgUp`/`PgDn`, `[`/`]` | Scroll one screen up / down |
+| `1`-`9` | Jump to row n; `Shift`+`1`-`9` toggles row n directly |
+| `space` | Tick / untick the current item; `Shift`+`↑`/`↓` extends the selection |
 | `a` / `i` | Select all **current filter results** (press again to clear) / invert the selection |
 | `/` | Search (Enter exits and keeps the keyword, `Esc` exits and clears it, backspace is supported) |
 | `t` / `b` / `s` | Cycle the type / base model / sort order (default, name, largest first, smallest first) |
+| `?` | Show the key reference of the screen you are in |
 | `enter` | Confirm (you are warned when nothing is selected); `Esc`/`q`/`Ctrl+C` cancels |
 
-> In a non-interactive environment (when output is redirected) the tool falls back to the original step-by-step prompts plus a multi-select list.
+The footer of every list only describes the keys that do something right now, and the status line shows the visible row range, the selection and the totals. The same picker drives every "choose one / choose several" step, so there is only one set of keys to learn.
+
+Full-screen pages (the picker, the library browser and the help page) open in the terminal's alternate screen buffer, like `less` or `vim`: when they close, the menu, the list you were reading and the log lines are restored exactly as they were, and only a one-line echo of your decision is left behind. Nothing has to be re-read after leaving a screen.
+
+> In a non-interactive environment (when output is redirected) the tool falls back to the original step-by-step prompts plus a multi-select list; set `CIVITAI_PLAIN=1` to force that mode.
 
 > If you prefer the command line, you can keep using the `login` / `list` / `download` / `check` / `verify` commands below — both share the same config, login session and completion records.
 
@@ -323,12 +380,13 @@ npm run pin    -- --list                         # list every pinned model
 
 ```
 civitai-collection-downloader/
-├─ ui.js                   # terminal UI entry point (npm run ui)
-├─ cli.js                  # command-line entry point (login / list / download / check / verify / pin / doctor)
-├─ config.json             # your configuration (ignored by .gitignore)
-├─ config.example.json     # configuration sample
-├─ scripts/run-tests.js    # sequential test runner (replaces node --test in restricted environments)
-├─ tests/                  # unit and integration tests (node:test)
+├─ web.js                   # web UI entry point (npm run web; local server + browser UI)
+├─ ui.js                    # terminal UI entry point (npm run ui)
+├─ cli.js                   # command-line entry point (login / list / download / check / verify / pin / doctor)
+├─ config.json              # your configuration (ignored by .gitignore)
+├─ config.example.json      # configuration sample
+├─ scripts/run-tests.js     # sequential test runner (replaces node --test in restricted environments)
+├─ tests/                   # unit and integration tests (node:test)
 ├─ src/
 │  ├─ config.js            # config loading, validation and path resolution
 │  ├─ util.js              # logging / hashing (worker thread) / file name sanitizing / long paths / argument parsing / concurrency pool / retries
@@ -345,18 +403,33 @@ civitai-collection-downloader/
 │  ├─ dedup.js             # cross-collection content dedup index (SHA256 → path, hardlink/copy)
 │  ├─ notify.js            # job-finished notifications (bell / system notification / Webhook)
 │  ├─ i18n.js              # message engine (t / placeholders / language fallback)
-│  ├─ i18n/                # message tables (zh-CN.js / en.js; all CLI + core module + TUI strings)
+│  ├─ i18n/                # message tables (zh-CN.js / en.js; CLI + core module + TUI strings)
+│  │  └─ web/              # web UI strings (zh-CN.json / en.json; served through /api/i18n)
 │  ├─ ratelimit.js         # steady-rate limiter
 │  ├─ hashWorker.js        # SHA256 worker thread
 │  ├─ downloader.js        # curl / aria2c downloads (resume / ETag check / retries / cancellation)
-│  ├─ job.js               # main download loop (shared by the CLI and the TUI)
+│  ├─ job.js               # main download loop (shared by the CLI and both UIs)
 │  ├─ updater.js           # update checks (fast/deep) and version pinning
 │  ├─ loginFlow.js         # login and session validation
 │  ├─ commandSpec.js       # command and flag registry
 │  ├─ commands/            # command-line subcommands
 │  │  ├─ login.js  list.js  download.js  check.js  verify.js  doctor.js  pin.js  models.js
+│  ├─ webui/               # web UI
+│  │  ├─ server.js         # http server: static files, JSON API, SSE stream, request guards
+│  │  ├─ api.js            # route table (method + anchored pattern → business action)
+│  │  ├─ actions.js        # business actions built on the existing core modules
+│  │  ├─ jobs.js           # job manager (one job at a time, logs, progress, cancellation)
+│  │  ├─ progress.js       # download progress arithmetic (bytes on disk, speed, ETA)
+│  │  ├─ http.js           # JSON bodies, static files, path-traversal guard, SSE writer
+│  │  └─ public/           # index.html + styles.css + app.js (no build step)
 │  └─ tui/                 # terminal UI
-│     ├─ app.js  view.js  select.js  run.js  download.js  check.js  login.js  manage.js  settings.js  models.js
+│     ├─ app.js            # banner / status line / main menu / dispatch
+│     ├─ pages.js          # shared interaction: menus, confirmations, list pickers, help page
+│     ├─ select.js         # full-screen picker (scrolling window, search/filter/sort, help overlay)
+│     ├─ keys.js           # raw keyboard handling (Ctrl+C / Ctrl+Z semantics)
+│     ├─ layout.js         # terminal metrics and glyph set (ASCII fallback)
+│     ├─ view.js  run.js   # screen helpers and the download progress panel
+│     └─ download.js  check.js  models.js  login.js  manage.js  settings.js
 └─ .data/                  # runtime data (session / cookies / cache / state / logs)
 ```
 
@@ -375,7 +448,7 @@ npm test           # node --test tests/ (the standard way)
 npm run test:seq   # run sequentially in one process (for restricted environments where node --test child-process pipes are rejected)
 ```
 
-Coverage: argument parsing, atomic writes and corrupt-state handling, manifest comparison (including renames/additions/removals), download resume (complete parts, 416, changed ETag, hash mismatch, cancellation, exhausted retries), config validation and site isolation, API retries/rate limiting/timeouts, aria2 arguments and engine selection, content dedup, notification payloads, the three message layers (CLI / core modules / TUI) with their Chinese-English switching, the pure functions of the TUI selector (filter/sort/paging/rendering), and one end-to-end integration path (enumerate → metadata → download → state → check for updates → repair → resume from a checkpoint).
+Coverage: argument parsing, atomic writes and corrupt-state handling, manifest comparison (including renames/additions/removals), download resume (complete parts, 416, changed ETag, hash mismatch, cancellation, exhausted retries), config validation and site isolation, API retries/rate limiting/timeouts, aria2 arguments and engine selection, content dedup, notification payloads, the three message layers (CLI / core modules / TUI) with their Chinese-English switching, the pure functions of the TUI layer (selector filtering/sorting/scrolling-window/rendering, menu and help-page building, progress-panel lines, key semantics, terminal metrics), the web UI (job manager, progress arithmetic, path-traversal guard, HTTP API and request guards, static layer and SPA fallback, `web.*` i18n contract), and one end-to-end integration path (enumerate → metadata → download → state → check for updates → repair → resume from a checkpoint).
 
 Test files: `tests/{util,storage,config,manifest,api,downloader,commands,platform,i18n,i18n-cli,i18n-core,i18n-tui,select,models,models-cli,integration}.test.js`.
 
@@ -414,6 +487,8 @@ Run `npm run login` again; `npm run login -- --check` quickly confirms the sessi
 **9d. Where did the old `state-*.json` files go?** The new format (schema v1) does not read them: on the first run they are moved into `.data/legacy/` and a notice is printed. Nothing is deleted and there is no migration, so a fresh start is expected.
 
 **10. The site endpoints changed — what now?** Use `npm run doctor` and the logs to find out which request fails; the enumeration endpoint can be overridden with `trpcPath` / `trpcInput` in `config.json`, with no code changes needed.
+
+**11. The TUI looks frozen — what should I do?** Every page-context request has a deadline (30 s), so a stalled connection or a wedged browser tab now fails with a message instead of hanging. Long phases (browser startup, SHA256 verification) print a phase line and a "still waiting…" heartbeat every 15 s. If a screen still stops responding, press `Ctrl+C` once to cancel (twice to quit); set `CIVITAI_TUI_DEBUG=1` and reproduce — key events, raw-mode takeovers and screen exits are then appended to `.data/tui-debug.log`. The terminal is always restored on exit (cursor visible, raw mode off, alternate screen left), so a crashed run cannot leave your shell in a broken state.
 
 ## Disclaimer
 

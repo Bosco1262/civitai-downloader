@@ -25,9 +25,20 @@
 //  - 当前语言缺某个键时，先回退英文、再回退中文基准表；
 //  - 不引入任何依赖，便于测试与在 worker 中使用。
 
+// The web UI keeps its strings in their own JSON tables: the browser downloads them through
+// /api/i18n, and removing the web UI removes those strings with it (the CLI/TUI catalogs stay
+// untouched). They are merged here so `t()`, `missingKeys()` and the tests see one catalog.
+//
+// Web UI 的文案放在独立的 JSON 表里：浏览器通过 /api/i18n 取用，删除 Web UI 时这些文案一并消失，
+// CLI/TUI 的语言包保持原样。这里合并进来，让 `t()`、`missingKeys()` 与测试看到同一份语言包。
+const webTables = {
+  'zh-CN': require('./i18n/web/zh-CN.json'),
+  en: require('./i18n/web/en.json'),
+};
+
 const catalogs = {
-  'zh-CN': require('./i18n/zh-CN'),
-  en: require('./i18n/en'),
+  'zh-CN': { ...require('./i18n/zh-CN'), ...webTables['zh-CN'] },
+  en: { ...require('./i18n/en'), ...webTables.en },
 };
 
 // Key-set baseline: both catalogs must stay in sync (the tests enforce it).
@@ -227,6 +238,7 @@ module.exports = {
   createTranslator,
   interpolate,
   extractLanguageArg,
+  webTables,
   BASE,
   FALLBACK,
 };

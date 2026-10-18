@@ -84,7 +84,17 @@ function longPathCheck(dir) {
   }
 }
 
-async function main(config, args) {
+/**
+ * Collect every check as structured items (no printing), so the CLI can render them as text and the
+ * web UI can render them as cards from the same source.
+ *
+ * 把所有检查收集成结构化条目（不打印），命令行负责渲染成文本、Web UI 渲染成卡片，两者共用同一份结果。
+ *
+ * @param {object} config
+ * @param {{deep?:boolean}} [opts]
+ * @returns {Promise<Array<{name:string,status:'ok'|'warn'|'fail',detail:string,hint?:string}>>}
+ */
+async function collect(config, opts = {}) {
   const rep = makeReport();
 
   rep.add(
@@ -278,7 +288,7 @@ async function main(config, args) {
         : t('doctor.languageFallback', { language: languageInfo.language });
   rep.add(t('doctor.itemLanguage'), 'ok', languageText);
 
-  if (args && args.flags.deep) {
+  if (opts.deep) {
     try {
       const { checkLogin } = require('../loginFlow');
       const probe = await checkLogin(config, { log: () => {} });
@@ -292,6 +302,16 @@ async function main(config, args) {
       rep.add(t('doctor.itemLoginProbe'), 'fail', e.message);
     }
   }
+
+  return rep.items;
+}
+
+/**
+ * CLI entry: run the checks and print them.
+ * 命令行入口：执行检查并打印。
+ */
+async function main(config, args) {
+  const rep = { items: await collect(config, { deep: !!(args && args.flags.deep) }) };
 
   if (args && args.flags.json) {
     console.log(JSON.stringify(rep.items, null, 2));
@@ -320,4 +340,4 @@ async function main(config, args) {
   if (rep.items.some((i) => i.status === 'fail')) process.exitCode = 1;
 }
 
-module.exports = { main, usage, parseCookieFile, longPathCheck };
+module.exports = { main, collect, usage, parseCookieFile, longPathCheck };

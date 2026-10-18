@@ -34,11 +34,12 @@ function usage() {
  * 校验给定模型的全部版本。
  * @param {object} config
  * @param {Array<string|number>} modelIds
- * @param {{noHash?:boolean, label?:string}} [opts]
+ * @param {{noHash?:boolean, label?:string, onProgress?:(info:{index:number,total:number,modelId:string,name:string})=>void}} [opts]
  * @returns {Promise<object>}
  */
 async function verifyModels(config, modelIds, opts = {}) {
   const { entries, corrupt } = readLibrary(config, { allowCorrupt: true });
+  const onProgress = typeof opts.onProgress === 'function' ? opts.onProgress : null;
   const result = {
     label: opts.label || t('verify.allLabel'),
     modelIds: modelIds.map(String),
@@ -55,6 +56,16 @@ async function verifyModels(config, modelIds, opts = {}) {
     const entry = entries[String(modelId)];
     if (!entry) continue;
     result.total++;
+    // Progress first: hashing a large library is minutes of silence otherwise, which looks frozen.
+    // 先报进度：否则校验大模型库是几分钟的静默，看起来像卡死。
+    if (onProgress) {
+      onProgress({
+        index: result.total,
+        total: result.modelIds.length,
+        modelId: String(modelId),
+        name: entry.name || String(modelId),
+      });
+    }
     const per = await checkModelFiles(config, entry, { verifyFiles: !opts.noHash });
     result.versions += per.perVersion.length;
 

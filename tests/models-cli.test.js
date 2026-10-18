@@ -34,14 +34,19 @@ const download = require('../src/commands/download');
 
 // ---------------------------------------------------------------------------
 // TUI: replace prompts with scripted answers and inject offline deps into the single-model check
-// (must be installed before require('../src/tui/models'), because the module destructures these functions on load)
+//
+// The stub must be installed before `../src/tui/models` is required: the TUI resolves `prompts` on
+// first use (not at load time), so replacing the module afterwards would leave the already-loaded
+// real module in place and the flows would wait for keyboard input.
+//
 //
 // 提示改为脚本化答案，并给单模型检查注入离线依赖
-// 必须在加载 TUI 模型模块之前安装，因为该模块加载时会解构这些函数
+//
+// 替身必须在 require('../src/tui/models') 之前装好：TUI 是「首次使用时」才解析 prompts
+// （而不是加载时），装晚了真实模块已经被加载，流程会停下来等键盘输入。
 // ---------------------------------------------------------------------------
 
 const promptsPath = require.resolve('prompts');
-const originalPrompts = require.cache[promptsPath];
 const answers = [];
 require.cache[promptsPath] = {
   id: promptsPath,
@@ -67,6 +72,11 @@ updater.checkModelUpdates = (config, modelId, opts = {}, hooks = {}) => {
   );
 };
 
+// Every TUI module must be loaded after the stub above, so the flow modules (and the shared
+// `pages` helpers they use) resolve the scripted answers.
+//
+// 所有 TUI 模块都必须在替身之后加载，这样各流程模块（以及它们用的 `pages` 助手）
+// 才会走脚本化答案。
 const tuiModels = require('../src/tui/models');
 
 function tempDir(tag) {
@@ -167,8 +177,7 @@ test.before(() => setLogSink(null));
 test.after(() => {
   setLogSink(null);
   updater.checkModelUpdates = realCheckModelUpdates;
-  if (originalPrompts) require.cache[promptsPath] = originalPrompts;
-  else delete require.cache[promptsPath];
+  delete require.cache[promptsPath];
 });
 
 // ---------------------------------------------------------------------------
@@ -700,12 +709,25 @@ test('tui/models: pickModel 在没有记录时返回 null', async () => {
 
 /**
  * Run one flow with the given answer sequence and return the printed text.
- * 用给定的答案序列跑一次流程，返回打印出来的文本
+ * The timeout guard turns "the flow asked one more question than the script provides" into a clear
+ * failure instead of a test run that never finishes.
+ *
+ * 用给定的答案序列跑一次流程，返回打印出来的文本。
+ * 超时保护把「流程多问了一个问题」变成明确的失败，而不是让整轮测试卡住。
  */
 async function runFlow(fn, ...scripted) {
   answers.length = 0;
   answers.push(...scripted);
-  return capture(fn);
+  let timer = null;
+  const guard = new Promise((resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(`流程在 ${scripted.length} 个答案后仍未返回（缺少脚本化答案）`)), 5000);
+    if (timer.unref) timer.unref();
+  });
+  try {
+    return await Promise.race([capture(fn), guard]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 test('tui/models: 菜单取消不抛错；列出记录（含过滤）', async () => {
@@ -766,11 +788,14 @@ test('tui/models: 固定版本与删除记录（只删记录，不动文件）',
   const config = makeConfig();
   seed(config, 900, { versionId: 5, versionName: 'v5', fileName: 'a.bin', content: 'aaaa', dirName: 'A' });
 
+  // The pin flow is one screen: pick the model, then pick the version (no separate pin/unpin menu —
+  // whether it pins or unpins follows from the record).
+  //
+  // 固定流程只有两屏：选模型、选版本（不再单独问「固定还是取消固定」，方向由记录决定）。
   const pinned = await runFlow(
     () => tuiModels.modelsFlow(config),
     { action: 'pin' },
     { modelId: '900' },
-    { mode: 'pin' },
     { versionId: '5' }
   );
   assert.match(pinned, /已固定: Model 900 → v5/);
@@ -780,7 +805,7 @@ test('tui/models: 固定版本与删除记录（只删记录，不动文件）',
     () => tuiModels.modelsFlow(config),
     { action: 'pin' },
     { modelId: '900' },
-    { mode: 'unpin' }
+    { ok: true }
   );
   assert.match(unpinned, /已取消固定/);
   assert.equal(readLibrary(config).entries['900'].pinnedVersionId, null);

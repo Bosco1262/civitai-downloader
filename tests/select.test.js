@@ -307,16 +307,20 @@ test('renderListLines: 每行宽度不超列数，且补齐到 minRows', () => {
   });
   assert.equal(lines.length, 8);
   // The row starts with the cursor marker (blank for the other rows), the name is clipped by display width,
-  // and over-long right-side info keeps its tail, so statuses such as "downloaded" come first
+  // and over-long right-side info keeps its tail, so statuses such as "downloaded" come first.
+  // The cursor/checkbox glyphs fall back to ASCII when the console cannot render the nicer ones.
   //
-  // 行首是光标标记（非当前行留空），名称按显示宽度裁剪，右侧信息过长时保留尾部（“已下载”等状态优先）
-  assert.equal(lines[0], '  [ ] 21 短名  Checkpoint · SD 1.5 1024B');
+  // 行首是光标标记（非当前行留空），名称按显示宽度裁剪，右侧信息过长时保留尾部（“已下载”等状态优先）。
+  // 控制台画不出好看的字符时，光标/勾选框会退回 ASCII。
+  const mark = (on) => view.cursorMark(on);
+  const box = (on) => view.checkbox(on);
+  assert.equal(lines[0], `  ${box(false)} 21 短名  Checkpoint · SD 1.5 1024B`);
   assert.equal(
     lines[1],
-    `▸ [×] 22 ${select.clipDisplay('名称稍微长一点点的模型', 24)}  ${clipTail('LORA · SDXL 1.0 · 已下载', 22)} 2048B`
+    `${mark(true)} ${box(true)} 22 ${select.clipDisplay('名称稍微长一点点的模型', 24)}  ${clipTail('LORA · SDXL 1.0 · 已下载', 22)} 2048B`
   );
   assert.equal(lines[1].includes('已下载'), true);
-  assert.equal(lines[2], '  [ ] 23 No bytes  Checkpoint · SD 1.5 0B');
+  assert.equal(lines[2], `  ${box(false)} 23 No bytes  Checkpoint · SD 1.5 0B`);
   assert.equal(lines[3], ' ');
   for (const line of lines) {
     assert.ok(view.displayWidth(line) <= columns, `行宽 ${view.displayWidth(line)} 超限：${line}`);
@@ -419,6 +423,207 @@ test('layoutColumns + buildRowText: 各宽度组合下实际渲染都不超列',
     );
     assert.ok(cols.sizeWidth >= 1 && cols.nameWidth >= 6);
   }
+});
+
+// ---------------------------------------------------------------------------
+// Scrolling window (replaces the page-based viewport)
+// 滚动视窗（取代按页跳转的视窗）
+// ---------------------------------------------------------------------------
+
+test('scrollWindow: 光标始终可见，且视窗尽量不动', () => {
+  // Cursor inside the window: the window must not move
+  // 光标在视窗内：视窗不动
+  assert.deepEqual(select.scrollWindow(100, 5, 10, 0), { start: 0, end: 10, size: 10, cursor: 5 });
+  assert.deepEqual(select.scrollWindow(100, 3, 10, 2), { start: 2, end: 12, size: 10, cursor: 3 });
+  // Cursor leaves the window downwards: scroll exactly far enough
+  // 光标向下移出：只滚动到刚好可见
+  assert.deepEqual(select.scrollWindow(100, 10, 10, 0), { start: 1, end: 11, size: 10, cursor: 10 });
+  // Cursor leaves upwards
+  // 光标向上移出
+  assert.deepEqual(select.scrollWindow(100, 4, 10, 8), { start: 4, end: 14, size: 10, cursor: 4 });
+  // Beyond the end: clamp to the last full window
+  // 越过末尾：夹到最后一个完整视窗
+  assert.deepEqual(select.scrollWindow(100, 999, 10, 0), { start: 90, end: 100, size: 10, cursor: 99 });
+  // Fewer rows than the window: everything is shown, no scrolling
+  // 行数少于视窗：全部显示，不滚动
+  assert.deepEqual(select.scrollWindow(4, 3, 10, 0), { start: 0, end: 4, size: 4, cursor: 3 });
+  // Empty list and degenerate sizes
+  // 空列表与非法尺寸
+  assert.deepEqual(select.scrollWindow(0, 0, 10, 0), { start: 0, end: 0, size: 0, cursor: 0 });
+  assert.deepEqual(select.scrollWindow(5, -3, 0, 0), { start: 0, end: 5, size: 5, cursor: 0 });
+});
+
+test('quickIndex: 1-9 对应第 1-9 行，其余按键返回 null', () => {
+  assert.equal(select.quickIndex('1'), 0);
+  assert.equal(select.quickIndex('5'), 4);
+  assert.equal(select.quickIndex('9'), 8);
+  assert.equal(select.quickIndex('0'), null);
+  assert.equal(select.quickIndex('10'), null);
+  assert.equal(select.quickIndex('j'), null);
+  assert.equal(select.quickIndex(''), null);
+});
+
+test('rangeSelection: 连续区间勾选/取消（不修改入参）', () => {
+  const items = Array.from({ length: 5 }, (_, i) => item({ modelId: i + 1 }));
+  const original = new Set(['1']);
+  const widened = select.rangeSelection(original, items, 1, 3);
+  assert.deepEqual([...original], ['1']);
+  assert.deepEqual([...widened].sort(), ['1', '2', '3', '4']);
+  const narrowed = select.rangeSelection(widened, items, 3, 1, false);
+  assert.deepEqual([...narrowed], ['1']);
+  // Reversed indices behave the same, and out-of-range indices are clamped
+  // 起止颠倒结果一致，越界下标会被夹紧
+  assert.deepEqual([...select.rangeSelection(new Set(), items, 3, 1)].sort(), ['2', '3', '4']);
+  assert.deepEqual([...select.rangeSelection(new Set(), items, -5, 99)].sort(), ['1', '2', '3', '4', '5']);
+});
+
+test('hintLines: 普通 / 输入中 / 帮助浮层三种提示', () => {
+  assert.deepEqual(select.hintLines({}), select.KEY_HINTS);
+  assert.deepEqual(select.hintLines({ searching: true }), select.SEARCH_HINTS);
+  assert.equal(select.hintLines({ searching: true }).length, 2);
+  assert.equal(select.hintLines({ help: true }).length, 3);
+  // Search hints win over the help state while typing, so the user is not told to press a key that
+  // would enter the search box again
+  //
+  // 输入态优先于帮助浮层，避免提示用户按一个又会进入搜索的键
+  assert.deepEqual(select.hintLines({ help: true, searching: true }), select.SEARCH_HINTS);
+  for (const line of [...select.KEY_HINTS, ...select.SEARCH_HINTS]) {
+    assert.ok(String(line).trim().length > 0);
+  }
+});
+
+test('buildRowText: 支持没有 modelId 的自定义行（用 id / title）', () => {
+  const row = { id: 'v10', title: '版本 A', totalBytes: 10 };
+  const text = select.buildRowText(row, { columns: 60, number: 1, nameWidth: 20, detailWidth: 0, sizeWidth: 5 });
+  assert.equal(text, `  ${view.checkbox(false)}  1 版本 A 10 B`);
+  assert.equal(select.filterItems([row], { keyword: 'v10' }).length, 1);
+  assert.equal(select.filterItems([row], { keyword: '版本' }).length, 1);
+  assert.equal(select.filterItems([row], { keyword: 'nope' }).length, 0);
+  // A custom label callback is used when the row has neither name nor title
+  // 行既没有 name 也没有 title 时使用自定义 label
+  const bare = { id: 'x1' };
+  assert.ok(select.buildRowText(bare, { columns: 60, number: 1, label: () => '自定义名称' }).includes('自定义名称'));
+});
+
+test('layout: 终端尺寸与框架行数（含最小行数保护）', () => {
+  const layout = require('../src/tui/layout');
+  assert.equal(layout.terminalColumns(200), 200);
+  assert.equal(layout.terminalColumns(4), 20);
+  assert.ok(layout.terminalColumns() >= 20);
+  assert.equal(layout.terminalRows(40), 40);
+  assert.equal(layout.terminalRows(3), layout.MIN_ROWS);
+  assert.equal(layout.chromeRows({ hintLines: 3 }), 7);
+  assert.equal(layout.chromeRows({ hintLines: 0, extra: 1 }), 5);
+  assert.equal(layout.listRows({ rows: 30, hintLines: 3 }), 23);
+  assert.ok(layout.listRows({ rows: 5, hintLines: 3 }) >= 1);
+  // Non-TTY output always uses the ASCII glyph set (assertions stay readable in logs)
+  // 非 TTY 输出一律用 ASCII 字符集（日志里的断言才可读）
+  assert.equal(layout.asciiGlyphs({}, 'linux', false), true);
+  assert.equal(layout.asciiGlyphs({ CIVITAI_ASCII: '1' }, 'linux', true), true);
+  assert.equal(layout.asciiGlyphs({}, 'linux', true), false);
+});
+
+test('layout: 全屏界面使用的 ANSI 序列（备用缓冲区 + 擦除显示）', () => {
+  const layout = require('../src/tui/layout');
+  const seq = layout.ansi();
+  // Alternate screen buffer: enter, leave, and erase the display without touching the scrollback
+  // 备用缓冲区：进入、离开，以及不动回滚缓冲的擦除显示
+  assert.equal(seq.altScreenOn, '\u001b[?1049h');
+  assert.equal(seq.altScreenOff, '\u001b[?1049l');
+  assert.equal(seq.eraseDisplay, '\u001b[2J');
+  assert.equal(seq.clear, '\u001b[2J\u001b[H');
+  assert.equal(seq.hideCursor, '\u001b[?25l');
+  assert.equal(seq.showCursor, '\u001b[?25h');
+});
+
+test('view: 备用缓冲区在非 TTY 下不写任何字节', () => {
+  const written = [];
+  const orig = process.stdout.write;
+  process.stdout.write = (chunk) => {
+    written.push(String(chunk));
+    return true;
+  };
+  try {
+    const entered = view.beginFullScreen();
+    view.endFullScreen();
+    // Without a TTY nothing may be emitted: CI logs must not contain escape sequences
+    // 非 TTY 下不能写任何东西：CI 日志里不能出现转义序列
+    if (!process.stdout.isTTY || process.env.CIVITAI_PLAIN) {
+      assert.equal(entered, false);
+      assert.deepEqual(written, []);
+    }
+  } finally {
+    process.stdout.write = orig;
+  }
+});
+
+test('keys: Ctrl+C / Ctrl+Z 的语义识别与文本输入判定', () => {
+  const keys = require('../src/tui/keys');
+  assert.equal(keys.controlIntent('\u0003', { name: 'c', ctrl: true }), 'cancel');
+  assert.equal(keys.controlIntent('\u0003', {}), 'cancel');
+  assert.equal(keys.controlIntent('\u001a', { name: 'z', ctrl: true }), 'suspend');
+  assert.equal(keys.controlIntent('a', { name: 'a' }), null);
+  assert.equal(keys.controlIntent('s', { name: 's' }), null);
+
+  assert.equal(keys.isTextInput('a', { name: 'a' }), true);
+  assert.equal(keys.isTextInput('中', { name: '中' }), true);
+  assert.equal(keys.isTextInput('a', { name: 'a', ctrl: true }), false);
+  assert.equal(keys.isTextInput('\r', { name: 'return' }), false);
+  assert.equal(keys.isTextInput('\u001b[A', { name: 'up' }), false);
+  assert.equal(keys.isTextInput('', { name: 'up' }), false);
+
+  assert.equal(keys.isBackspace('\u007f', {}), true);
+  assert.equal(keys.isBackspace('', { name: 'backspace' }), true);
+  assert.equal(keys.isBackspace('x', { name: 'x' }), false);
+});
+
+test('describeFacts: 标签列对齐、空值不输出', () => {
+  const pages = require('../src/tui/pages');
+  assert.deepEqual(pages.describeFacts([]), []);
+  assert.deepEqual(pages.describeFacts(null), []);
+  const lines = pages.describeFacts([
+    { label: 'a', value: 1 },
+    { label: 'bbbb', value: '' },
+    { label: 'cc', value: null },
+    { label: 'd', value: 'x' },
+  ]);
+  assert.equal(lines.length, 2);
+  assert.equal(lines[0].indexOf('1'), lines[1].indexOf('x'));
+});
+
+test('buildPanel: 进度面板三行结构（总进度 / 当前文件 / 按键）', () => {
+  const run = require('../src/tui/run');
+  const lines = run
+    .buildPanel({
+      done: 1,
+      skipped: 0,
+      failed: 2,
+      total: 9,
+      bytes: 1024,
+      expected: 4096,
+      speed: 2048,
+      eta: '00:12',
+      elapsed: '00:03',
+      width: 100,
+      model: 'Model A',
+      file: 'a.safetensors',
+      attempt: { attempt: 2, max: 3, httpCode: 429 },
+    })
+    .split('\n');
+  assert.equal(lines.length, 3);
+  assert.ok(lines[0].includes('完成 1') && lines[0].includes('失败 2') && lines[0].includes('共 9 项'), lines[0]);
+  assert.ok(lines[0].includes('25.0%'), lines[0]);
+  assert.ok(lines[0].includes('2.00 KiB/s'), lines[0]);
+  assert.ok(lines[0].includes('00:12') && lines[0].includes('00:03'), lines[0]);
+  assert.ok(lines[1].includes('[Model A]'), lines[1]);
+  assert.ok(lines[1].includes('a.safetensors'), lines[1]);
+  assert.ok(lines[1].includes('第 2/3 次尝试'), lines[1]);
+  assert.ok(lines[2].includes('Ctrl+C'), lines[2]);
+  // Waiting state has no per-file line content but keeps the three-line shape
+  // 等待状态没有单文件信息，但仍是三行
+  const waiting = run.buildPanel({ width: 80, bytes: 0, expected: 0, speed: 0, eta: '--', elapsed: '00:00' }).split('\n');
+  assert.equal(waiting.length, 3);
+  assert.ok(waiting[1].includes('等待下一项'));
 });
 
 // ---------------------------------------------------------------------------

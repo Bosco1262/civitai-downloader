@@ -3,26 +3,26 @@
 /**
  * Full-screen interactive item picker.
  *
- * Two layers:
- *  1) pure logic (filterItems / sortItems / paginate / toggleSelection / selectAll /
- *     invertSelection / clampCursor / renderListLines …) — no terminal side effects, unit-testable;
- *  2) the interactive layer selectItems() — raw keyboard mode + ANSI full-screen redraw; it returns
- *     null outside a TTY, so the caller falls back to the legacy prompts path.
- *
+ * Two layers: the pure logic has no terminal side effects and is unit-testable (filterItems,
+ * sortItems, scrollWindow, toggleSelection, selectAll, invertSelection, clampCursor, layoutColumns,
+ * buildRowText, renderListLines, buildHeaderLines, hintLines …), and the interactive layer
+ * selectItems() drives raw keyboard mode plus the ANSI full-screen redraw and returns null outside a
+ * TTY so the caller can fall back to the plain prompt path.
  *
  * 全屏交互式条目选择器。
  *
- * 分两层：
- *  1) 纯逻辑层（filterItems / sortItems / paginate / toggleSelection / selectAll /
- *     invertSelection / clampCursor / renderListLines …）—— 无终端副作用，可直接单测；
- *  2) 交互层 selectItems() —— 原始键盘模式 + ANSI 全屏重绘；非 TTY 直接返回 null，
- *     由调用方回退到 prompts 老路径。
- */
+ * 分两层：纯逻辑层没有终端副作用、可直接单测（filterItems、sortItems、scrollWindow、
+ * toggleSelection、selectAll、invertSelection、clampCursor、layoutColumns、buildRowText、
+ * renderListLines、buildHeaderLines、hintLines 等）；交互层 selectItems() 负责原始键盘模式与
+ * ANSI 全屏重绘，非 TTY 直接返回 null，由调用方回退到 prompts 老路径。
+ * 列表以「跟随光标的视窗」滚动（光标不会再跑到绘制区域之外），
+ * 页脚只描述当前状态下真正可用的按键，`?` 打开界面内按键速查。 */
 
-const readline = require('readline');
 const { formatBytes } = require('../util');
 const { t } = require('../i18n');
-const { displayWidth } = require('./view');
+const view = require('./view');
+const layout = require('./layout');
+const { installRawKeys, debugLog, isTextInput, isBackspace } = require('./keys');
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -32,15 +32,20 @@ const { displayWidth } = require('./view');
 const NO_FILTER = '__all__';
 const MIN_NAME_WIDTH = 6;
 /**
- * Fixed rows besides the list: title + status line + summary line + column header + footer + three key-hint lines.
- * 除列表外的固定行数：标题 + 状态行 + 汇总行 + 列头 + 页脚 + 三行按键提示
+ * Fixed rows besides the list: title + filter line + summary line + footer.
+ * 除列表外的固定行数：标题 + 过滤行 + 汇总行 + 页脚。
  */
-const CHROME_ROWS = 7;
+const CHROME_ROWS = 4;
+/**
+ * Key-hint lines drawn under the footer.
+ * 页脚下方绘制的按键提示行数。
+ */
+const HINT_ROWS = 3;
 /**
  * Treat the terminal as at least this many rows (so the list still has a few lines to show).
- * 终端最少按这么多行处理（保证列表至少还有几行可显示）
+ * 终端最少按这么多行处理（保证列表至少还有几行可显示）。
  */
-const MIN_ROWS = 12;
+const MIN_ROWS = layout.MIN_ROWS;
 
 /**
  * Sort labels. Lazily resolved (getters): the language may be switched by configureRuntime /
@@ -64,37 +69,64 @@ for (const [mode, key] of Object.entries(SORT_LABEL_KEYS)) {
 const SORT_MODES = Object.keys(SORT_LABELS);
 
 /**
- * Footer key hints (split into two lines so they fit even an 80-column terminal; CJK counts as 2 columns).
- * Keys: ↑/↓ or k/j to move, Home/End for first/last, PgUp/PgDn or [ ] to page,
- *       space to toggle, a to select/deselect all, i to invert, / to search, t for type, b for base model,
- *       s to sort, Enter to confirm (at least one item), Esc/q/Ctrl+C to cancel.
+ * Footer key hints, one line per group (CJK counts as two columns, so three lines fit an 80-column
+ * terminal). Keys: ↑/↓ or k/j to move, Home/End for first/last, PgUp/PgDn or [ ] to page,
+ * space to toggle, a to select/deselect all, i to invert, / to search, t for type, b for base model,
+ * s to sort, Enter to confirm, Esc/q/Ctrl+C to cancel, ? for help.
  * Also lazily resolved (getters), so iteration and index access stay unchanged.
  *
- * 底部按键说明（拆成两行，保证 80 列终端也能完整显示；CJK 按 2 列算）。
+ * 底部按键说明，每组一行（CJK 按 2 列算，三行即可在 80 列终端完整显示）。
  * 键位：↑/↓ 或 k/j 移动，Home/End 首尾，PgUp/PgDn 或 [ ] 翻页，
  *       空格勾选，a 全选/全不选，i 反选，/ 搜索，t 类型，b 基础模型，s 排序，
- *       回车确认（至少 1 项），Esc/q/Ctrl+C 取消。
+ *       回车确认，Esc/q/Ctrl+C 取消，? 帮助。
  * 同样是惰性取词（getter），遍历/下标访问方式不变。
  */
 const KEY_HINT_KEYS = ['tui.select.keyHintMove', 'tui.select.keyHintSelect', 'tui.select.keyHintAction'];
 const KEY_HINTS = KEY_HINT_KEYS.map(() => '');
 KEY_HINT_KEYS.forEach((key, index) => {
-  Object.defineProperty(KEY_HINTS, index, { get: () => t(key), enumerable: true });
+  Object.defineProperty(KEY_HINTS, index, { get: () => t(KEY_HINT_KEYS[index]), enumerable: true });
 });
 
-const ANSI_CLEAR = '\u001b[2J\u001b[H';
-const ANSI_HIDE_CURSOR = '\u001b[?25l';
-const ANSI_SHOW_CURSOR = '\u001b[?25h';
+/**
+ * Hint lines shown while the search box is open.
+ * 搜索输入状态下的按键提示行。
+ */
+const SEARCH_HINT_KEYS = ['tui.select.searchHintTyping', 'tui.select.searchHintKeys'];
+const SEARCH_HINTS = SEARCH_HINT_KEYS.map(() => '');
+SEARCH_HINT_KEYS.forEach((key, index) => {
+  Object.defineProperty(SEARCH_HINTS, index, { get: () => t(SEARCH_HINT_KEYS[index]), enumerable: true });
+});
 
-function paint(code) {
-  return (s) => `\u001b[${code}m${s}\u001b[0m`;
-}
+/**
+ * Hint lines shown while the help overlay (`?`) is open.
+ * 帮助浮层（`?`）打开时的按键提示行。
+ */
+const HELP_HINT_KEYS = ['tui.select.helpClose', 'tui.select.helpPage', 'tui.select.helpCancel'];
+const HELP_HINTS = HELP_HINT_KEYS.map(() => '');
+HELP_HINT_KEYS.forEach((key, index) => {
+  Object.defineProperty(HELP_HINTS, index, { get: () => t(key), enumerable: true });
+});
 
-const C = {
-  bold: paint('1'),
-  dim: paint('2'),
-  reverse: paint('7'),
-};
+/**
+ * Key reference of the in-screen help overlay (`?`).
+ * 界面内帮助浮层（`?`）的按键速查。
+ */
+const HELP_KEYS = [
+  'tui.select.helpMove',
+  'tui.select.helpPage',
+  'tui.select.helpToggle',
+  'tui.select.helpAll',
+  'tui.select.helpSearch',
+  'tui.select.helpFilter',
+  'tui.select.helpSort',
+  'tui.select.helpQuick',
+  'tui.select.helpConfirm',
+  'tui.select.helpCancel',
+];
+const HELP_ITEMS = HELP_KEYS.map(() => '');
+HELP_KEYS.forEach((key, index) => {
+  Object.defineProperty(HELP_ITEMS, index, { get: () => t(HELP_KEYS[index]), enumerable: true });
+});
 
 // ---------------------------------------------------------------------------
 // Small helpers (pure functions)
@@ -105,12 +137,37 @@ function str(value) {
   return value === undefined || value === null ? '' : String(value);
 }
 
-function idOf(item) {
-  return String(item && item.modelId);
+/**
+ * Row identity: `modelId` when the item has one, otherwise `id`.
+ * `opts.idOf` overrides both (used by pickers whose rows are not model records).
+ *
+ * 行的标识：条目有 `modelId` 就用它，否则用 `id`。
+ * `opts.idOf` 可覆盖两者（供并非模型记录的列表使用）。
+ */
+function idOf(item, opts = {}) {
+  if (typeof opts.idOf === 'function') return String(opts.idOf(item));
+  if (item && item.modelId !== undefined && item.modelId !== null) return String(item.modelId);
+  return String(item && item.id);
 }
 
-function nameOf(item) {
-  return str(item && item.name);
+/**
+ * Row label: `name`, otherwise `title`, otherwise `opts.label(item)`.
+ * 行的名称：优先 `name`，其次 `title`，最后 `opts.label(item)`。
+ */
+function nameOf(item, opts = {}) {
+  if (!item) return '';
+  if (item.name !== undefined && item.name !== null && String(item.name) !== '') return String(item.name);
+  if (item.title !== undefined && item.title !== null && String(item.title) !== '') return String(item.title);
+  if (typeof opts.label === 'function') return str(opts.label(item));
+  return '';
+}
+
+/**
+ * The last resort label of a row (its id), used when the item carries neither name nor title.
+ * 行的兜底名称（用 ID），条目既没有 name 也没有 title 时使用。
+ */
+function fallbackLabel(item, opts = {}) {
+  return `#${idOf(item, opts)}`;
 }
 
 /**
@@ -126,6 +183,18 @@ function bytesOf(item) {
 
 function isAll(value) {
   return value === undefined || value === null || value === '' || value === NO_FILTER;
+}
+
+/**
+ * Index of a number key (1-9 → 0-8), or null when the key is not a digit shortcut.
+ * 数字快捷键的下标（1-9 → 0-8）；不是数字键时返回 null。
+ */
+function quickIndex(text) {
+  const char = str(text);
+  if (char.length !== 1) return null;
+  const code = char.charCodeAt(0);
+  if (code < 0x31 || code > 0x39) return null;
+  return code - 0x31;
 }
 
 /**
@@ -213,9 +282,17 @@ function padToWidth(text, width) {
   return w >= width ? s : s + ' '.repeat(width - w);
 }
 
+/**
+ * Display width of one cell: ANSI escapes are not counted and CJK characters count as 2 columns.
+ * 单元格显示宽度：不计 ANSI 转义，CJK 字符算 2 列。
+ */
+function displayWidth(s) {
+  return view.displayWidth(s);
+}
+
 // ---------------------------------------------------------------------------
-// Pure logic: filtering / sorting / paging / selection set / cursor
-// 纯逻辑层：过滤 / 排序 / 分页 / 选择集合 / 光标
+// Pure logic: filtering / sorting / scrolling / selection set / cursor
+// 纯逻辑层：过滤 / 排序 / 滚动 / 选择集合 / 光标
 // ---------------------------------------------------------------------------
 
 /**
@@ -239,7 +316,7 @@ function filterItems(items, filter = {}) {
   return list.filter((item) => {
     if (!item) return false;
     if (keyword) {
-      const haystack = `${nameOf(item)}\u0000${idOf(item)}`.toLowerCase();
+      const haystack = `${nameOf(item, filter)}\u0000${idOf(item, filter)}`.toLowerCase();
       if (!haystack.includes(keyword)) return false;
     }
     if (!isAll(type) && str(item.type) !== str(type)) return false;
@@ -255,11 +332,14 @@ function filterItems(items, filter = {}) {
  * @param {'default'|'name'|'size'|'size-asc'} [mode]
  * @returns {Array} 新数组
  */
-function sortItems(items, mode = 'default') {
+function sortItems(items, mode = 'default', opts = {}) {
   const list = Array.isArray(items) ? items.slice() : [];
   if (mode === 'name') {
     return withIndex(list)
-      .sort((a, b) => nameOf(a.item).localeCompare(nameOf(b.item), 'zh-Hans-CN') || a.index - b.index)
+      .sort(
+        (a, b) =>
+          nameOf(a.item, opts).localeCompare(nameOf(b.item, opts), 'zh-Hans-CN') || a.index - b.index
+      )
       .map((entry) => entry.item);
   }
   if (mode === 'size' || mode === 'size-asc') {
@@ -276,7 +356,10 @@ function sortItems(items, mode = 'default') {
 
 /**
  * Paging (page is 0-based and clamped when out of range).
+ * Kept for callers that still page explicitly; the interactive layer scrolls a window instead.
+ *
  * 分页（page 从 0 开始，越界夹紧）。
+ * 仍显式分页的调用方继续可用；交互层已改为「视窗滚动」。
  * @returns {{pageItems:Array, pageCount:number, page:number}}
  */
 function paginate(items, page = 0, pageSize = 15) {
@@ -289,6 +372,39 @@ function paginate(items, page = 0, pageSize = 15) {
   const current = Math.min(Math.max(0, wanted), pageCount - 1);
   const start = current * size;
   return { pageItems: list.slice(start, start + size), pageCount, page: current };
+}
+
+/**
+ * Compute the visible slice that keeps `cursor` on screen.
+ *
+ * Only scrolls when the cursor leaves the window, so the list stays still while the cursor moves
+ * inside it instead of jumping a whole page. `size <= 0` means "fit everything".
+ *
+ *
+ * 计算能让 `cursor` 保持在屏幕内的可见区间。
+ *
+ * 只有光标移出视窗时才滚动，因此光标在视窗内移动时列表不动，不会整页跳动。
+ * `size <= 0` 表示「全部显示」。
+ *
+ *
+ * @param {number} total number of rows
+ * @param {number} cursor current row
+ * @param {number} size how many rows fit
+ * @param {number} [start] previously painted first row (keeps the window still when possible)
+ * @returns {{start:number, end:number, size:number, cursor:number}}
+ */
+function scrollWindow(total, cursor, size, start = 0) {
+  const count = Math.max(0, Math.floor(Number(total) || 0));
+  if (count === 0) return { start: 0, end: 0, size: 0, cursor: 0 };
+  const want = Math.floor(Number(size) || 0);
+  const height = want > 0 ? Math.min(want, count) : count;
+  const index = clampCursor(cursor, count);
+  const previous = Math.min(Math.max(0, Math.floor(Number(start) || 0)), Math.max(0, count - height));
+  let begin = previous;
+  if (index < begin) begin = index;
+  else if (index >= begin + height) begin = index - height + 1;
+  begin = Math.min(Math.max(0, begin), Math.max(0, count - height));
+  return { start: begin, end: begin + height, size: height, cursor: index };
 }
 
 /**
@@ -307,13 +423,13 @@ function toggleSelection(selected, id) {
  * Select all / none (only the given items); returns a new Set (the input is not mutated).
  * 全选 / 全不选（只针对传入的 items），返回新 Set（不修改入参）
  */
-function selectAll(selected, items, value) {
+function selectAll(selected, items, value, opts = {}) {
   const next = new Set(selected || []);
   const list = Array.isArray(items) ? items : [];
   if (value) {
-    for (const item of list) if (item) next.add(idOf(item));
+    for (const item of list) if (item) next.add(idOf(item, opts));
   } else {
-    for (const item of list) if (item) next.delete(idOf(item));
+    for (const item of list) if (item) next.delete(idOf(item, opts));
   }
   return next;
 }
@@ -322,14 +438,33 @@ function selectAll(selected, items, value) {
  * Invert the selection (only the given items); returns a new Set (the input is not mutated).
  * 反选（只针对传入的 items），返回新 Set（不修改入参）
  */
-function invertSelection(selected, items) {
+function invertSelection(selected, items, opts = {}) {
   const next = new Set(selected || []);
   const list = Array.isArray(items) ? items : [];
   for (const item of list) {
     if (!item) continue;
-    const id = idOf(item);
+    const id = idOf(item, opts);
     if (next.has(id)) next.delete(id);
     else next.add(id);
+  }
+  return next;
+}
+
+/**
+ * Add / remove a contiguous range of ids (Shift+↑/↓), returns a new Set.
+ * 选中/取消一段连续区间（Shift+↑/↓），返回新 Set。
+ */
+function rangeSelection(selected, items, from, to, value = true, opts = {}) {
+  const list = Array.isArray(items) ? items : [];
+  const a = clampCursor(Math.min(from, to), list.length);
+  const b = clampCursor(Math.max(from, to), list.length);
+  const next = new Set(selected || []);
+  for (let i = a; i <= b; i++) {
+    const item = list[i];
+    if (!item) continue;
+    const id = idOf(item, opts);
+    if (value) next.add(id);
+    else next.delete(id);
   }
   return next;
 }
@@ -347,8 +482,11 @@ function clampCursor(cursor, length) {
 }
 
 /**
- * Put the cursor on an index of list and return the page that holds it (so the row stays visible).
- * 把光标放到 list 的某个下标，并返回该行所在的页（保证可见）
+ * Put the cursor on an index of list and return the page that holds it (page-based helper kept for
+ * backward compatibility; the interactive layer uses scrollWindow instead).
+ *
+ * 把光标放到 list 的某个下标，并返回该行所在的页（按页滚动的旧助手，保留兼容；
+ * 交互层已改用 scrollWindow）。
  */
 function ensureVisible(list, cursor, pageSize) {
   const length = Array.isArray(list) ? list.length : 0;
@@ -388,7 +526,7 @@ function describeStatus(item, state) {
  * Right-hand info of a row: describe(item, state) wins, otherwise "type · base model · status".
  * 行右侧信息：describe(item, state) 优先，否则“类型 · 基础模型 · 状态”
  */
-function buildInfoText(item, describe, state) {
+function buildInfoText(item, describe, state, opts = {}) {
   if (typeof describe === 'function') {
     const text = describe(item, state);
     return str(text).trim();
@@ -398,12 +536,12 @@ function buildInfoText(item, describe, state) {
   if (item.baseModel) parts.push(str(item.baseModel));
   const status = describeStatus(item, state);
   if (status) parts.push(status);
-  return parts.join(' · ');
+  return parts.join(view.separator());
 }
 
 /**
- * Compute the column widths for one page of the list (by display width, so no row wraps).
- * 计算一页列表的列宽分配（按显示宽度，保证每行不换行）。
+ * Compute the column widths for one screen of the list (by display width, so no row wraps).
+ * 计算一屏列表的列宽分配（按显示宽度，保证每行不换行）。
  * @returns {{columns:number, indexWidth:number, nameWidth:number, detailWidth:number, sizeWidth:number}}
  */
 function layoutColumns(pageItems, columns, total, sizeFormatter = formatBytes) {
@@ -425,8 +563,12 @@ function layoutColumns(pageItems, columns, total, sizeFormatter = formatBytes) {
 }
 
 /**
- * @param {object} item
  * Render one list row (plain text, no ANSI; the display width stays within columns).
+ *
+ *
+ * 生成一行列表文本（纯文本、无 ANSI，长度按显示宽度受 columns 约束）。
+ *
+ * @param {object} item
  * @param {{
  *   columns?:number, number?:number|string, indexWidth?:number, nameWidth?:number,
  *   detailWidth?:number, sizeWidth?:number, selected?:boolean, cursor?:boolean,
@@ -434,10 +576,7 @@ function layoutColumns(pageItems, columns, total, sizeFormatter = formatBytes) {
  *   sizeFormatter?:(n:number)=>string
  * }} [opts]
  * @returns {string}
- *
- * 生成一行列表文本（纯文本、无 ANSI，长度按显示宽度受 columns 约束）。
- */
-function buildRowText(item, opts = {}) {
+ */function buildRowText(item, opts = {}) {
   const columns = Math.max(1, Math.floor(Number(opts.columns)) || 80);
   const fmt = typeof opts.sizeFormatter === 'function' ? opts.sizeFormatter : formatBytes;
   const indexText = String(opts.number === undefined ? '' : opts.number).padStart(
@@ -448,7 +587,7 @@ function buildRowText(item, opts = {}) {
   const detailWidth = Number.isFinite(opts.detailWidth) ? Math.max(0, opts.detailWidth) : 0;
   const sizeWidth = Number.isFinite(opts.sizeWidth) ? Math.max(1, opts.sizeWidth) : 1;
 
-  const head = `${opts.cursor ? '▸' : ' '} ${opts.selected ? '[×]' : '[ ]'} ${indexText} `;
+  const head = `${view.cursorMark(!!opts.cursor)} ${view.checkbox(!!opts.selected)} ${indexText} `;
   const headWidth = displayWidth(head);
   // Locate the "size" column first, then fit the right-hand info and the name into the remaining
   // width, so that the whole row never exceeds columns.
@@ -460,7 +599,7 @@ function buildRowText(item, opts = {}) {
   const remaining = afterHead - displayWidth(sizeCell);
   const detailText =
     detailWidth > 1 && remaining > 2
-      ? clipTailToWidth(buildInfoText(item, opts.describe, opts.state), Math.min(detailWidth, remaining - 2))
+      ? clipTailToWidth(buildInfoText(item, opts.describe, opts.state, opts), Math.min(detailWidth, remaining - 2))
       : '';
   const tail = `${detailText ? `  ${detailText}` : ''}${sizeCell}`;
   // Clip the name column by display width: better to show a few characters less than to break the
@@ -468,15 +607,15 @@ function buildRowText(item, opts = {}) {
   //
   // 名称列按显示宽度截断：宁可少显示几个字，也不能撑破列宽导致折行错位
   const nameBudget = columns - headWidth - displayWidth(tail);
-  const name = clipDisplay(nameOf(item) || `#${idOf(item)}`, Math.min(nameWidth, nameBudget));
+  const name = clipDisplay(nameOf(item, opts) || fallbackLabel(item, opts), Math.min(nameWidth, nameBudget));
   return `${head}${name}${tail}`;
 }
 
 /**
- * Render one page of the list (the cursor row is reversed). When there are fewer rows than minRows,
- * the rest is padded with blank lines to avoid ghosting from the previous frame.
+ * Render one screen of the list (the cursor row is reversed). When there are fewer rows than
+ * minRows, the rest is padded with blank lines to avoid ghosting from the previous frame.
  *
- * 渲染一页列表（光标行反显）。行数不足 minRows 时补空行，避免残影。
+ * 渲染一屏列表（光标行反显）。行数不足 minRows 时补空行，避免残影。
  * @returns {string[]}
  */
 function renderListLines(pageItems, opts = {}) {
@@ -485,7 +624,7 @@ function renderListLines(pageItems, opts = {}) {
   const cursor = Number.isFinite(opts.cursor) ? opts.cursor : -1;
   const firstNumber = Number.isFinite(opts.firstNumber) ? opts.firstNumber : 1;
   const colorize = opts.colorize !== false;
-  const style = opts.colors || C;
+  const style = opts.colors || view.colors;
 
   const lines = items.map((item, i) => {
     const isCursor = i === cursor;
@@ -493,7 +632,7 @@ function renderListLines(pageItems, opts = {}) {
       ...opts,
       number: firstNumber + i,
       cursor: isCursor, // 光标位置不受 colorize 影响 / the cursor position is not affected by colorize
-      selected: selected.has(idOf(item)),
+      selected: selected.has(idOf(item, opts)),
     });
     return colorize && isCursor ? style.reverse(text) : text;
   });
@@ -504,15 +643,15 @@ function renderListLines(pageItems, opts = {}) {
 }
 
 /**
- * Header lines: title / filter and sort state + paging / selection and totals.
- * @param {{
- *   title?:string, search?:string, type?:string|null, baseModel?:string|null, sort?:string,
- *   selectedCount?:number, itemCount?:number, visibleCount?:number, selectedBytes?:number,
- *   visibleBytes?:number, page?:number, pageCount?:number, sizeFormatter?:(n:number)=>string
- * }} [opts]
- * @returns {string[]}
+ * Header lines: title / filter and sort state + position / selection and totals.
  *
- * 顶部信息：标题 / 过滤与排序状态 + 分页 / 已选与合计。
+ * Exactly three lines (title, filters, summary) so the surrounding layout stays predictable; use
+ * withNotice() to append a transient message to the summary line.
+ *
+ *
+ * 顶部信息：标题 / 过滤与排序状态 + 位置 / 已选与合计。
+ *
+ * 固定三行（标题、过滤、汇总），保证外层布局可预测；临时消息用 withNotice() 追加到汇总行。
  */
 function buildHeaderLines(opts = {}) {
   const fmt = typeof opts.sizeFormatter === 'function' ? opts.sizeFormatter : formatBytes;
@@ -524,9 +663,19 @@ function buildHeaderLines(opts = {}) {
   if (!isAll(opts.type)) filters.push(t('tui.select.filterType', { value: opts.type }));
   if (!isAll(opts.baseModel)) filters.push(t('tui.select.filterBaseModel', { value: opts.baseModel }));
   filters.push(t('tui.select.filterSort', { value: SORT_LABELS[opts.sort] || SORT_LABELS.default }));
-  const page = Number.isFinite(opts.page) ? opts.page : 0;
-  const pageCount = Math.max(1, Number(opts.pageCount) || 1);
-  filters.push(t('tui.select.filterPage', { page: page + 1, pageCount }));
+  if (opts.position && opts.position.size > 0) {
+    filters.push(
+      t('tui.select.filterRows', {
+        from: opts.position.start + 1,
+        to: opts.position.end,
+        total: Number(opts.visibleCount) || 0,
+      })
+    );
+  } else {
+    const page = Number.isFinite(opts.page) ? opts.page : 0;
+    const pageCount = Math.max(1, Number(opts.pageCount) || 1);
+    filters.push(t('tui.select.filterPage', { page: page + 1, pageCount }));
+  }
   const summary = t('tui.select.summary', {
     selected: Number(opts.selectedCount) || 0,
     total: Number(opts.itemCount) || 0,
@@ -534,7 +683,43 @@ function buildHeaderLines(opts = {}) {
     selectedSize: fmt(Number(opts.selectedBytes) || 0),
     visibleSize: fmt(Number(opts.visibleBytes) || 0),
   });
-  return [str(opts.title) || t('tui.select.defaultTitle'), filters.join(' · '), summary];
+  return [str(opts.title) || t('tui.select.defaultTitle'), filters.join(view.separator()), summary];
+}
+
+/**
+ * Append a transient message to the last header line, trimming that line to fit.
+ * 把临时消息追加到表头最后一行，并按可用宽度裁剪原行。
+ */
+function withNotice(lines, columns, message) {
+  const list = Array.isArray(lines) ? lines.slice() : [];
+  const note = str(message).trim();
+  if (!note || !list.length) return list;
+  const prefix = ` ${view.separator()}`;
+  const noteWidth = displayWidth(note) + displayWidth(prefix);
+  const index = list.length - 1;
+  const room = Math.max(0, columns - noteWidth);
+  list[index] = `${clipToWidth(list[index], room)}${prefix}${note}`;
+  return list;
+}
+
+/**
+ * Key-hint lines of the current state: typing > help overlay > normal.
+ *
+ * Typing wins because the keys of the other states would not do anything useful while the search
+ * box has focus.
+ *
+ *
+ * 当前状态的按键提示行：输入中 > 帮助浮层 > 普通。
+ *
+ * 输入态优先级最高：输入框获得焦点时，其它状态的按键都不会有预期效果。
+ *
+ *
+ * @returns {string[]}
+ */
+function hintLines(state = {}) {
+  if (state.searching) return SEARCH_HINTS.map((hintText) => hintText);
+  if (state.help) return HELP_HINTS.map((hintText) => hintText);
+  return KEY_HINTS.map((hintText) => hintText);
 }
 
 // ---------------------------------------------------------------------------
@@ -577,20 +762,19 @@ function toSet(value) {
 }
 
 /**
- * @param {Array} items 候选条目（需含 modelId / name；可选 type / baseModel / totalBytes）
- * Full-screen interactive multi-select.
- * @param {{
- *   pageSize?:number, initialSelected?:Iterable<string|number>, title?:string,
- *   describe?:(item:object, state:any)=>string, state?:any,
- *   selected?:Iterable<string|number>, search?:string, type?:string|null,
- *   baseModel?:string|null, sort?:'default'|'name'|'size'|'size-asc',
- *   columns?:number, rows?:number, colorize?:boolean,
- *   sizeFormatter?:(n:number)=>string, onLog?:(msg:string)=>void
- * }} [opts]
- * @returns {Promise<{selected:Set<string>}|null>} 取消（Esc / q / Ctrl+C）返回 null
+ * Full-screen interactive picker (multi-select or single-choice).
  *
- * 全屏交互式多选。
- */
+ * Items need a modelId (or an id) plus a name; type, baseModel and totalBytes are optional. The
+ * accepted options are mode (multi|single), pageSize, initialSelected, title, describe, state,
+ * selected, search, type, baseModel, sort, columns, rows, colorize, minHeight, initialCursor, label,
+ * idOf, sizeFormatter and onLog — the same fields the flows pass in.
+ *
+ * 全屏交互式选择器（多选 / 单选）。
+ *
+ * 条目需要 modelId（或 id）与名称，type、baseModel、totalBytes 可选。
+ * 其余可用选项为：mode（multi 或 single）、pageSize、initialSelected、title、describe、state、
+ * selected、search、type、baseModel、sort、columns、rows、colorize、minHeight、initialCursor、
+ * label、idOf、sizeFormatter、onLog，与各流程传入的字段一致。 */
 async function selectItems(items, opts = {}) {
   const list = Array.isArray(items) ? items.filter(Boolean) : [];
   const onLog = typeof opts.onLog === 'function' ? opts.onLog : () => {};
@@ -604,7 +788,24 @@ async function selectItems(items, opts = {}) {
   const stdout = process.stdout;
   const fmt = typeof opts.sizeFormatter === 'function' ? opts.sizeFormatter : formatBytes;
   const describe = typeof opts.describe === 'function' ? opts.describe : null;
+  const single = opts.mode === 'single';
   const requestedPageSize = Math.max(1, Math.floor(Number(opts.pageSize)) || 15);
+  const minHeight = Math.max(1, Math.floor(Number(opts.minHeight)) || Math.max(3, Math.floor(requestedPageSize / 2)));
+
+  // Row accessors: every helper (and the pure renderers) receive them through `rowOpts`, so custom
+  // rows without a modelId still have a stable identity and a readable label.
+  //
+  // 行访问器：所有助手（以及纯渲染函数）都通过 `rowOpts` 拿到它们，
+  // 这样没有 modelId 的自定义行也能有稳定标识与可读名称。
+  const rowOpts = {};
+  if (typeof opts.idOf === 'function') rowOpts.idOf = opts.idOf;
+  if (typeof opts.label === 'function') rowOpts.label = opts.label;
+  function rowKey(item) {
+    return idOf(item, rowOpts);
+  }
+  function rowLabel(item) {
+    return nameOf(item, rowOpts) || fallbackLabel(item, rowOpts);
+  }
 
   /**
    * Types / base models selectable under the current search keyword (avoids switching to an empty result).
@@ -625,47 +826,57 @@ async function selectItems(items, opts = {}) {
    * 交互状态（render 时按需补充派生字段）
    */
   const st = {
-    cursor: 0,
-    page: 0,
+    cursor: clampCursor(opts.initialCursor, list.length),
+    windowStart: 0,
+    anchor: null,
     selected: toSet(opts.selected !== undefined ? opts.selected : opts.initialSelected),
     search: str(opts.search),
     type: opts.type === undefined ? null : opts.type,
     baseModel: opts.baseModel === undefined ? null : opts.baseModel,
     sort: SORT_MODES.includes(opts.sort) ? opts.sort : 'default',
     searching: false,
+    help: false,
     message: '',
   };
 
   const dims = {
-    columns: Math.max(20, Math.floor(Number(opts.columns) || stdout.columns || 100)),
-    rows: Math.max(MIN_ROWS, Math.floor(Number(opts.rows) || stdout.rows || 30)),
+    columns: layout.terminalColumns(opts.columns),
+    rows: layout.terminalRows(opts.rows),
   };
 
   let finish = () => {};
   let finished = false;
   let rendered = null; // 最近一次渲染的派生状态 / derived state of the latest render
+  let screenTaken = false; // 是否已切到备用缓冲区 / whether the alternate screen buffer is active
 
   /**
-   * Derive the currently visible set and the paging from items + the filter/sort state.
-   * 由 items + 过滤/排序状态推导当前可见集合与分页
+   * Derive the visible set, the scrolling window and the totals from items + filter/sort state.
+   * 由 items + 过滤/排序状态推导可见集合、滚动视窗与合计
    */
   function derive() {
     const visible = sortItems(
-      filterItems(list, { keyword: st.search, type: st.type, baseModel: st.baseModel }),
-      st.sort
+      filterItems(list, { keyword: st.search, type: st.type, baseModel: st.baseModel, ...rowOpts }),
+      st.sort,
+      rowOpts
     );
-    const pageSize = Math.max(1, Math.min(requestedPageSize, dims.rows - CHROME_ROWS - 1));
-    const { pageItems, pageCount, page } = paginate(visible, st.page, pageSize);
-    st.page = page; // 过滤后页数变少时回夹 / clamp back when filtering leaves fewer pages
-    st.cursor = ensureVisible(visible, st.cursor, pageSize).cursor;
-    const selectedItems = visible.filter((item) => st.selected.has(idOf(item)));
-    const cols = layoutColumns(pageItems, dims.columns, visible.length, fmt);
+    const chrome = CHROME_ROWS + HINT_ROWS + (st.searching ? 1 : 0);
+    const size = Math.max(minHeight, Math.min(requestedPageSize, dims.rows - chrome));
+    let win = scrollWindow(visible.length, st.cursor, size, st.windowStart);
+    // Leaving the last row half-visible looks like a bug: re-run with one row less.
+    // 最后一行只露出半截会像渲染出错：少显示一行再算一次。
+    if (visible.length > size && win.start + size <= visible.length && win.start + size > visible.length - 1) {
+      win = scrollWindow(visible.length, st.cursor, Math.max(1, size - 1), st.windowStart);
+    }
+    st.cursor = win.cursor;
+    st.windowStart = win.start;
+    const items_ = visible.slice(win.start, win.end);
+    const selectedItems = visible.filter((item) => st.selected.has(rowKey(item)));
+    const cols = layoutColumns(items_, dims.columns, visible.length, fmt);
     return {
       visible,
-      pageItems,
-      page,
-      pageCount,
-      pageSize,
+      items: items_,
+      window: win,
+      pageSize: size,
       selectedItems,
       visibleBytes: visible.reduce((sum, item) => sum + bytesOf(item), 0),
       selectedBytes: selectedItems.reduce((sum, item) => sum + bytesOf(item), 0),
@@ -673,71 +884,93 @@ async function selectItems(items, opts = {}) {
     };
   }
 
+  /**
+   * Help overlay lines: a compact key reference that replaces the list while open.
+   * 帮助浮层内容：打开时替代列表显示的按键速查。
+   */
+  function helpOverlayLines() {
+    return HELP_ITEMS.map((text) => clipToWidth(`  ${text}`, dims.columns));
+  }
+
   function screenText(state) {
-    const cursorRow = st.cursor - state.page * state.pageSize;
-    const lines = [ANSI_CLEAR];
-    for (const line of buildHeaderLines({
-      title: opts.title,
-      search: st.search,
-      type: st.type,
-      baseModel: st.baseModel,
-      sort: st.sort,
-      selectedCount: st.selected.size,
-      itemCount: list.length,
-      visibleCount: state.visible.length,
-      selectedBytes: state.selectedBytes,
-      visibleBytes: state.visibleBytes,
-      page: state.page,
-      pageCount: state.pageCount,
-      sizeFormatter: fmt,
-    })) {
-      lines.push(clipToWidth(C.bold(line), dims.columns));
-    }
+    const cursorRow = state.window.cursor - state.window.start;
+    // Repaint from the top-left corner: erase the display (keeping the cursor where it is) and draw
+    // every line again, which keeps rows in sync after filtering or scrolling.
+    //
+    // 从左上角整屏重绘：擦除显示内容（光标位置不变）后重新画每一行，
+    // 这样过滤或滚动之后各列仍然对齐。
+    const lines = [layout.ansi().eraseDisplay];
+    const header = withNotice(
+      buildHeaderLines({
+        title: opts.title,
+        search: st.search,
+        type: st.type,
+        baseModel: st.baseModel,
+        sort: st.sort,
+        selectedCount: st.selected.size,
+        itemCount: list.length,
+        visibleCount: state.visible.length,
+        selectedBytes: state.selectedBytes,
+        visibleBytes: state.visibleBytes,
+        position: state.window,
+      }),
+      dims.columns,
+      st.searching
+        ? t('tui.select.typing')
+        : st.message
+          ? st.message
+          : single
+            ? t('tui.select.singleHint')
+            : ''
+    );
+    for (const line of header) lines.push(view.colors.bold(clipToWidth(line, dims.columns)));
+
     const { cols } = state;
-    lines.push(
-      C.dim(
-        clipToWidth(
-          `  ${padToWidth(t('tui.select.columnIndex'), cols.indexWidth)} ${padToWidth(
-            t('tui.select.columnName'),
-            cols.nameWidth
-          )}${
-            cols.detailWidth > 0 ? `  ${padToWidth(t('tui.select.columnDetail'), cols.detailWidth)}` : ''
-          } ${padToWidth(t('tui.select.columnSize'), cols.sizeWidth)}`,
-          dims.columns
-        )
-      )
-    );
-    lines.push(
-      ...renderListLines(state.pageItems, {
-        columns: cols.columns,
-        indexWidth: cols.indexWidth,
-        nameWidth: cols.nameWidth,
-        detailWidth: cols.detailWidth,
-        sizeWidth: cols.sizeWidth,
-        sizeFormatter: fmt,
-        describe,
-        state: opts.state,
-        selected: st.selected,
-        cursor: cursorRow,
-        firstNumber: state.page * state.pageSize + 1,
-        minRows: Math.max(0, dims.rows - CHROME_ROWS - 1),
-        colorize: opts.colorize !== false,
-      })
-    );
+    const columnHeader = `  ${padToWidth(t('tui.select.columnIndex'), cols.indexWidth)} ${padToWidth(
+      t('tui.select.columnName'),
+      cols.nameWidth
+    )}${cols.detailWidth > 0 ? `  ${padToWidth(t('tui.select.columnDetail'), cols.detailWidth)}` : ''} ${padToWidth(
+      t('tui.select.columnSize'),
+      cols.sizeWidth
+    )}`;
+    lines.push(view.colors.dim(clipToWidth(columnHeader, dims.columns)));
+
+    const bodyRows = Math.max(1, state.window.size);
+    if (st.help) {
+      const overlay = helpOverlayLines().slice(0, bodyRows);
+      for (let i = 0; i < bodyRows; i++) lines.push(overlay[i] || ' ');
+    } else {
+      lines.push(
+        ...renderListLines(state.items, {
+          columns: cols.columns,
+          indexWidth: cols.indexWidth,
+          nameWidth: cols.nameWidth,
+          detailWidth: cols.detailWidth,
+          sizeWidth: cols.sizeWidth,
+          sizeFormatter: fmt,
+          describe,
+          state: opts.state,
+          selected: st.selected,
+          cursor: cursorRow,
+          firstNumber: state.window.start + 1,
+          minRows: bodyRows,
+          colorize: opts.colorize !== false,
+          label: rowOpts.label,
+          idOf: rowOpts.idOf,
+        })
+      );
+    }
+
     const note = state.visible.length
-      ? st.message
-        ? ` · ${st.message}`
-        : st.searching
-          ? ` · ${t('tui.select.typing')}`
-          : ''
-      : ` · ${t('tui.select.noMatches')}`;
+      ? ''
+      : ` ${view.separator()}${t('tui.select.noMatches')}`;
     lines.push(
-      C.dim(
+      view.colors.dim(
         clipToWidth(
           `  ${t('tui.select.footer', {
-            page: state.page + 1,
-            pageCount: state.pageCount,
-            count: state.pageItems.length,
+            page: Math.floor(state.window.start / Math.max(1, state.window.size)) + 1,
+            pageCount: Math.max(1, Math.ceil(state.visible.length / Math.max(1, state.window.size))),
+            count: state.items.length,
             selected: st.selected.size,
             total: list.length,
           })}${note}`,
@@ -745,7 +978,9 @@ async function selectItems(items, opts = {}) {
         )
       )
     );
-    for (const hint of KEY_HINTS) lines.push(C.dim(clipToWidth(hint, dims.columns)));
+    for (const hintText of hintLines({ help: st.help, searching: st.searching })) {
+      lines.push(view.colors.dim(clipToWidth(hintText, dims.columns)));
+    }
     return lines.join('\n');
   }
 
@@ -770,11 +1005,9 @@ async function selectItems(items, opts = {}) {
   const moveCursor = (delta) => {
     const list_ = visibleList();
     st.cursor = clampCursor(st.cursor + delta, list_.length);
-    st.page = Math.floor(st.cursor / pageSize());
   };
   const gotoCursor = (index) => {
     st.cursor = clampCursor(index, visibleList().length);
-    st.page = Math.floor(st.cursor / pageSize());
   };
   const cycleSort = () => {
     st.sort = cycle(SORT_MODES, st.sort);
@@ -798,19 +1031,55 @@ async function selectItems(items, opts = {}) {
   const toggleCurrent = () => {
     const item = visibleList()[st.cursor];
     if (!item) return;
-    const id = idOf(item);
-    st.selected = toggleSelection(st.selected, id);
+    const id = rowKey(item);
+    st.selected = single ? new Set([id]) : toggleSelection(st.selected, id);
     st.message = st.selected.has(id) ? t('tui.select.toggledOn') : t('tui.select.toggledOff');
+    st.anchor = null;
   };
   const toggleAll = () => {
     const list_ = visibleList();
-    const all = list_.length > 0 && list_.every((item) => st.selected.has(idOf(item)));
-    st.selected = selectAll(st.selected, list_, !all);
+    const all = list_.length > 0 && list_.every((item) => st.selected.has(rowKey(item)));
+    st.selected = single
+      ? new Set(list_.length && !all ? [rowKey(list_[0])] : [])
+      : selectAll(st.selected, list_, !all, rowOpts);
     st.message = all ? t('tui.select.allCleared') : t('tui.select.allSelected', { count: list_.length });
   };
   const invert = () => {
-    st.selected = invertSelection(st.selected, visibleList());
+    if (single) {
+      st.message = t('tui.select.singleNoInvert');
+      return;
+    }
+    st.selected = invertSelection(st.selected, visibleList(), rowOpts);
     st.message = t('tui.select.inverted');
+  };
+  /**
+   * Shift+↑/↓: keep the anchor where the selection started and select everything up to the cursor.
+   * The first shifted move stores the cursor as the anchor; moving back shrinks the range again.
+   *
+   * Shift+↑/↓：以按下时的光标位置为锚点，选中锚点到当前光标之间的所有行。
+   * 第一次按住 Shift 移动时记下锚点，往回移动会收缩选区。
+   */
+  const extendSelection = () => {
+    if (single) return;
+    if (st.anchor === null) st.anchor = st.cursor;
+    const first = Math.min(st.anchor, st.cursor);
+    const last = Math.max(st.anchor, st.cursor);
+    st.selected = rangeSelection(st.selected, visibleList(), first, last, true, rowOpts);
+    st.message = t('tui.select.rangeSelected', { count: last - first + 1 });
+  };
+  const confirm = () => {
+    if (st.selected.size > 0) {
+      finish({ selected: new Set(st.selected) });
+      return;
+    }
+    // In single mode Enter picks the row under the cursor, which is what users expect from a list.
+    // 单选模式下回车直接选中光标所在行——列表里这符合直觉。
+    const item = visibleList()[st.cursor];
+    if (single && item) {
+      finish({ selected: new Set([rowKey(item)]) });
+      return;
+    }
+    st.message = t('tui.select.needSelection');
   };
 
   function onSearchKey(text, key) {
@@ -823,25 +1092,32 @@ async function selectItems(items, opts = {}) {
       st.message = st.search
         ? t('tui.select.messageSearch', { value: st.search })
         : t('tui.select.searchCleared');
-    } else if (key.name === 'backspace' || key.name === 'delete') {
+    } else if (isBackspace(text, key)) {
       st.search = st.search.slice(0, -1);
       st.message = t('tui.select.typing');
-    } else if (text && !key.ctrl && !key.meta && text.length >= 1 && text >= ' ') {
+    } else if (isTextInput(text, key)) {
       st.search += text;
       st.message = t('tui.select.typing');
     }
+    st.anchor = null;
     gotoCursor(0);
   }
 
   function onActionKey(text, key) {
+    const shift = !!key.shift;
+    // Any non-shifted key ends a Shift+↑/↓ range selection.
+    // 任何不带 Shift 的按键都会结束「Shift+↑/↓ 连续勾选」。
+    if (!shift && (key.name !== undefined || text)) st.anchor = null;
     switch (key.name) {
       case 'up':
       case 'k':
         moveCursor(-1);
+        if (shift) extendSelection();
         return;
       case 'down':
       case 'j':
         moveCursor(1);
+        if (shift) extendSelection();
         return;
       case 'home':
         gotoCursor(0);
@@ -857,8 +1133,7 @@ async function selectItems(items, opts = {}) {
         return;
       case 'return':
       case 'enter':
-        if (st.selected.size > 0) finish({ selected: new Set(st.selected) });
-        else st.message = t('tui.select.needSelection');
+        confirm();
         return;
       case 'space':
         toggleCurrent();
@@ -874,51 +1149,91 @@ async function selectItems(items, opts = {}) {
     else if (text === 's') cycleSort();
     else if (text === 't') cycleType();
     else if (text === 'b') cycleBaseModel();
-    else if (text === '/') {
+    else if (text === '?') {
+      st.help = !st.help;
+      st.message = st.help ? t('tui.select.helpOpen') : '';
+    } else if (text === '/') {
       st.searching = true;
       st.message = t('tui.select.searchHint');
+    } else if (shift && quickIndex(text) !== null) {
+      // Shift+digit toggles the nth visible row without moving the cursor.
+      // Shift+数字：直接勾选/取消第 n 行，不必移动光标。
+      const index = quickIndex(text);
+      const item = visibleList()[index];
+      if (item) {
+        const id = rowKey(item);
+        st.selected = single ? new Set([id]) : toggleSelection(st.selected, id);
+        st.message = st.selected.has(id) ? t('tui.select.toggledOn') : t('tui.select.toggledOff');
+      }
+    } else if (quickIndex(text) !== null) {
+      const index = quickIndex(text);
+      if (index < visibleList().length) gotoCursor(index);
     }
   }
 
   function onKeypress(text, key) {
     const k = key || {};
-    if (k.ctrl && (k.name === 'c' || k.name === 'C')) {
-      finish(null); // Ctrl+C 取消 / Ctrl+C cancels
-      return;
-    }
+    if (k.meta) return; // Alt+方向键等：忽略 / Alt+arrow keys etc.: ignore
     if (st.searching) {
       onSearchKey(text, k); // 输入态：Esc 退出输入、回车结束、退格可用 / typing mode: Esc exits, Enter ends, Backspace edits
       render();
       return;
     }
-    if (k.name === 'escape' || (text === 'q' && !k.ctrl && !k.meta)) {
+    if (st.help) {
+      // Any key closes the overlay; Esc/q also cancels the picker.
+      // 任意键关闭帮助浮层；Esc/q 则直接取消选择。
+      if (k.name === 'escape' || (text === 'q' && !k.ctrl)) {
+        finish(null);
+        return;
+      }
+      st.help = false;
+      st.message = '';
+      render();
+      return;
+    }
+    if (k.name === 'escape' || (text === 'q' && !k.ctrl)) {
       finish(null);
       return;
     }
-    if (k.meta) return; // Alt+方向键等：忽略 / Alt+arrow keys etc.: ignore
     onActionKey(text, k);
     render();
   }
 
-  function cleanup() {
-    if (process.stdin && typeof process.stdin.removeListener === 'function') {
-      process.stdin.removeListener('keypress', onKeypress);
+  /**
+   * Take over the screen the first time: switch to the alternate buffer (the previous content comes
+   * back on exit), clear it, hide the cursor and let the caller print its context lines.
+   *
+   * 第一次渲染时接管屏幕：切到备用缓冲区（退出时恢复原内容）、清屏、隐藏光标，
+   * 并让调用方打印它自己的上下文行。
+   */
+  function prepareScreen() {
+    if (screenTaken) return;
+    screenTaken = true;
+    debugLog(`screen-enter items=${list.length} mode=${single ? 'single' : 'multi'}`);
+    if (typeof opts.onEnter === 'function') {
+      try {
+        opts.onEnter();
+      } catch (e) {
+        // Context lines are cosmetic: a failure there must not break the picker.
+        // 上下文行只是锦上添花：打印失败不能拖垮选择器。
+      }
     }
+    write(layout.ansi().altScreenOn + layout.ansi().clear + layout.ansi().hideCursor);
+  }
+
+  function cleanup() {
+    restoreKeys();
+    if (resumeListener) process.removeListener('SIGCONT', resumeListener);
     process.removeListener('SIGINT', onSigint);
     if (stdout && typeof stdout.removeListener === 'function') stdout.removeListener('resize', onResize);
-    try {
-      if (stdin.isTTY && typeof stdin.setRawMode === 'function') stdin.setRawMode(false);
-    } catch (e) {
-      // Ignore failures when turning raw mode off.
-      // 关闭原始模式失败时忽略。
-    }
-    try {
-      stdin.pause();
-    } catch (e) {
-      // Ignore failures when pausing stdin.
-      // 暂停 stdin 失败时忽略。
-    }
-    write(ANSI_CLEAR + ANSI_SHOW_CURSOR);
+    if (!screenTaken) return;
+    // Leave the alternate buffer: the menu / fetched list / logs are restored as they were, so the
+    // only trace of the picker is the decision line the caller prints afterwards.
+    //
+    // 退出备用缓冲区：菜单 / 已拉取的列表 / 日志原样恢复，选择器留下的唯一痕迹是调用方之后打印的决定行。
+    screenTaken = false;
+    debugLog('screen-exit');
+    write(layout.ansi().showCursor + layout.ansi().altScreenOff);
   }
 
   function onSigint() {
@@ -927,9 +1242,25 @@ async function selectItems(items, opts = {}) {
 
   function onResize() {
     if (!stdout) return;
-    dims.columns = Math.max(20, stdout.columns || dims.columns);
-    dims.rows = Math.max(MIN_ROWS, stdout.rows || dims.rows);
+    dims.columns = layout.terminalColumns(stdout.columns);
+    dims.rows = layout.terminalRows(stdout.rows);
     if (!finished) render();
+  }
+
+  /**
+   * Ctrl+Z keep-working path: the terminal is restored before suspending, so on resume the screen
+   * has to be taken over again, the key listener re-installed and the SIGCONT listener re-armed.
+   *
+   * Ctrl+Z 后续可用的关键：挂起前已还原终端，因此恢复运行时要重新接管屏幕、
+   * 重新安装按键监听，并把 SIGCONT 监听也重新挂上。
+   */
+  function onResume() {
+    const installed = installKeys();
+    if (installed) restoreKeys = installed;
+    if (finished) return;
+    process.on('SIGCONT', resumeListener);
+    prepareScreen();
+    render();
   }
 
   // Wait for the user's decision: confirm and cancel both go through finish(), which fires only once.
@@ -942,12 +1273,40 @@ async function selectItems(items, opts = {}) {
     };
   });
 
-  // Enter raw keyboard mode; any failing step falls back to the caller.
-  // 进入原始键盘模式；任何一步失败都退回调用方
+  // Enter raw keyboard mode; any failing step falls back to the caller. A screen that cannot get
+  // keypresses must return immediately: waiting for a key that can never arrive is a hard hang.
+  //
+  // 进入原始键盘模式；任何一步失败都退回调用方。拿不到按键的界面必须立刻返回：
+  // 等一个永远不会到来的按键就是彻底卡死。
+  let restoreKeys = () => {};
+  let resumeListener = null;
+  function installKeys() {
+    return installRawKeys({
+      stream: stdin,
+      onKey: onKeypress,
+      onSignal: (intent) => {
+        if (intent === 'cancel') {
+          finish(null);
+          return;
+        }
+        // Ctrl+Z: restore the terminal, suspend, then take the screen over again on resume. Only
+        // POSIX shells can stop a process; on Windows the key is acknowledged and ignored.
+        //
+        // Ctrl+Z：先恢复终端再挂起，恢复运行时重新接管屏幕。只有 POSIX shell 能挂起进程，
+        // Windows 上仅作提示后忽略。
+        if (process.platform === 'win32') {
+          st.message = t('tui.select.suspendUnsupported');
+          return;
+        }
+        cleanup();
+        process.kill(process.pid, 'SIGTSTP');
+      },
+    });
+  }
   try {
-    readline.emitKeypressEvents(stdin);
-    stdin.setRawMode(true);
-    stdin.resume();
+    const installed = installKeys();
+    if (!installed) throw new Error(t('tui.select.rawUnavailable'));
+    restoreKeys = installed;
   } catch (e) {
     finish(null);
     onLog(t('tui.select.selectorUnavailable', { error: e.message }));
@@ -955,12 +1314,13 @@ async function selectItems(items, opts = {}) {
     return null;
   }
 
+  resumeListener = onResume;
+  process.on('SIGCONT', resumeListener);
   process.on('SIGINT', onSigint);
   if (stdout && typeof stdout.on === 'function') stdout.on('resize', onResize);
-  stdin.on('keypress', onKeypress);
 
   try {
-    write(ANSI_HIDE_CURSOR);
+    prepareScreen();
     render();
   } catch (e) {
     finish(null);
@@ -972,8 +1332,8 @@ async function selectItems(items, opts = {}) {
   try {
     return await answer;
   } finally {
-    // Whether we confirm, cancel or throw, restore the cursor/keyboard mode and clear the screen.
-    // 无论正常确认、取消还是异常，都要还原光标/键盘模式并清屏
+    // Whether we confirm, cancel or throw, restore the cursor/keyboard mode and the screen.
+    // 无论正常确认、取消还是异常，都要还原光标/键盘模式与屏幕。
     cleanup();
   }
 }
@@ -984,16 +1344,21 @@ module.exports = {
   filterItems,
   sortItems,
   paginate,
+  scrollWindow,
   toggleSelection,
   selectAll,
   invertSelection,
+  rangeSelection,
   clampCursor,
   ensureVisible,
+  quickIndex,
   // Rendering helpers (no side effects, easy to test)
   // 渲染辅助（无副作用，便于测试）
   buildRowText,
   renderListLines,
   buildHeaderLines,
+  withNotice,
+  hintLines,
   layoutColumns,
   describeStatus,
   displayWidth,
@@ -1008,4 +1373,10 @@ module.exports = {
   SORT_MODES,
   SORT_LABELS,
   KEY_HINTS,
+  SEARCH_HINTS,
+  HELP_HINTS,
+  HELP_ITEMS,
+  CHROME_ROWS,
+  HINT_ROWS,
+  MIN_ROWS,
 };

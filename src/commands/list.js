@@ -76,6 +76,7 @@ async function main(config, args) {
       items = await fetchCollectionItems(browser, config.site, collectionId, {
         trpcPath: config.trpcPath,
         trpcInput: config.trpcInput,
+        requestTimeoutMs: config.requestTimeoutMs,
         limit: createSiteLimiter(config),
       });
     } finally {

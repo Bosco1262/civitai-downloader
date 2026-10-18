@@ -275,11 +275,9 @@ function sidecarPath(target) {
 
 /**
  * Invoke curl.
+ * 调用 curl。
  * @param {{url:string, cookieFile:string, out:string, userAgent:string, quiet?:boolean, proxy?:string,
  *          retryCount?:number, headerFile?:string, resume?:boolean}} opts
- *
- *
- * 调用 curl。
  */
 function runCurl(opts) {
   const { url, cookieFile, out, userAgent, quiet, proxy, retryCount = 5, headerFile, resume = true } = opts;
@@ -450,12 +448,10 @@ function verifyFile(file, expectedSha256) {
 
 /**
  * Download one file.
+ * 下载一个文件。
  * @param {{url:string, cookieFile:string, dir:string, fileName:string, expectedSha256?:string,
  *          expectedBytes?:number, userAgent:string, force?:boolean, quiet?:boolean, proxy?:string,
  *          attempts?:number, retryCount?:number, onAttempt?:Function}} opts
- *
- *
- * 下载一个文件。
  * @returns {Promise<'downloaded'|'verified'>}
  */
 async function downloadFile(opts) {
