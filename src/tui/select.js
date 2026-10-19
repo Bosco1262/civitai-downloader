@@ -1304,12 +1304,10 @@ async function selectItems(items, opts = {}) {
     }
     switch (key.name) {
       case 'up':
-      case 'k':
         moveCursor(-1);
         if (shift) extendSelection();
         return;
       case 'down':
-      case 'j':
         moveCursor(1);
         if (shift) extendSelection();
         return;
@@ -1476,6 +1474,7 @@ async function selectItems(items, opts = {}) {
       // 列表自身会把标题作为表头再画一次，因此不再重复进面包屑：
       // 面包屑保留流程阶段（「主菜单 › 下载」）。
       crumb: false,
+      handlesHelp: true,
       hints: () => pageHintLines(),
       render(promptState, ctx) {
         // The shell hands over exactly the room that is left for the body, so the geometry comes from

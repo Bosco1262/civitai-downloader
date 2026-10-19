@@ -20,7 +20,6 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { EventEmitter } = require('events');
 
 const i18n = require('../src/i18n');
 const layout = require('../src/tui/layout');
@@ -35,77 +34,7 @@ const view = require('../src/tui/view');
 const LANGUAGE_AT_LOAD = i18n.getLanguage();
 test.after(() => i18n.setLanguage(LANGUAGE_AT_LOAD));
 
-const ANSI = /\u001b\[[0-9;?]*[a-zA-Z]/g;
-
-/**
- * Install a fake terminal for the duration of `fn`, then restore everything.
- * 在 `fn` 执行期间安装假终端，结束后全部还原。
- */
-async function withFakeTerminal(fn, opts = {}) {
-  const frames = [];
-  const original = {
-    write: process.stdout.write,
-    isTTY: process.stdout.isTTY,
-    columns: process.stdout.columns,
-    rows: process.stdout.rows,
-    stdin: process.stdin,
-    cp: process.env.CIVITAI_CONSOLE_CP,
-    ascii: process.env.CIVITAI_ASCII,
-    plain: process.env.CIVITAI_PLAIN,
-  };
-  const stdin = new EventEmitter();
-  stdin.isTTY = true;
-  stdin.isRaw = false;
-  stdin.setRawMode = (value) => {
-    stdin.isRaw = !!value;
-  };
-  stdin.resume = () => {};
-  stdin.pause = () => {};
-  stdin.setEncoding = () => {};
-
-  process.stdout.isTTY = true;
-  process.stdout.columns = opts.columns || 100;
-  process.stdout.rows = opts.rows || 30;
-  process.stdout.write = (chunk) => {
-    frames.push(String(chunk));
-    return true;
-  };
-  Object.defineProperty(process, 'stdin', { value: stdin, configurable: true, writable: true });
-  process.env.CIVITAI_CONSOLE_CP = '65001';
-  delete process.env.CIVITAI_ASCII;
-  delete process.env.CIVITAI_PLAIN;
-
-  // Current frame as plain text (escape sequences stripped).
-  // 当前一帧的纯文本（已去掉转义序列）。
-  const frame = () => (frames[frames.length - 1] || '').split('\n').map((line) => line.replace(ANSI, ''));
-
-  const key = (name, text, ctrl) =>
-    stdin.emit('keypress', text === undefined ? '' : text, { name, ctrl: !!ctrl, meta: false, shift: false });
-
-  // Let the shell's scheduled repaint run (it coalesces through setImmediate).
-  // 让外壳排队的重绘跑完（它通过 setImmediate 合并多次请求）。
-  const settle = () => new Promise((resolve) => setImmediate(resolve));
-
-  try {
-    return await fn({ frames, frame, key, settle, stdin });
-  } finally {
-    screen.stop();
-    // A failed assertion can leave a prompt open; the shell is shared by every test in this file.
-    // 断言失败可能留下未结束的提问；本文件里的测试共用同一个外壳。
-    screen.resetState();
-    process.stdout.write = original.write;
-    process.stdout.isTTY = original.isTTY;
-    process.stdout.columns = original.columns;
-    process.stdout.rows = original.rows;
-    Object.defineProperty(process, 'stdin', { value: original.stdin, configurable: true, writable: true });
-    if (original.cp === undefined) delete process.env.CIVITAI_CONSOLE_CP;
-    else process.env.CIVITAI_CONSOLE_CP = original.cp;
-    if (original.ascii === undefined) delete process.env.CIVITAI_ASCII;
-    else process.env.CIVITAI_ASCII = original.ascii;
-    if (original.plain === undefined) delete process.env.CIVITAI_PLAIN;
-    else process.env.CIVITAI_PLAIN = original.plain;
-  }
-}
+const { ANSI, withFakeTerminal } = require('./helpers/tui');
 
 // ---------------------------------------------------------------------------
 // tasks.js
@@ -350,7 +279,7 @@ test('screen: 任务视图逐任务两行，空时给出提示', () => {
 // 外壳本身
 // ---------------------------------------------------------------------------
 
-test('screen: 固定页眉 / 信息面板 / 页脚一直显示，Tab 切换任务视图', async () => {
+test('screen: 固定页眉 / 信息面板 / 页脚一直显示，Ctrl+M 切换任务视图', async () => {
   await withFakeTerminal(async ({ frame, key, settle }) => {
     tasks.reset();
     assert.equal(screen.start({ onQuit: () => {} }), true);
@@ -384,7 +313,7 @@ test('screen: 固定页眉 / 信息面板 / 页脚一直显示，Tab 切换任�
     assert.equal(lines[lines.length - 1].trim(), '本页额外按键');
     assert.ok(lines.length <= 30, '帧不超过终端行数');
 
-    key('tab');
+    key('m', '', true);
     await settle();
     screen.render();
     const taskView = frame().join('\n');
@@ -394,10 +323,10 @@ test('screen: 固定页眉 / 信息面板 / 页脚一直显示，Tab 切换任�
     assert.ok(!taskView.includes(`${i18n.t('tui.app.menuTitle')} ›`), `任务视图不应挂在主菜单下：\n${taskView}`);
     assert.ok(taskView.includes(i18n.t('tui.hint.taskRunning')));
 
-    key('tab');
+    key('m', '', true);
     await settle();
     screen.render();
-    assert.ok(!frame().join('\n').includes(i18n.t('tui.hint.taskRunning')), 'Tab 再按一次返回');
+    assert.ok(!frame().join('\n').includes(i18n.t('tui.hint.taskRunning')), 'Ctrl+M 再按一次返回');
     tasks.reset();
   });
 });
@@ -668,7 +597,7 @@ test('screen: 设置页滚动且首尾循环，光标不会跑出屏幕', async 
   );
 });
 
-test('screen: Tab 在提问打开时也有效（页脚写了就要能用）', async () => {
+test('screen: Ctrl+M 在提问打开时也能切换任务视图', async () => {
   await withFakeTerminal(async ({ frame, key, settle }) => {
     assert.equal(screen.start({ onQuit: () => {} }), true);
     screen.setBase({ title: '主菜单', render: () => ['▸ 主菜单项'], hints: () => [] });
@@ -677,12 +606,12 @@ test('screen: Tab 在提问打开时也有效（页脚写了就要能用）', as
     await settle();
     screen.render();
 
-    key('tab');
+    key('m', '', true);
     await settle();
     screen.render();
-    assert.ok(frame().join('\n').includes(i18n.t('tui.screen.taskTitle')), '提问期间 Tab 也能打开任务视图');
+    assert.ok(frame().join('\n').includes(i18n.t('tui.screen.taskTitle')), '提问期间 Ctrl+M 也能打开任务视图');
 
-    key('tab');
+    key('m', '', true);
     await settle();
     screen.render();
     assert.ok(frame().join('\n').includes('要下载什么？'), '再按一次回到原来的提问');
@@ -965,7 +894,7 @@ test('tui: 惰性 require 到的入口函数都存在', () => {
   assert.deepEqual(missing, [], `惰性 require 的函数不存在：\n${missing.join('\n')}`);
 });
 
-test('view.note / view.log 进入日志页（L），页面上不再有常驻日志条', async () => {
+test('view.note / view.log 进入日志页（Ctrl+L），页面上不再有常驻日志条', async () => {
   await withFakeTerminal(async ({ frame, key, settle }) => {
     assert.equal(screen.start({ onQuit: () => {} }), true);
     screen.setBase({ title: '主菜单', render: () => ['▸ 项'], hints: () => [] });
@@ -978,9 +907,9 @@ test('view.note / view.log 进入日志页（L），页面上不再有常驻日�
     assert.ok(!plain.includes(i18n.t('tui.screen.logTitle')), plain);
     assert.ok(!plain.includes('普通一行'), plain);
 
-    // `L` opens it as a page, with both lines.
-    // `L` 把它作为一页打开，两行都在。
-    key('l', 'l');
+    // `Ctrl+L` opens it as a page, with both lines.
+    // `Ctrl+L` 把它作为一页打开，两行都在。
+    key('l', '', true);
     await settle();
     screen.render();
     const opened = frame().join('\n');
@@ -989,9 +918,9 @@ test('view.note / view.log 进入日志页（L），页面上不再有常驻日�
     assert.match(opened, /\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\] 带时间戳一行/);
     assert.ok(opened.includes(i18n.t('tui.hint.logView')), '页脚换成日志页的按键说明');
 
-    // The same key closes it and the page comes back.
-    // 同一个键关闭，原页面回来。
-    key('l', 'l');
+    // Esc closes it and the page comes back.
+    // Esc 关闭，原页面回来。
+    key('escape');
     await settle();
     screen.render();
     assert.ok(frame().join('\n').includes('▸ 项'));

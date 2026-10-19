@@ -17,6 +17,8 @@
  */
 
 const prompts = require('prompts');
+const fs = require('fs');
+const path = require('path');
 const { writeJson, formatBytes, mapPool } = require('../util');
 const { dataPaths, readLibrary, getVersion, writeCollection } = require('../storage');
 const { ensureBrowser } = require('../browser');
@@ -35,6 +37,9 @@ const tasks = require('./tasks');
 const { selectItems, isInteractive } = require('./select');
 const { startDownloadTask, queuedDownloads } = require('./downloadTask');
 const { runWithProgress } = require('./run');
+const { showPlanWorkspace } = require('./ui/planWorkspace');
+const list = require('./ui/list');
+const { color, glyph, format } = require('./tokens');
 
 /**
  * Rows per screen in the full-screen picker (shrinks when the terminal is short).
@@ -150,7 +155,7 @@ async function pickItems(plan, state) {
   const available = await prefilter(plan);
   if (!available) return null;
   if (!available.length) {
-    view.notice(t('tui.download.noDownloadable'), view.colors.yellow);
+    view.notice(t('tui.download.noDownloadable'), color.warning);
     return null;
   }
 
@@ -192,7 +197,7 @@ async function pickItems(plan, state) {
       // as the first line of the takeover.
       //
       // 选择器会接管整屏，之前的枚举摘要会消失：把它作为接管后的第一行打印出来。
-      onEnter: () => view.note(view.colors.dim(`  ${prefilterSummary(available, state)}`)),
+      onEnter: () => view.note(color.muted(`  ${prefilterSummary(available, state)}`)),
     });
     if (!picked) {
       view.decision('tui.view.decisionCancelled');
@@ -293,7 +298,7 @@ async function chooseVersions(config, selectedPlan) {
           row.baseModel || '-',
           t('tui.download.fileCount', { count: row.fileCount }),
           formatBytes(row.totalBytes || 0),
-          row.publishedAt ? String(row.publishedAt).slice(0, 10) : t('tui.download.unknownDate'),
+          row.publishedAt ? format.date(row.publishedAt) : t('tui.download.unknownDate'),
           row.current ? t('tui.download.currentMark') : null,
         ]
           .filter(Boolean)
@@ -338,19 +343,19 @@ async function askOptions(config, selectedPlan, state) {
   for (;;) {
     const lines = selectedPlan.slice(0, 5).map((p) => {
       const mark = stateMatches(p, state) ? t('tui.download.statusDownloaded') : '';
-      return `  ${view.colors.dim('·')} ${view.truncateTo(p.name, 44)}  ${view.colors.dim(
+      return `  ${color.muted(glyph.bullet)} ${view.truncateTo(p.name, 44)}  ${color.muted(
         [formatBytes(p.totalBytes || 0), mark].filter(Boolean).join(view.separator())
       )}`;
     });
     view.note('');
     view.note(
-      view.colors.bold(
+      color.emphasis(
         `  ${t('tui.download.planTitle', { count: selectedPlan.length, size: formatBytes(selectedBytes) })}`
       )
     );
     for (const line of lines) view.note(line);
     if (selectedPlan.length > lines.length) {
-      view.note(view.colors.dim(`  ${t('tui.download.planMore', { count: selectedPlan.length - lines.length })}`));
+      view.note(color.muted(`  ${t('tui.download.planMore', { count: selectedPlan.length - lines.length })}`));
     }
 
     const choice = await pages.promptMenu(t('tui.download.optionPrompt'), [
@@ -404,7 +409,7 @@ async function askOptions(config, selectedPlan, state) {
     const free = freeSpaceBytes(outDir);
     if (free !== null && selectedBytes > free) {
       view.log(
-        view.colors.yellow(
+        color.warning(
           t('tui.download.lowSpace', {
             planned: formatBytes(selectedBytes),
             dir: outDir,
@@ -438,7 +443,7 @@ async function downloadFlow(config, opts = {}) {
     if (rawId === null) return;
     collectionId = parseCollectionId(rawId);
     if (!collectionId) {
-      view.notice(t('tui.download.invalidCollectionId'), view.colors.red);
+      view.notice(t('tui.download.invalidCollectionId'), color.danger);
       return;
     }
   }
@@ -452,8 +457,8 @@ async function downloadFlow(config, opts = {}) {
     //
     // 空结果是唯一会被当成「点了没反应」的情形：明确说出来，
     // 并提醒枚举需要浏览器里已登录的会话。
-    view.notice(t('tui.download.collectionEmpty'), view.colors.yellow);
-    view.notice(t('tui.download.collectionEmptyHint'), view.colors.dim);
+    view.notice(t('tui.download.collectionEmpty'), color.warning);
+    view.notice(t('tui.download.collectionEmptyHint'), color.muted);
     return;
   }
   view.log(t('tui.download.collectionCount', { collectionId, count: items.length }));
@@ -552,7 +557,7 @@ async function downloadFlow(config, opts = {}) {
     summary.cancelled
       ? t('tui.download.summaryCancelled', stats)
       : t(summary.metaFailed ? 'tui.download.summaryDoneMeta' : 'tui.download.summaryDone', stats),
-    summary.cancelled || summary.failed ? view.colors.yellow : view.colors.green
+    summary.cancelled || summary.failed ? color.warning : color.success
   );
   view.log(
     t('tui.download.elapsed', {
@@ -564,7 +569,7 @@ async function downloadFlow(config, opts = {}) {
 
   const openIt = await pages.promptConfirm(t('tui.download.openDirConfirm'), { initial: false });
   if (openIt && view.openDir(options.outDir)) {
-    view.notice(t('tui.download.opened', { dir: options.outDir }), view.colors.dim);
+    view.notice(t('tui.download.opened', { dir: options.outDir }), color.muted);
   }
 }
 
@@ -719,7 +724,7 @@ function planSummaryText(config, plan, selected, entries, outDir) {
 function collectionSourceLine(collectionId, count, size, snapshot) {
   const time =
     snapshot && snapshot.fetchedAt
-      ? String(snapshot.fetchedAt).slice(0, 16).replace('T', ' ')
+      ? format.dateTime(snapshot.fetchedAt)
       : t('tui.download.unknownDate');
   return t('tui.download.planSourceCollection', {
     id: collectionId,
@@ -751,7 +756,7 @@ async function runDownloadPlan(config, opts) {
   }
   const entries = opts.entries || readLibrary(config, { allowCorrupt: true }).entries;
   if (!selectablePlan(plan).length) {
-    view.notice(t('tui.download.noDownloadable'), view.colors.yellow);
+    view.notice(t('tui.download.noDownloadable'), color.warning);
     const failed = plan.filter((item) => item.error);
     if (failed.length) {
       view.notice(
@@ -759,7 +764,7 @@ async function runDownloadPlan(config, opts) {
           count: failed.length,
           error: view.truncate(String(failed[0].error), 120),
         }),
-        view.colors.red
+        color.danger
       );
     }
     return false;
@@ -836,7 +841,7 @@ async function runDownloadPlan(config, opts) {
       (item) => state.selected.has(planRowKey(item)) && !item.error && Array.isArray(item.files) && item.files.length
     );
     if (!chosen.length) {
-      view.notice(t('tui.download.noSelection'), view.colors.yellow);
+      view.notice(t('tui.download.noSelection'), color.warning);
       continue;
     }
     const confirmed = await confirmPage(config, {
@@ -857,7 +862,7 @@ async function runDownloadPlan(config, opts) {
       ? chosen
       : chosen.filter((item) => !recordedOf(entries, item));
     if (!toDownload.length) {
-      view.notice(t('tui.download.allSkipped'), view.colors.yellow);
+      view.notice(t('tui.download.allSkipped'), color.warning);
       continue;
     }
     // Progress is measured against what will actually be transferred; recorded items selected while
@@ -986,12 +991,12 @@ async function pickPlanVersions(config, item, entries, plan) {
       fetchModelDetail(config.site, item.modelId, config.userAgent)
     );
   } catch (e) {
-    view.notice(t('tui.download.versionListFailed', { name: item.name, error: e.message }), view.colors.red);
+    view.notice(t('tui.download.versionListFailed', { name: item.name, error: e.message }), color.danger);
     return null;
   }
   const rows = versionChoiceRows(config, detail, item, entries);
   if (!rows.length) {
-    view.notice(t('tui.download.noVersions'), view.colors.yellow);
+    view.notice(t('tui.download.noVersions'), color.warning);
     return null;
   }
   const entry = entryOf(entries, item);
@@ -1017,7 +1022,7 @@ async function pickPlanVersions(config, item, entries, plan) {
           row.baseModel || t('common.unknown'),
           t('tui.download.fileCount', { count: row.fileCount }),
           formatBytes(row.totalBytes || 0),
-          row.publishedAt ? String(row.publishedAt).slice(0, 10) : t('tui.download.unknownDate'),
+          row.publishedAt ? format.date(row.publishedAt) : t('tui.download.unknownDate'),
         ]
           .filter(Boolean)
           .join(view.separator()),
@@ -1039,10 +1044,10 @@ async function pickPlanVersions(config, item, entries, plan) {
         if (entry) {
           setPin(config, item.modelId, pinRow.versionId);
           entry.pinnedVersionId = pinRow.versionId;
-          view.notice(t('tui.download.pinMarkedOne', { version: pinRow.name }), view.colors.green);
+          view.notice(t('tui.download.pinMarkedOne', { version: pinRow.name }), color.success);
         } else {
           item.pinVersionId = pinRow.versionId;
-          view.notice(t('tui.download.pinPending', { count: 1 }), view.colors.dim);
+          view.notice(t('tui.download.pinPending', { count: 1 }), color.muted);
         }
         for (const row of rows) row.pinned = row.versionId === pinRow.versionId;
       }
@@ -1050,7 +1055,7 @@ async function pickPlanVersions(config, item, entries, plan) {
     }
 
     if (!selectedIds.size) {
-      view.notice(t('tui.download.noSelection'), view.colors.yellow);
+      view.notice(t('tui.download.noSelection'), color.warning);
       continue;
     }
 
@@ -1206,17 +1211,17 @@ async function confirmPage(config, data) {
         );
       }
       if (win.end - win.start < rows.length) {
-        lines.push(view.colors.dim(t('tui.pages.listPosition', { index: cursor + 1, total: rows.length })));
+        lines.push(color.muted(t('tui.pages.listPosition', { index: cursor + 1, total: rows.length })));
       }
       return lines;
     },
     async onKey(text, key, entry) {
       const index = rows[cursor];
-      if (key.name === 'up' || text === 'k') {
+      if (key.name === 'up') {
         cursor = cursor <= 0 ? rows.length - 1 : cursor - 1;
         return;
       }
-      if (key.name === 'down' || text === 'j') {
+      if (key.name === 'down') {
         cursor = cursor >= rows.length - 1 ? 0 : cursor + 1;
         return;
       }
@@ -1264,14 +1269,14 @@ async function confirmPage(config, data) {
           force && completed
             ? t('tui.download.forceRedownload', { count: completed })
             : t('tui.download.forceSkip', { count: completed }),
-          force ? view.colors.yellow : view.colors.dim
+          force ? color.warning : color.muted
         );
         return;
       }
       if (index === 'start') {
         const needed = downloadableBytes();
         if (!downloadable().length) {
-          view.notice(t('tui.download.allSkipped'), view.colors.yellow);
+          view.notice(t('tui.download.allSkipped'), color.warning);
           return;
         }
         const free = freeSpaceBytes(outDir);
@@ -1311,14 +1316,14 @@ async function receiptPage(taskId) {
       const width = Math.max(20, Math.floor(ctx.width) || 80);
       const lines = [];
       if (!task) {
-        lines.push(view.colors.red(t('tui.download.receiptMissing')));
+        lines.push(color.danger(t('tui.download.receiptMissing')));
         return lines;
       }
       const failed = task.status === tasks.FAILED;
       lines.push(
         failed
-          ? view.colors.red(t('tui.download.receiptFailedTitle'))
-          : view.colors.green(t('tui.download.receiptJoined'))
+          ? color.danger(t('tui.download.receiptFailedTitle'))
+          : color.success(t('tui.download.receiptJoined'))
       );
       lines.push('');
       lines.push(
@@ -1332,10 +1337,10 @@ async function receiptPage(taskId) {
       );
       lines.push('');
       if (failed) {
-        lines.push(view.colors.red(t('tui.download.receiptFailed', { error: (task.result && task.result.error) || '' })));
+        lines.push(color.danger(t('tui.download.receiptFailed', { error: (task.result && task.result.error) || '' })));
       } else if (task.status === tasks.QUEUED) {
         lines.push(
-          view.colors.yellow(
+          color.warning(
             t('tui.download.receiptQueued', {
               position: tasks.queuePosition(taskId),
               waiting: queuedDownloads(),
@@ -1343,14 +1348,14 @@ async function receiptPage(taskId) {
           )
         );
       } else if (task.status === tasks.RUNNING) {
-        lines.push(view.colors.green(t('tui.download.receiptRunning')));
+        lines.push(color.success(t('tui.download.receiptRunning')));
       } else if (task.status === tasks.DONE) {
-        lines.push(view.colors.green(t('tui.download.receiptDone')));
+        lines.push(color.success(t('tui.download.receiptDone')));
       } else {
-        lines.push(view.colors.yellow(t('tui.download.receiptCancelled')));
+        lines.push(color.warning(t('tui.download.receiptCancelled')));
       }
       lines.push('');
-      lines.push(view.colors.dim(t('tui.download.receiptHint')));
+      lines.push(color.muted(t('tui.download.receiptHint')));
       return lines;
     },
   });
@@ -1372,7 +1377,7 @@ async function downloadCollectionShell(config, opts = {}) {
     if (rawId === null) return;
     collectionId = parseCollectionId(rawId);
     if (!collectionId) {
-      view.notice(t('tui.download.invalidCollectionId'), view.colors.red);
+      view.notice(t('tui.download.invalidCollectionId'), color.danger);
       return;
     }
   }
@@ -1381,8 +1386,8 @@ async function downloadCollectionShell(config, opts = {}) {
     fetchItems(config, collectionId)
   );
   if (!items.length) {
-    view.notice(t('tui.download.collectionEmpty'), view.colors.yellow);
-    view.notice(t('tui.download.collectionEmptyHint'), view.colors.dim);
+    view.notice(t('tui.download.collectionEmpty'), color.warning);
+    view.notice(t('tui.download.collectionEmptyHint'), color.muted);
     return;
   }
 
@@ -1425,20 +1430,216 @@ async function downloadCollectionShell(config, opts = {}) {
     view.log(t('tui.download.planWriteFailed', { error: e.message }));
   }
 
-  return runDownloadPlan(config, {
+  return runDownloadWorkspace(config, {
     plan,
     collectionId,
     name: t('tui.check.collectionLabel', { id: collectionId }),
-    sourceLine: collectionSourceLine(collectionId, items.length, formatBytes(totalBytes), snapshot),
     outDir: resolveOutDir(config, config.outDir),
     jobs: config.jobs,
   });
+}
+
+/**
+ * Workspace row label: model name plus the target version.
+ * 工作台行标签：模型名与目标版本。
+ */
+function workspaceRowLabel(item) {
+  const version = item.versionName || item.versionId || '';
+  return version ? t('tui.workspace.rowVersion', { name: item.name || item.modelId, version }) : String(item.name || item.modelId || '');
+}
+
+/**
+ * Delete downloaded versions: remove the files first, then the library records.
+ * 删除已下载版本：先删文件，再删模型库记录。
+ */
+function deletePlanVersions(config, rows) {
+  const { entries } = readLibrary(config, { allowCorrupt: true });
+  let count = 0;
+  for (const row of rows) {
+    const entry = entries[String(row.modelId)];
+    const version = getVersion(entry, row.versionId);
+    if (!version) continue;
+    const dir = path.join(version.outDir || config.outDir, version.dirName || '');
+    for (const file of version.files || []) {
+      try {
+        fs.rmSync(path.join(dir, file.name), { force: true });
+      } catch (e) {
+        // A missing file must not block the record cleanup.
+        // 缺失文件不阻塞记录清理。
+      }
+    }
+    markForRedownload(config, [{ modelId: row.modelId, versionId: row.versionId }]);
+    count++;
+  }
+  return count;
+}
+
+/**
+ * Read-only confirmation page: selected rows + start/back. Tab switches the two regions.
+ * 只读确认页：选中行 + 开始/返回。Tab 在两个区域间切换。
+ */
+async function workspaceConfirmPage(config, data) {
+  const deletions = Array.isArray(data.deletions) ? data.deletions : [];
+  const deletionBytes = deletions.reduce((sum, item) => sum + (Number(item.totalBytes) || 0), 0);
+  let region = 'rows';
+  let cursor = 0;
+  const rows = data.chosen;
+
+  return screen.prompt({
+    title: t('tui.download.confirmTitle'),
+    handlesHelp: true,
+    hints: () => [t('tui.hint.workspaceConfirm')],
+    render(_state, ctx) {
+      const lines = [];
+      lines.push(
+        color.muted(
+          truncateTo(
+            `${t('tui.download.optionDir')}: ${data.outDir} | ${t('tui.download.optionJobs')}: ${data.jobs}`,
+            ctx.width
+          )
+        )
+      );
+      lines.push(
+        color.muted(
+          t('tui.workspace.selected', {
+            count: rows.length,
+            total: Math.max(rows.length, deletions.length + rows.length),
+          })
+        )
+      );
+      if (deletions.length) {
+        lines.push(
+          color.warning(
+            t('tui.workspace.deleteSummary', { count: deletions.length, size: formatBytes(deletionBytes) })
+          )
+        );
+      }
+      lines.push('');
+      const listRoom = Math.max(1, Math.floor(ctx.rows) || 3 - lines.length - 2);
+      const win = list.windowOf(rows.length, cursor, listRoom, data.windowStart || 0);
+      for (let index = win.start; index < win.end; index++) {
+        const row = rows[index];
+        const mark = region === 'rows' && index === cursor ? color.cursor(layout.glyphs().cursor) : ' ';
+        lines.push(`${mark} ${truncateTo(workspaceRowLabel(row), ctx.width - 4)}`);
+      }
+      lines.push('');
+      lines.push(
+        region === 'start'
+          ? color.accent(`▸ ${t('tui.workspace.confirmNext')}`)
+          : color.muted(`  ${t('tui.workspace.confirmBack')}`)
+      );
+      return lines;
+    },
+    onKey(text, key, entry) {
+      const name = key && key.name;
+      if (name === 'escape') {
+        entry.settle(null);
+        return;
+      }
+      if (name === 'tab') {
+        region = region === 'rows' ? 'start' : 'rows';
+        return;
+      }
+      if (region === 'rows') {
+        if (name === 'up') {
+          cursor = Math.max(0, cursor - 1);
+          return;
+        }
+        if (name === 'down') {
+          cursor = Math.min(rows.length - 1, cursor + 1);
+          return;
+        }
+      }
+      if (name !== 'return') return;
+      if (region === 'rows') {
+        region = 'start';
+        return;
+      }
+      entry.settle({ confirmed: true });
+    },
+  });
+}
+
+/**
+ * New shell download flow: workspace selection -> read-only confirmation -> receipt.
+ * 新的外壳下载流程：工作台选择 -> 只读确认 -> 回执。
+ */
+async function runDownloadWorkspace(config, opts = {}) {
+  const plan = Array.isArray(opts.plan) ? opts.plan : [];
+  const entries = opts.entries || readLibrary(config, { allowCorrupt: true }).entries;
+  const selected = opts.selected instanceof Set ? opts.selected : new Set(plan.map(planRowKey));
+
+  const workspace = await showPlanWorkspace({
+    title: opts.name || t('tui.download.planTitle', { count: plan.length, size: formatBytes(plan.reduce((sum, item) => sum + (item.totalBytes || 0), 0)) }),
+    inputLabel: opts.inputLabel,
+    emptyText: opts.emptyText,
+    nextLabel: t('tui.workspace.next'),
+    rows: plan,
+    selected,
+    idOf: planRowKey,
+    resolveInput: typeof opts.resolveInput === 'function' ? opts.resolveInput : undefined,
+    openRow: async (row) => {
+      const detail = await fetchModelDetail(config.site, row.modelId, config.userAgent);
+      const versions = Array.isArray(detail.modelVersions) ? detail.modelVersions : [];
+      const rows = versions
+        .map((version) => {
+          const files = extractFiles(version, config.site, {
+            fileTypes: config.fileTypes,
+            primaryOnly: config.primaryOnly,
+          });
+          return { version, files };
+        })
+        .filter((entry) => entry.files.length)
+        .map((entry) => ({
+          ...versionToItem(config.site, entry.version, {
+            fileTypes: config.fileTypes,
+            primaryOnly: config.primaryOnly,
+          }),
+          modelId: row.modelId,
+          name: row.name,
+          type: row.type,
+          baseModel: entry.version.baseModel,
+          modelMeta: detail,
+        }));
+      return rows.map((next) => ({ ...next, detail: workspaceRowLabel(next) }));
+    },
+  });
+  if (!workspace) return false;
+
+  const chosen = workspace.rows;
+  const deletions = plan.filter((row) => !workspace.selected.has(planRowKey(row)) && recordedOf(entries, row));
+  const confirmed = await workspaceConfirmPage(config, {
+    chosen,
+    deletions,
+    outDir: opts.outDir || resolveOutDir(config, config.outDir),
+    jobs: opts.jobs || config.jobs,
+  });
+  if (!confirmed) return false;
+
+  const started = startDownloadTask(config, {
+    collectionId: opts.collectionId,
+    name: opts.name,
+    plan: chosen,
+    outDir: opts.outDir || resolveOutDir(config, config.outDir),
+    force: false,
+    totalBytes: chosen.reduce((sum, item) => sum + (Number(item.totalBytes) || 0), 0),
+    jobs: opts.jobs || config.jobs,
+    attempts: config.downloadAttempts,
+    onComplete: async () => {
+      if (!deletions.length) return;
+      const count = deletePlanVersions(config, deletions);
+      if (count) view.notice(t('tui.workspace.deleteDone', { count }), color.success);
+    },
+  });
+  await receiptPage(started.taskId);
+  return true;
 }
 
 module.exports = {
   downloadFlow,
   downloadCollectionShell,
   runDownloadPlan,
+  runDownloadWorkspace,
   prefilter,
   askOptions,
   versionChoices,

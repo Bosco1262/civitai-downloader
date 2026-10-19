@@ -95,10 +95,9 @@ function packageVersion() {
  * Heading of a body: the message in bold plus a rule as long as the text (capped to the width).
  * 主体的标题：加粗的消息，加一条与文字等长（不超过宽度）的分隔线。
  */
-function heading(text, width) {
+function heading(text) {
   const value = String(text === undefined || text === null ? '' : text);
-  const ruleWidth = Math.max(0, Math.min(displayWidth(value) + 2, Math.floor(width) - 2));
-  return [colors.bold(value), ruleWidth > 0 ? colors.dim(layout.glyphs().boxH.repeat(ruleWidth)) : ''];
+  return [colors.bold(value)];
 }
 
 /**
@@ -252,8 +251,8 @@ function shellMenu(message, choices, options) {
       const state = entry.state;
       // The cursor wraps around at both ends: pressing ↑ on the first entry jumps to the last one.
       // 光标在两端循环：在第一项按 ↑ 会跳到末项。
-      if (key.name === 'up' || text === 'k') state.cursor = state.cursor <= 0 ? items.length - 1 : state.cursor - 1;
-      else if (key.name === 'down' || text === 'j') state.cursor = state.cursor >= items.length - 1 ? 0 : state.cursor + 1;
+      if (key.name === 'up') state.cursor = state.cursor <= 0 ? items.length - 1 : state.cursor - 1;
+      else if (key.name === 'down') state.cursor = state.cursor >= items.length - 1 ? 0 : state.cursor + 1;
       else if (key.name === 'home') state.cursor = 0;
       else if (key.name === 'end') state.cursor = items.length - 1;
       else if (key.name === 'pageup') state.cursor = Math.max(0, state.cursor - 10);
@@ -939,13 +938,13 @@ const HELP_SECTIONS = [
   {
     titleKey: 'tui.help.sectionGeneral',
     items: [
-      ['↑/↓ · k/j', 'tui.help.generalMove'],
+      ['↑/↓', 'tui.help.generalMove'],
       ['Home/End', 'tui.help.generalFirstLast'],
       ['PgUp/PgDn', 'tui.help.generalPage'],
       ['Enter', 'tui.help.generalConfirm'],
       ['Esc', 'tui.help.generalBack'],
-      ['Tab', 'tui.help.generalTasks'],
-      ['L', 'tui.help.generalLog'],
+      ['Ctrl+M', 'tui.help.generalTasks'],
+      ['Ctrl+L', 'tui.help.generalLog'],
       ['Ctrl+C', 'tui.help.generalQuit'],
       ['?', 'tui.help.generalHelp'],
     ],
@@ -1027,7 +1026,7 @@ async function showHelp(opts = {}) {
   if (screen.isActive()) {
     await screen.prompt({
       title: t('tui.help.shortTitle'),
-      acceptText: true,
+      handlesHelp: true,
       hints: () => [t('tui.help.footer')],
       render(state, ctx) {
         return helpLines({ columns: ctx.width }).map((line) => line.replace(/^ {2}/, ''));

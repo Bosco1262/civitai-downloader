@@ -19,7 +19,6 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { EventEmitter } = require('events');
 
 const i18n = require('../src/i18n');
 const layout = require('../src/tui/layout');
@@ -34,74 +33,7 @@ const storage = require('../src/storage');
 const LANGUAGE_AT_LOAD = i18n.getLanguage();
 test.after(() => i18n.setLanguage(LANGUAGE_AT_LOAD));
 
-const ANSI = /\u001b\[[0-9;?]*[a-zA-Z]/g;
-
-/**
- * Install a fake terminal for the duration of `fn`, then restore everything.
- * 在 `fn` 执行期间安装假终端，结束后全部还原。
- */
-async function withFakeTerminal(fn, opts = {}) {
-  const frames = [];
-  const original = {
-    write: process.stdout.write,
-    isTTY: process.stdout.isTTY,
-    columns: process.stdout.columns,
-    rows: process.stdout.rows,
-    stdin: process.stdin,
-    cp: process.env.CIVITAI_CONSOLE_CP,
-    ascii: process.env.CIVITAI_ASCII,
-    plain: process.env.CIVITAI_PLAIN,
-  };
-  const stdin = new EventEmitter();
-  stdin.isTTY = true;
-  stdin.isRaw = false;
-  stdin.setRawMode = (value) => {
-    stdin.isRaw = !!value;
-  };
-  stdin.resume = () => {};
-  stdin.pause = () => {};
-  stdin.setEncoding = () => {};
-
-  process.stdout.isTTY = true;
-  process.stdout.columns = opts.columns || 100;
-  process.stdout.rows = opts.rows || 30;
-  process.stdout.write = (chunk) => {
-    frames.push(String(chunk));
-    return true;
-  };
-  Object.defineProperty(process, 'stdin', { value: stdin, configurable: true, writable: true });
-  process.env.CIVITAI_CONSOLE_CP = '65001';
-  delete process.env.CIVITAI_ASCII;
-  delete process.env.CIVITAI_PLAIN;
-
-  const frame = () => (frames[frames.length - 1] || '').split('\n').map((line) => line.replace(ANSI, ''));
-  const key = (name, text, ctrl) =>
-    stdin.emit('keypress', text === undefined ? '' : text, {
-      name,
-      ctrl: !!ctrl,
-      meta: false,
-      shift: false,
-    });
-  const settle = () => new Promise((resolve) => setImmediate(resolve));
-
-  try {
-    return await fn({ frames, frame, key, settle, stdin });
-  } finally {
-    screen.stop();
-    screen.resetState();
-    process.stdout.write = original.write;
-    process.stdout.isTTY = original.isTTY;
-    process.stdout.columns = original.columns;
-    process.stdout.rows = original.rows;
-    Object.defineProperty(process, 'stdin', { value: original.stdin, configurable: true, writable: true });
-    if (original.cp === undefined) delete process.env.CIVITAI_CONSOLE_CP;
-    else process.env.CIVITAI_CONSOLE_CP = original.cp;
-    if (original.ascii === undefined) delete process.env.CIVITAI_ASCII;
-    else process.env.CIVITAI_ASCII = original.ascii;
-    if (original.plain === undefined) delete process.env.CIVITAI_PLAIN;
-    else process.env.CIVITAI_PLAIN = original.plain;
-  }
-}
+const { withFakeTerminal } = require('./helpers/tui');
 
 /**
  * Temporary config + library used by the page tests.

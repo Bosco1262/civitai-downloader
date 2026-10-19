@@ -60,7 +60,7 @@ const GLYPHS_UNICODE = {
   unchecked: '[ ]',
   barFull: '█',
   barEmpty: '░',
-  separator: ' · ',
+  separator: ' | ',
   pipe: '｜',
   boxH: '─',
   boxV: '│',

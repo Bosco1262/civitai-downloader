@@ -32,6 +32,7 @@ const pages = require('./pages');
 const reportPage = require('./report');
 const screen = require('./screen');
 const { runWithProgress } = require('./run');
+const { color, format } = require('./tokens');
 
 /**
  * Ask which collection(s) to check. Returns a single id, an array of ids, or null when cancelled.
@@ -223,7 +224,7 @@ function reportSections(report) {
       title: t('tui.check.report.sectionResult'),
       rows: [],
       emptyText: t('tui.check.report.allGood'),
-      emptyColor: view.colors.green,
+      emptyColor: color.success,
     });
   }
   return sections;
@@ -256,7 +257,7 @@ function checkReportModel(config, report) {
               : emptySnapshot
                 ? t('tui.check.report.emptySnapshot')
                 : t('tui.check.report.snapshotSaved', { count: report.snapshotCount || 0 }),
-            color: needsSnapshot ? view.colors.yellow : null,
+            color: needsSnapshot ? color.warning : null,
           },
         ]),
     { label: t('tui.check.report.factTotal'), value: String(stats.total) },
@@ -268,14 +269,14 @@ function checkReportModel(config, report) {
     { label: t('tui.check.report.factFailed'), value: String(stats.failed) },
     {
       label: t('tui.check.report.factCheckedAt'),
-      value: String(report.checkedAt || '').slice(0, 19).replace('T', ' '),
+      value: format.dateTimeFull(report.checkedAt || ''),
     },
   ];
   if (report.corrupt) {
     summary.push({
       label: t('tui.check.report.factState'),
       value: t('tui.check.report.corrupt', { message: report.corrupt }),
-      color: view.colors.red,
+      color: color.danger,
     });
   }
 
@@ -318,7 +319,7 @@ function checkReportModel(config, report) {
           emptyText: noSnapshot
             ? t('tui.check.report.noSnapshotHint')
             : t('tui.check.report.emptySnapshotHint'),
-          emptyColor: view.colors.yellow,
+          emptyColor: color.warning,
         },
       ]
     : reportSections(report);
@@ -417,7 +418,7 @@ async function downloadReportChanges(config, reports) {
     .map((report) => ({ report, plan: changedItems(report) }))
     .filter((part) => part.plan.length);
   if (!parts.length) {
-    view.notice(t('tui.check.report.noChanges'), view.colors.yellow);
+    view.notice(t('tui.check.report.noChanges'), color.warning);
     return undefined;
   }
 
@@ -597,11 +598,11 @@ async function checkCollectionsFlow(config, ids) {
     const stats = { done: summary.done, skipped: summary.skipped, failed: summary.failed };
     view.notice(
       summary.cancelled ? t('tui.check.summaryCancelled', stats) : t('tui.check.summaryDone', stats),
-      summary.cancelled || summary.failed ? view.colors.yellow : view.colors.green
+      summary.cancelled || summary.failed ? color.warning : color.success
     );
   }
   view.bell();
-  if (failed) view.notice(t('tui.check.failedNotice'), view.colors.red);
+  if (failed) view.notice(t('tui.check.failedNotice'), color.danger);
 }
 
 /**

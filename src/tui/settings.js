@@ -30,8 +30,9 @@ const view = require('./view');
 const pages = require('./pages');
 const screen = require('./screen');
 const reportPage = require('./report');
+const { color } = require('./tokens');
 
-const { colors, displayWidth, truncateTo } = layout;
+const { displayWidth, truncateTo } = layout;
 
 /**
  * Settings sections. `fields` names the config keys asked in that section; `type` picks the prompt.
@@ -227,9 +228,9 @@ function doctorTag(status) {
  * 检查状态的颜色：绿 / 黄 / 红。
  */
 function doctorColor(status) {
-  if (status === 'ok') return colors.green;
-  if (status === 'warn') return colors.yellow;
-  return colors.red;
+  if (status === 'ok') return color.success;
+  if (status === 'warn') return color.warning;
+  return color.danger;
 }
 
 /**
@@ -243,9 +244,9 @@ function doctorReportModel(items, deep) {
     title: t('tui.doctor.report.title'),
     summary: [
       { label: t('tui.doctor.report.factTotal'), value: String(items.length) },
-      { label: t('tui.doctor.report.factOk'), value: String(count('ok')), color: colors.green },
-      { label: t('tui.doctor.report.factWarn'), value: String(count('warn')), color: colors.yellow },
-      { label: t('tui.doctor.report.factFail'), value: String(count('fail')), color: colors.red },
+      { label: t('tui.doctor.report.factOk'), value: String(count('ok')), color: color.success },
+      { label: t('tui.doctor.report.factWarn'), value: String(count('warn')), color: color.warning },
+      { label: t('tui.doctor.report.factFail'), value: String(count('fail')), color: color.danger },
       { label: t('tui.doctor.report.factMode'), value: modes },
     ],
     sections: [
@@ -359,7 +360,7 @@ function applyField(config, field, value) {
     //
     // 改站点是唯一需要后续动作的修改（新的 Chrome profile + 重新登录），
     // 因此它顶替通用的「已保存」提示。
-    view.notice(t('tui.settings.siteChanged'), colors.yellow);
+    view.notice(t('tui.settings.siteChanged'), color.warning);
     return true;
   }
   view.decision('tui.settings.savedItem', { label, value: displayValue(config, field) });
@@ -501,14 +502,14 @@ async function settingsPage(config) {
       const items = rows.map((row, index) => {
         if (row.kind === 'section') return { section: row.label };
         const cursor = index === state.cursor;
-        const marker = cursor ? colors.cyan(layout.glyphs().cursor) : ' ';
+        const marker = cursor ? color.cursor(layout.glyphs().cursor) : ' ';
         const label = layout.padTo(row.label, valueColumn);
         // The row always shows what is in config.json right now: every edit was written already.
         // 这一行显示的就是 config.json 里的当前值：每次修改都已经写盘了。
         const value = row.kind === 'field' ? rowValue(config, row.field) : '';
         return {
           row: index,
-          text: `${marker} ${cursor ? colors.bold(label) : label}   ${truncateTo(value, Math.max(8, width - valueColumn - 4))}`,
+          text: `${marker} ${cursor ? color.emphasis(label) : label}   ${truncateTo(value, Math.max(8, width - valueColumn - 4))}`,
         };
       });
 
@@ -527,7 +528,7 @@ async function settingsPage(config) {
           currentHeading = lines.length;
           headingLines.add(currentHeading);
           headingOfLine.set(currentHeading, currentHeading);
-          lines.push(colors.dim(item.section));
+          lines.push(color.muted(item.section));
           continue;
         }
         lineOfRow.set(item.row, lines.length);
@@ -561,7 +562,7 @@ async function settingsPage(config) {
       // 状态行（序号 + 当前项说明）固定在主体最后一行：多余的空行留在列表与状态行之间，
       // 而不是状态行与页脚之间——用户看到的空行始终在状态行上方。
       while (shown.length + 2 < room) shown.push('');
-      shown.push('', colors.dim(truncateTo([position, help].filter(Boolean).join(view.separator()), width)));
+      shown.push('', color.muted(truncateTo([position, help].filter(Boolean).join(view.separator()), width)));
       return shown;
     },
     onEscape(entry) {
@@ -571,8 +572,8 @@ async function settingsPage(config) {
       return true;
     },
     async onKey(text, key, entry) {
-      if (key.name === 'up' || text === 'k') step(-1);
-      else if (key.name === 'down' || text === 'j') step(1);
+      if (key.name === 'up') step(-1);
+      else if (key.name === 'down') step(1);
       else if (key.name === 'pageup') step(-8);
       else if (key.name === 'pagedown') step(8);
       else if (key.name === 'home') state.cursor = selectable[0];
@@ -637,8 +638,8 @@ async function askField(config, field) {
  */
 async function askSection(config, section) {
   view.note('');
-  view.note(colors.bold(`  ${t(section.titleKey)}`));
-  view.note(colors.dim(`  ${t(section.descKey)}`));
+  view.note(color.emphasis(`  ${t(section.titleKey)}`));
+  view.note(color.muted(`  ${t(section.descKey)}`));
   for (const field of section.fields) {
     const done = await askField(config, field);
     if (!done) {
@@ -655,14 +656,14 @@ async function askSection(config, section) {
  */
 function printSummary(config) {
   view.note('');
-  view.note(colors.bold(`  ${t('tui.settings.summaryTitle')}`));
+  view.note(color.emphasis(`  ${t('tui.settings.summaryTitle')}`));
   for (const section of SECTIONS) {
     const preview = section.fields
       .slice(0, 3)
       .map((f) => displayValue(config, f))
       .join(view.separator());
     view.note(
-      `  ${colors.dim(layout.padTo(t(section.titleKey), 14))}  ${colors.dim(truncateTo(preview, 60))}`
+      `  ${color.muted(layout.padTo(t(section.titleKey), 14))}  ${color.muted(truncateTo(preview, 60))}`
     );
   }
 }

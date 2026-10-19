@@ -10,6 +10,7 @@ const { t } = require('../i18n');
 const view = require('./view');
 const pages = require('./pages');
 const downloadTask = require('./downloadTask');
+const { color } = require('./tokens');
 
 async function loginFlow(config) {
   const mode = await pages.promptMenu(t('tui.login.title', { site: config.site }), [
@@ -43,7 +44,7 @@ async function loginFlow(config) {
       return !!done;
     },
   });
-  view.notice(t('tui.login.done'), view.colors.green);
+  view.notice(t('tui.login.done'), color.success);
 }
 
 module.exports = { loginFlow };

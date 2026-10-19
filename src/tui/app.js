@@ -284,9 +284,9 @@ function mainScreen() {
       if (state.busy) return true;
       // ↑ on the first entry jumps to the last one and vice versa, like every other list here.
       // 在第一项按 ↑ 跳到末项，反之亦然：与其它列表保持一致。
-      if (key.name === 'up' || text === 'k') {
+      if (key.name === 'up') {
         cursor.index = cursor.index <= 0 ? MAIN_MENU.length - 1 : cursor.index - 1;
-      } else if (key.name === 'down' || text === 'j') {
+      } else if (key.name === 'down') {
         cursor.index = cursor.index >= MAIN_MENU.length - 1 ? 0 : cursor.index + 1;
       } else if (key.name === 'home') cursor.index = 0;
       else if (key.name === 'end') cursor.index = MAIN_MENU.length - 1;

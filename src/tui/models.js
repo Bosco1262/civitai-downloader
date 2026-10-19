@@ -33,7 +33,7 @@ const { readLibrary, readCollection, listCollectionIds, entryVersions, getVersio
 const updater = require('../updater');
 const { fetchModelDetail, versionToItem, extractFiles } = require('../api');
 const { resolveOutDir } = require('../config');
-const { collectModels, filterModels, sortModels, printList, forgetModels } = require('../commands/models');
+const { forgetModels } = require('../commands/models');
 const { verifyModels } = require('../commands/verify');
 const { refToTarget } = require('../commands/download');
 const { t } = require('../i18n');
@@ -43,6 +43,7 @@ const screen = require('./screen');
 const layout = require('./layout');
 const reportPage = require('./report');
 const { runWithProgress } = require('./run');
+const { color, glyph, format } = require('./tokens');
 
 /**
  * Parse pasted batch input: split on lines and commas, ignoring empty entries and # comments.
@@ -179,7 +180,7 @@ async function pickModel(config, message, opts = {}) {
     state: libraryEntries(config),
     initialCursor: opts.initialCursor,
     onEnter:
-      opts.recap === false ? undefined : () => view.note(view.colors.dim(`  ${librarySummary(rows)}`)),
+      opts.recap === false ? undefined : () => view.note(color.muted(`  ${librarySummary(rows)}`)),
   });
   return chosen ? String(chosen.modelId) : null;
 }
@@ -227,7 +228,7 @@ function describeVersion(row) {
     row.baseModel || t('common.unknown'),
     t('tui.download.fileCount', { count: row.fileCount }),
     formatBytes(row.totalBytes || 0),
-    row.publishedAt ? String(row.publishedAt).slice(0, 10) : t('tui.download.unknownDate'),
+    row.publishedAt ? format.date(row.publishedAt) : t('tui.download.unknownDate'),
   ];
   if (row.downloaded) parts.push(t('tui.select.statusDownloaded'));
   if (row.pinned) parts.push(t('tui.manage.pinnedMark'));
@@ -280,12 +281,12 @@ async function modelVersionPage(detail, rows, initialCursor) {
     render(_state, ctx) {
       const width = Math.max(20, Math.floor(ctx.width) || 80);
       const room = Math.max(3, Math.floor(ctx.rows) || 3);
-      const lines = [view.colors.bold(view.truncateTo(name, width))];
+      const lines = [color.emphasis(view.truncateTo(name, width))];
       if (facts.length) {
-        lines.push(view.colors.dim(view.truncateTo(facts.join(` ${layout.glyphs().bullet} `), width)));
+        lines.push(color.muted(view.truncateTo(facts.join(` ${layout.glyphs().bullet} `), width)));
       }
       lines.push('');
-      lines.push(view.colors.dim(t('tui.models.pageVersions', { count: rows.length })));
+      lines.push(color.muted(t('tui.models.pageVersions', { count: rows.length })));
 
       // Name + facts + blank + "versions" heading + status line stay put; the rest scrolls.
       // 名称 + 信息 + 空行 + 「版本」小标题 + 状态行固定，其余滚动。
@@ -295,14 +296,14 @@ async function modelVersionPage(detail, rows, initialCursor) {
       for (let index = win.start; index < win.end; index++) {
         const row = rows[index];
         const active = index === state.cursor;
-        const marker = active ? view.colors.cyan(layout.glyphs().cursor) : ' ';
+        const marker = active ? color.cursor(layout.glyphs().cursor) : ' ';
         const label = view.padTo(row.name, nameWidth);
         const rest = view.truncateTo(describeVersion(row), Math.max(8, width - nameWidth - 4));
-        lines.push(`${marker} ${active ? view.colors.bold(label) : label}  ${view.colors.dim(rest)}`);
+        lines.push(`${marker} ${active ? color.emphasis(label) : label}  ${color.muted(rest)}`);
       }
       if (rows.length > win.end - win.start) {
         lines.push(
-          view.colors.dim(t('tui.pages.listPosition', { index: state.cursor + 1, total: rows.length }))
+          color.muted(t('tui.pages.listPosition', { index: state.cursor + 1, total: rows.length }))
         );
       }
       return lines;
@@ -314,8 +315,8 @@ async function modelVersionPage(detail, rows, initialCursor) {
         const next = state.cursor + delta;
         state.cursor = Math.max(0, Math.min(rows.length - 1, next));
       };
-      if (name_ === 'up' || typed === 'k') step(-1);
-      else if (name_ === 'down' || typed === 'j') step(1);
+      if (name_ === 'up') step(-1);
+      else if (name_ === 'down') step(1);
       else if (name_ === 'pageup') step(-8);
       else if (name_ === 'pagedown') step(8);
       else if (name_ === 'home') state.cursor = 0;
@@ -388,7 +389,7 @@ async function resolveRefs(config, raws) {
     try {
       target = await refToTarget(config, raw);
     } catch (e) {
-      view.log(view.colors.red(t('tui.models.fetchFailed', { name: raw, error: e.message })));
+      view.log(color.danger(t('tui.models.fetchFailed', { name: raw, error: e.message })));
       continue;
     }
     if (!target || target.kind !== 'model') {
@@ -471,7 +472,7 @@ async function buildItems(config, refs) {
     try {
       detail = await fetchModelDetail(config.site, ref.modelId, config.userAgent);
     } catch (e) {
-      view.log(view.colors.red(t('tui.models.fetchFailed', { name: ref.modelId, error: e.message })));
+      view.log(color.danger(t('tui.models.fetchFailed', { name: ref.modelId, error: e.message })));
       continue;
     }
     const versions = Array.isArray(detail.modelVersions) ? detail.modelVersions : [];
@@ -530,7 +531,7 @@ async function runItems(config, items, outDir, force) {
     view.log(summary.cancelled ? t('tui.download.summaryCancelled', stats) : t('tui.download.summaryDone', stats));
   }
   view.bell();
-  if (failed) view.log(view.colors.red(t('tui.models.downloadFailed')));
+  if (failed) view.log(color.danger(t('tui.models.downloadFailed')));
   return failed;
 }
 
@@ -631,7 +632,7 @@ async function buildModelPlanShell(config, raws) {
     try {
       detail = await fetchModelDetail(config.site, ref.modelId, config.userAgent);
     } catch (e) {
-      view.log(view.colors.red(t('tui.models.fetchFailed', { name: ref.modelId, error: e.message })));
+      view.log(color.danger(t('tui.models.fetchFailed', { name: ref.modelId, error: e.message })));
       continue;
     }
     const versions = Array.isArray(detail.modelVersions) ? detail.modelVersions : [];
@@ -672,31 +673,18 @@ async function buildModelPlanShell(config, raws) {
  * 「下载模型」的外壳入口：引用 → 共享计划 → 确认 → 回执。
  */
 async function downloadModelsShell(config, opts = {}) {
-  const refs =
-    Array.isArray(opts.refs) && opts.refs.length ? opts.refs : await askRefs(config);
-  if (!refs) return;
-  const items = await pages.withSpinner(t('tui.download.fetchVersions'), () =>
-    buildModelPlanShell(config, refs)
-  );
-  if (!items || !items.length) {
-    view.notice(t('tui.download.noDownloadable'), view.colors.yellow);
-    return;
-  }
-  const collectionId =
-    items.length === 1 ? `model-${items[0].modelId}` : `refs-${Date.now()}`;
-  const name =
-    items.length === 1
-      ? items[0].name
-      : t('tui.download.modelsName', { count: items.length });
-  const totalBytes = items.reduce((sum, item) => sum + (Number(item.totalBytes) || 0), 0);
-  return require('./download').runDownloadPlan(config, {
-    plan: items,
-    collectionId,
-    name,
-    sourceLine: t('tui.download.planSourceModels', {
-      count: items.length,
-      size: formatBytes(totalBytes),
-    }),
+  const resolveInput = async (raw) => {
+    const items = await buildModelPlanShell(config, [raw]);
+    return (items || []).map((item) => ({ ...item, detail: item.versionName || item.versionId }));
+  };
+  const presetRefs = Array.isArray(opts.refs) && opts.refs.length ? opts.refs : null;
+  const rows = presetRefs ? await resolveInput(presetRefs.join('\n')) : [];
+  return require('./download').runDownloadWorkspace(config, {
+    plan: rows,
+    collectionId: `refs-${Date.now()}`,
+    name: t('tui.download.modelsName', { count: Math.max(1, rows.length) }),
+    inputLabel: t('tui.download.collectionIdPrompt'),
+    resolveInput,
     outDir: resolveOutDir(config, config.outDir),
     jobs: config.jobs,
   });
@@ -790,7 +778,7 @@ function modelDetailReport(config, modelId) {
     return {
       label: String(version.versionName || version.versionId),
       detail: parts.join(view.separator()),
-      extra: version.verifiedAt ? String(version.verifiedAt).slice(0, 10) : t('tui.manage.unknownTime'),
+      extra: version.verifiedAt ? format.date(version.verifiedAt) : t('tui.manage.unknownTime'),
       raw: version,
     };
   });
@@ -831,7 +819,7 @@ function modelDetailReport(config, modelId) {
         label: t('tui.models.actionOpenDir'),
         description: t('tui.models.actionOpenDirDesc', { dir: firstDir }),
         run: () => {
-          if (!view.openDir(firstDir)) view.notice(t('tui.app.openFailed'), view.colors.yellow);
+          if (!view.openDir(firstDir)) view.notice(t('tui.app.openFailed'), color.warning);
         },
       },
       {
@@ -857,7 +845,7 @@ function modelDetailReport(config, modelId) {
 async function versionActions(config, modelId, versionRec) {
   const entry = readEntry(config, modelId);
   if (!entry) {
-    view.notice(t('tui.models.recordMissing', { modelId }), view.colors.yellow);
+    view.notice(t('tui.models.recordMissing', { modelId }), color.warning);
     return;
   }
   const versionId = String(versionRec.versionId);
@@ -900,7 +888,7 @@ async function versionActions(config, modelId, versionRec) {
   if (action === 'download') return downloadFlow(config, { refs: [`version:${versionId}`] });
   if (action === 'verify') return verifyFlow(config, { modelIds: [String(modelId)] });
   if (action === 'open') {
-    if (!view.openDir(dir)) view.notice(t('tui.app.openFailed'), view.colors.yellow);
+    if (!view.openDir(dir)) view.notice(t('tui.app.openFailed'), color.warning);
     return;
   }
   if (action === 'pin') {
@@ -909,7 +897,7 @@ async function versionActions(config, modelId, versionRec) {
       pinned
         ? t('pin.unpinned', { name: label })
         : t('pin.pinned', { name: label, version: versionRec.versionName || versionId }),
-      view.colors.green
+      color.success
     );
   }
   return undefined;
@@ -936,12 +924,12 @@ async function downloadVersions(config, modelId) {
       fetchModelDetail(config.site, modelId, config.userAgent)
     );
   } catch (e) {
-    view.notice(t('tui.models.fetchFailed', { name, error: e.message }), view.colors.red);
+    view.notice(t('tui.models.fetchFailed', { name, error: e.message }), color.danger);
     return;
   }
   const rows = versionRows(config, detail).filter((row) => row.fileCount > 0);
   if (!rows.length) {
-    view.notice(t('tui.models.noDownloadableVersions', { name }), view.colors.yellow);
+    view.notice(t('tui.models.noDownloadableVersions', { name }), color.warning);
     return;
   }
 
@@ -969,7 +957,7 @@ async function downloadVersions(config, modelId) {
 async function modelDetailPage(config, modelId) {
   const model = modelDetailReport(config, modelId);
   if (!model) {
-    view.notice(t('tui.models.recordMissing', { modelId }), view.colors.yellow);
+    view.notice(t('tui.models.recordMissing', { modelId }), color.warning);
     return null;
   }
   return reportPage.showReportPage(config, model);
@@ -1006,25 +994,25 @@ function printModelDetail(config, modelId) {
   ];
   pages.printBlock(modelLabel(config, modelId), pages.describeFacts(facts));
   if (!versions.length) {
-    view.log(`  ${view.colors.dim(t('tui.models.noVersionsOnline', { name: modelLabel(config, modelId) }))}`);
+    view.log(`  ${color.muted(t('tui.models.noVersionsOnline', { name: modelLabel(config, modelId) }))}`);
     return;
   }
   for (const v of versions) {
     const bytes = (v.files || []).reduce((sum, f) => sum + (Number(f.bytes) || 0), 0);
     const pinned = String(v.versionId) === String(entry.pinnedVersionId) ? ` ${t('tui.manage.pinnedMark')}` : '';
     view.note(
-      `  ${view.colors.dim('·')} ${view.truncateTo(String(v.versionName || v.versionId), 40)}${pinned}  ` +
-        view.colors.dim(
+      `  ${color.muted(glyph.bullet)} ${view.truncateTo(String(v.versionName || v.versionId), 40)}${pinned}  ` +
+        color.muted(
           [
             `v${v.versionId}`,
             formatBytes(bytes),
-            v.verifiedAt ? String(v.verifiedAt).slice(0, 10) : t('tui.manage.unknownTime'),
+            v.verifiedAt ? format.date(v.verifiedAt) : t('tui.manage.unknownTime'),
           ].join(view.separator())
         )
     );
     const dir = v.outDir || config.outDir;
     if (v.dirName || dir) {
-      view.note(`      ${view.colors.dim(t('tui.manage.dirLine', { dir: path.join(dir, v.dirName || '') }))}`);
+      view.note(`      ${color.muted(t('tui.manage.dirLine', { dir: path.join(dir, v.dirName || '') }))}`);
     }
   }
 }
@@ -1165,7 +1153,7 @@ async function browseRows(config, collectionIds) {
     title: t('tui.app.menuModels'),
     describe: describeRow,
     state: libraryEntries(config),
-    onEnter: () => view.note(view.colors.dim(`  ${librarySummary(rows)}`)),
+    onEnter: () => view.note(color.muted(`  ${librarySummary(rows)}`)),
   });
   if (!chosen) return;
   return modelActions(config, String(chosen.modelId));
@@ -1295,7 +1283,7 @@ async function checkFlow(config, opts = {}) {
     view.log(summary.cancelled ? t('tui.check.summaryCancelled', stats) : t('tui.check.summaryDone', stats));
   }
   view.bell();
-  if (failed) view.log(view.colors.red(t('tui.check.failedNotice')));
+  if (failed) view.log(color.danger(t('tui.check.failedNotice')));
 }
 
 // ---------------------------------------------------------------------------
@@ -1343,7 +1331,7 @@ function verifyReportModel(config, result, deep) {
     summary.push({
       label: t('tui.verify.report.factLibrary'),
       value: t('tui.verify.report.libraryCorrupt', { message: result.corrupt }),
-      color: view.colors.red,
+      color: color.danger,
     });
   }
 
@@ -1388,7 +1376,7 @@ function verifyReportModel(config, result, deep) {
         title: t('tui.verify.report.sectionBroken'),
         rows,
         emptyText: t('tui.manage.verifyAllOk'),
-        emptyColor: view.colors.green,
+        emptyColor: color.success,
       },
     ],
     actions,
@@ -1443,7 +1431,7 @@ async function repairBroken(config, result) {
     if (summary.failed) failed++;
   }
   view.bell();
-  if (failed) view.notice(t('tui.manage.repairFailed'), view.colors.red);
+  if (failed) view.notice(t('tui.manage.repairFailed'), color.danger);
   return true;
 }
 
@@ -1524,7 +1512,7 @@ async function verifyFlow(config, opts = {}) {
     view.note(`    ${t('tui.manage.dirLine', { dir: b.dir })}`);
   }
   if (!result.broken.length) {
-    view.notice(t('tui.manage.verifyAllOk'), view.colors.green);
+    view.notice(t('tui.manage.verifyAllOk'), color.success);
     return;
   }
 
@@ -1555,7 +1543,7 @@ async function togglePin(config, modelId) {
     });
     if (!unpin) return;
     updater.setPin(config, modelId, null);
-    view.notice(t('pin.unpinned', { name: entry.name || modelId }), view.colors.green);
+    view.notice(t('pin.unpinned', { name: entry.name || modelId }), color.success);
     return;
   }
 
@@ -1579,7 +1567,7 @@ async function togglePin(config, modelId) {
       [
         t('tui.models.versionIdShort', { versionId: row.versionId }),
         formatBytes(row.totalBytes || 0),
-        row.verifiedAt ? String(row.verifiedAt).slice(0, 10) : t('tui.manage.unknownTime'),
+        row.verifiedAt ? format.date(row.verifiedAt) : t('tui.manage.unknownTime'),
       ].join(view.separator()),
   });
   if (!chosen) return;
@@ -1591,7 +1579,7 @@ async function togglePin(config, modelId) {
       name: entry.name || modelId,
       version: (rec && rec.versionName) || chosen.versionId,
     }),
-    view.colors.green
+    color.success
   );
 }
 

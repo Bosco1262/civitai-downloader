@@ -107,7 +107,7 @@ function buildSummaryLine(state) {
   const speed = state.speed > 0 ? `${formatBytes(state.speed)}/s` : '--';
   const parts = [
     `${formatBytes(state.bytes)}/${formatBytes(state.expected)}`,
-    `${speed} · ${t('tui.run.remaining', { eta: state.eta })}`,
+    `${speed}${view.separator()}${t('tui.run.remaining', { eta: state.eta })}`,
     t('tui.run.elapsed', { elapsed: state.elapsed }),
   ];
   const head = `${view.colors.bold(t('tui.run.downloading'))} ${t('tui.run.counts', {

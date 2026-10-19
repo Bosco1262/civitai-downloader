@@ -77,6 +77,9 @@ const TUI_FILES = [
   'settings.js',
   'pages.js',
   'report.js',
+  'ui/page.js',
+  'ui/planWorkspace.js',
+  'ui/taskView.js',
 ];
 /**
  * Keys added by this change.
@@ -105,6 +108,7 @@ const TUI_MODULES = new Set([
   'report',
   'verify',
   'doctor',
+  'workspace',
 ]);
 /**
  * Keys whose English and Chinese text is identical (pure format strings / proper nouns / language endonyms);
@@ -213,8 +217,8 @@ test('i18n-tui: 全屏界面退出后的决定回显（非 TTY 静默、文案�
   assert.equal(tr('tui.view.decisionSelected', { name: 'Model A' }), '已选择：Model A');
   assert.equal(tr('tui.view.decisionPicked', { count: 3 }), '已勾选 3 项');
   assert.equal(tr('tui.check.selected', { id: 777 }), '已选择收藏集：777');
-  assert.equal(tr('tui.download.prefilterSummary', { count: 12, size: '3.00 MiB', done: '' }).trim(), '共 12 项 · 合计 3.00 MiB');
-  assert.equal(tr('tui.models.pickerSummary', { count: 4, size: '2.00 MiB', pinned: '' }).trim(), '模型库 4 项 · 合计 2.00 MiB');
+  assert.equal(tr('tui.download.prefilterSummary', { count: 12, size: '3.00 MiB', done: '' }).trim(), '共 12 项 | 合计 3.00 MiB');
+  assert.equal(tr('tui.models.pickerSummary', { count: 4, size: '2.00 MiB', pinned: '' }).trim(), '模型库 4 项 | 合计 2.00 MiB');
 });
 
 test('i18n-tui: select.js 排序标签与键位提示逐字一致', () => {
@@ -227,7 +231,7 @@ test('i18n-tui: select.js 排序标签与键位提示逐字一致', () => {
   // One line for the whole picker: every key it lists works there.
   // 整个选择器只有一行：列出的每个键在这里都有效。
   assert.equal(select.KEY_HINTS.length, 1);
-  assert.equal(select.KEY_HINTS[0], '↑↓ 选择 · 空格 勾选 · / 搜索 · t/b/s 筛选 · Enter 确认 · Esc 返回 · ? 帮助');
+  assert.equal(select.KEY_HINTS[0], '↑↓ 选择 | 空格 勾选 | / 搜索 | t/b/s 筛选 | Enter 确认 | Esc 返回 | ? 帮助');
   assert.equal(select.hintLines({}).length, 1);
 });
 
@@ -280,14 +284,14 @@ test('i18n-tui: select.js 状态文案与表头/页脚逐字一致', () => {
     lines[1],
     ['搜索：“lora”', '类型：LORA', '基础模型：SDXL 1.0', '排序：按大小↓', '第 2/4 页'].join(sep)
   );
-  assert.equal(lines[2], '已选 3 项 / 共 40 项 · 过滤后 12 项 · 合计 2048B（全部 4096B）');
+  assert.equal(lines[2], '已选 3 项 / 共 40 项 | 过滤后 12 项 | 合计 2048B（全部 4096B）');
 
   // Default title and status when nothing is searched or filtered
   // 未搜索 / 未过滤时的默认标题与状态
   const plain = select.buildHeaderLines({ sizeFormatter: (n) => `${n}B` });
   assert.equal(plain[0], '选择要下载的条目');
   assert.equal(plain[1], ['搜索：未启用', '排序：默认排序', '第 1/1 页'].join(sep));
-  assert.equal(plain[2], '已选 0 项 / 共 0 项 · 过滤后 0 项 · 合计 0B（全部 0B）');
+  assert.equal(plain[2], '已选 0 项 / 共 0 项 | 过滤后 0 项 | 合计 0B（全部 0B）');
 
   // The scrolling window replaces the page counter once the caller passes a position
   // 调用方传入可见区间后，行号区间取代页码
@@ -301,7 +305,7 @@ test('i18n-tui: select.js 状态文案与表头/页脚逐字一致', () => {
   assert.ok(noticed[2].endsWith('已勾选'));
 
   assert.equal(tr('tui.select.footer', { page: 2, pageCount: 4, count: 15, selected: 3, total: 40 }),
-    '第 2/4 页 · 本页 15 项 · 已选 3/40');
+    '第 2/4 页 | 本页 15 项 | 已选 3/40');
   assert.equal(tr('tui.select.columnIndex'), '序号');
   assert.equal(tr('tui.select.columnName'), '名称');
   assert.equal(tr('tui.select.columnDetail'), '状态 / 类型 / 基础模型');
@@ -347,7 +351,7 @@ test('i18n-tui: 滚动视窗 / 单选模式 / 快捷跳行等新增纯逻辑可�
 
 test('i18n-tui: 主菜单 / 固定页眉文案逐字一致且 app.js 已接线', () => {
   assert.equal(tr('tui.app.bannerTitle'), 'civitai-downloader');
-  assert.equal(tr('tui.hint.main'), '↑↓ 选择 · Enter 进入 · Tab 任务视图 · Ctrl+C 退出');
+  assert.equal(tr('tui.hint.main'), '↑↓ 选择 | Enter 进入 | ? 帮助');
   assert.equal(tr('tui.app.menuTitle'), '主菜单');
   const menu = [
     ['tui.app.menuDownload', '下载'],
@@ -357,7 +361,7 @@ test('i18n-tui: 主菜单 / 固定页眉文案逐字一致且 app.js 已接线',
     ['tui.app.menuExit', '退出'],
   ];
   for (const [key, value] of menu) assert.equal(tr(key), value, key);
-  assert.equal(tr('tui.app.contextLine', { site: 's', outDir: 'd', jobs: 4, logged: 'l' }), '站点 s · 输出目录 d · 并发 4 · 登录态 l');
+  assert.equal(tr('tui.app.contextLine', { site: 's', outDir: 'd', jobs: 4, logged: 'l' }), '站点 s | 输出目录 d | 并发 4 | 登录态 l');
   assert.equal(tr('tui.app.factSite'), '站点');
   assert.equal(tr('tui.app.factOutDir'), '下载目录');
   assert.equal(tr('tui.app.factJobs'), '并发');
@@ -397,16 +401,16 @@ test('i18n-tui: 仪表盘 / 任务视图 / 页脚文案逐字一致', () => {
   assert.equal(tr('tui.screen.infoTitle'), '仪表盘');
   assert.equal(tr('tui.screen.infoSettings'), '当前配置');
   assert.equal(tr('tui.screen.infoTasks'), '任务总览');
-  assert.equal(tr('tui.screen.infoIdle'), '空闲 · 没有进行中的任务');
+  assert.equal(tr('tui.screen.infoIdle'), '空闲 | 没有进行中的任务');
   // One line per page, listing only that page's keys.
   // 每页一行，且只列这一页能用的键。
-  assert.equal(tr('tui.hint.main'), '↑↓ 选择 · Enter 进入 · Tab 任务视图 · Ctrl+C 退出');
-  assert.equal(tr('tui.hint.menu'), '↑↓ 选择 · Enter 确认 · Esc 返回 · Tab 任务视图 · Ctrl+C 退出');
-  assert.equal(tr('tui.hint.settings'), '↑↓ 选择 · Enter 修改 / 执行 · Esc 返回 · Tab 任务视图 · Ctrl+C 退出');
-  assert.equal(tr('tui.hint.message'), 'Esc 返回 · Tab 任务视图 · Ctrl+C 退出');
-  assert.equal(tr('tui.hint.taskView'), '↑↓ 选择 · Tab / Esc 返回 · Ctrl+C 退出');
+  assert.equal(tr('tui.hint.main'), '↑↓ 选择 | Enter 进入 | ? 帮助');
+  assert.equal(tr('tui.hint.menu'), '↑↓ 选择 | Enter 确认 | Esc 返回 | ? 帮助');
+  assert.equal(tr('tui.hint.settings'), '↑↓ 选择 | Enter 修改 / 执行 | Esc 返回 | ? 帮助');
+  assert.equal(tr('tui.hint.message'), 'Esc 返回 | ? 帮助');
+  assert.equal(tr('tui.hint.taskView'), '↑↓ 选择 | Esc 返回 | ? 帮助');
   assert.equal(tr('tui.screen.taskTitle'), '任务视图');
-  assert.equal(tr('tui.screen.taskCounts', { done: 2, skipped: 1, failed: 0, total: 9 }), '完成 2 · 跳过 1 · 失败 0 / 共 9 项');
+  assert.equal(tr('tui.screen.taskCounts', { done: 2, skipped: 1, failed: 0, total: 9 }), '完成 2 | 跳过 1 | 失败 0 / 共 9 项');
   assert.equal(tr('tui.screen.taskElapsed', { elapsed: '00:03' }), '已用 00:03');
   assert.equal(tr('tui.screen.statusRunning'), '进行中');
   assert.equal(tr('tui.screen.statusDone'), '已完成');
@@ -467,11 +471,11 @@ test('i18n-tui: check 报告标题与更新摘要逐字一致', () => {
 
 test('i18n-tui: 下载进度面板文案逐字一致', () => {
   assert.equal(tr('tui.run.downloading'), '下载中');
-  assert.equal(tr('tui.run.counts', { ok: 2, skipped: 1, failed: 0, total: 9 }), '完成 2 · 跳过 1 · 失败 0 / 共 9 项');
+  assert.equal(tr('tui.run.counts', { ok: 2, skipped: 1, failed: 0, total: 9 }), '完成 2 | 跳过 1 | 失败 0 / 共 9 项');
   assert.equal(tr('tui.run.remaining', { eta: '00:12' }), '剩余 00:12');
   assert.equal(tr('tui.run.elapsed', { elapsed: '00:03' }), '已用 00:03');
   assert.equal(` ${tr('tui.run.retry', { attempt: 2, max: 3, code: 429 })}`, ' [第 2/3 次尝试 HTTP 429]');
-  assert.equal(tr('tui.run.waiting'), '当前 · 等待下一项…（按 s 跳过当前模型，Esc 取消）');
+  assert.equal(tr('tui.run.waiting'), '当前 | 等待下一项…（按 s 跳过当前模型，Esc 取消）');
   assert.equal(tr('tui.run.fileLabel'), '当前文件');
   assert.equal(tr('tui.run.cancelNotice'), '已请求取消，正在停止下载（已下载部分保留，可续传）…');
   assert.equal(tr('tui.run.cancelPending'), '正在取消，请稍候…（已下载部分保留，可续传）');
@@ -483,14 +487,14 @@ test('i18n-tui: 公共交互基元（按键提示 / 信息块 / 状态栏 / 帮�
   // 简易（无外壳）路径给每个提问追加菜单那一行按键提示
   const hints = pages.hintLines();
   assert.equal(hints.length, 1);
-  assert.equal(hints[0], '↑↓ 选择 · Enter 确认 · Esc 返回 · Tab 任务视图 · Ctrl+C 退出');
+  assert.equal(hints[0], '↑↓ 选择 | Enter 确认 | Esc 返回 | ? 帮助');
   assert.ok(pages.hint().includes('Esc'));
 
   // Inside the frame each page owns its single line: the keys it lists are the keys that work there.
   // 框架里每一页都拥有自己那一行：列出来的键就是这一页能用的键。
-  assert.equal(tr('tui.hint.confirm'), '←→ 选择 · y/n 快捷 · Enter 确认 · Esc 返回 · Tab 任务视图 · Ctrl+C 退出');
-  assert.equal(tr('tui.hint.text'), 'Enter 提交 · Esc 放弃 · Tab 任务视图 · Ctrl+C 退出');
-  assert.equal(tr('tui.hint.textPick'), 'Enter 提交 · Esc 放弃 · Ctrl+O 选择目录 · Tab 任务视图 · Ctrl+C 退出');
+  assert.equal(tr('tui.hint.confirm'), '←→ 选择 | y/n 快捷 | Enter 确认 | Esc 返回 | ? 帮助');
+  assert.equal(tr('tui.hint.text'), 'Enter 提交 | Esc 放弃 | ? 帮助');
+  assert.equal(tr('tui.hint.textPick'), 'Enter 提交 | Esc 放弃 | Ctrl+O 选择目录 | ? 帮助');
   assert.equal(tr('tui.pages.pickUnavailable'), '当前环境无法打开目录选择框，请直接输入路径');
   assert.equal(tr('tui.pages.listPosition', { index: 3, total: 12 }), '第 3 / 12 项');
   // Saving has no shortcut any more: it is a row of the page.
@@ -548,7 +552,7 @@ test('i18n-tui: 公共交互基元（按键提示 / 信息块 / 状态栏 / 帮�
 
 test('i18n-tui: manage / login / settings 文案逐字一致', () => {
   assert.equal(tr('tui.manage.memberCount', { count: 9 }), '成员 9 项');
-  assert.equal(tr('tui.manage.memberVersions', { versions: 2, pinned: '未固定' }), '2 个版本 · 未固定');
+  assert.equal(tr('tui.manage.memberVersions', { versions: 2, pinned: '未固定' }), '2 个版本 | 未固定');
   assert.equal(
     tr('tui.manage.snapshotLine', { count: 3, fetchedAt: '2024-01-02T03:04:05.000Z' }),
     '成员快照：3 项（枚举于 2024-01-02T03:04:05.000Z）'
@@ -692,7 +696,11 @@ test('i18n-tui: tui.* 键集合一致、命名规范、无缺翻', () => {
   // Every TUI file is wired to the message catalog
   // 每个 TUI 文件都接入了文案表
   for (const file of TUI_FILES) {
-    assert.ok(readTui(file).includes("require('../i18n')"), `${file} 应 require('../i18n')`);
+    const source = readTui(file);
+    assert.ok(
+      source.includes("require('../i18n')") || source.includes("require('../../i18n')"),
+      `${file} 应 require('../i18n') 或 require('../../i18n')`
+    );
   }
 
   // Keys referenced in the source map one-to-one to the catalog (catches typos and missing registrations)

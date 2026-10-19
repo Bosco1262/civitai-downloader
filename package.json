@@ -18,7 +18,8 @@
     "pin": "node cli.js pin",
     "models": "node cli.js models",
     "test": "node --test tests/",
-    "test:seq": "node scripts/run-tests.js"
+    "test:seq": "node scripts/run-tests.js",
+    "check:tui": "node scripts/check-tui-contracts.js"
   },
   "keywords": [
     "civitai",

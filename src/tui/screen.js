@@ -14,7 +14,7 @@
 // available everywhere instead of only on the main menu.
 //
 // Key model (identical on every screen):
-//   - up/down (or k/j) move, Home/End and PgUp/PgDn jump, Enter confirms;
+//   - up/down move, Home/End and PgUp/PgDn jump, Enter confirms;
 //   - Esc cancels the current prompt or leaves the current screen without saving;
 //   - Tab switches to the task view and back;
 //   - Ctrl+C is the only way to leave the program from anywhere.
@@ -33,7 +33,7 @@
 // 正因如此，页眉、信息面板与任务视图才能无处不在，而不是只在主菜单里出现。
 //
 // 按键模型（所有界面一致）：
-//   - ↑/↓（或 k/j）移动，Home/End 与 PgUp/PgDn 跳转，回车确认；
+//   - ↑/↓ 移动，Home/End 与 PgUp/PgDn 跳转，回车确认；
 //   - Esc 取消当前提问或直接离开当前界面且不保存；
 //   - Tab 切到任务视图，再按一次返回；
 //   - Ctrl+C 是唯一可以从任何位置退出程序的方式。
@@ -45,6 +45,18 @@ const { formatBytes, formatDuration } = require('../util');
 const { t } = require('../i18n');
 
 const { colors, displayWidth, truncateTo, padTo } = layout;
+const taskViewUi = require('./ui/taskView');
+const {
+  progressBar,
+  taskOverviewLine,
+  taskHead,
+  taskLine,
+  taskDetailLines,
+  taskCurrentLine,
+  taskFailureLine,
+  statusText,
+} = taskViewUi;
+
 
 /**
  * Height of the fixed header: the project name plus one blank line. The key hints all live in the
@@ -84,8 +96,6 @@ let noticeColor = null;
 let noticeAt = 0;
 let taskView = false;
 let taskCursor = 0;
-let taskLogView = false;
-let taskLogScroll = 0;
 let taskListStart = 0;
 let dirty = true;
 let scheduled = false;
@@ -316,125 +326,134 @@ function onSignal(intent) {
   process.kill(process.pid, 'SIGTSTP');
 }
 
+let logReturnTaskView = false;
+
+/**
+ * Open the session log as a global overlay. If it was opened from the task view, closing it returns
+ * there instead of the page underneath.
+ *
+ * 把会话日志作为全局覆盖层打开。若从任务视图进入，关闭时回到任务视图，而不是下层页面。
+ */
+function openLogView() {
+  if (logView) return;
+  logReturnTaskView = taskView;
+  taskView = false;
+  logView = true;
+  logScroll = 0;
+  refresh();
+}
+
+/**
+ * Close the session log overlay and restore the view it covered.
+ * 关闭会话日志覆盖层并恢复它盖住的视图。
+ */
+function closeLogView() {
+  if (!logView) return;
+  logView = false;
+  if (logReturnTaskView) taskView = true;
+  logReturnTaskView = false;
+  refresh();
+}
+
+/**
+ * Open help for the current page: the page's own help when it has one, otherwise the shared key map.
+ * 打开当前页面的帮助：页面有自定义帮助就用它，否则使用共享按键速查。
+ */
+function openHelp() {
+  const top = modalStack[modalStack.length - 1];
+  if (top && typeof top.spec.help === 'function') {
+    top.spec.help();
+    refresh();
+    return;
+  }
+  if (!top && baseScreen && typeof baseScreen.help === 'function') {
+    baseScreen.help();
+    refresh();
+    return;
+  }
+  require('./pages').showHelp({});
+  refresh();
+}
+
 function onKey(text, key) {
   const k = key || {};
   const name = keyName(k);
   const typed = String(text === undefined || text === null ? '' : text);
+  const ctrl = !!k.ctrl;
 
-  // Tab is the one key that works everywhere, including while a prompt is open: every page's hint
-  // line advertises it, so a prompt must not swallow it.
-  //
-  // Tab 是唯一在任何地方都有效的键，提问打开时也一样：每个页面的说明都写着它，提问不能把它吃掉。
-  if (name === 'tab' || typed === '\t') {
+  // Global overlays. They work from every page, including an open prompt.
+  // 全局覆盖层。任何页面（包括打开的提问）都可以使用。
+  if (ctrl && name === 'm') {
     toggleTaskView();
     return;
   }
+  if (ctrl && name === 'l') {
+    if (!logView) openLogView();
+    return;
+  }
 
-  // `L` opens the session log as a page (there is no permanent log strip any more): the same key,
-  // and Esc, close it again.
-  //
-  // `L` 把会话日志当一页打开（不再有常驻的日志条）：同一个键或 Esc 关闭。
   if (logView) {
-    if (name === 'escape' || (typed === 'l' && !k.ctrl) || (typed === 'q' && !k.ctrl)) {
-      toggleLogView(false);
+    // The log overlay is closed only by Esc; Ctrl+L is deliberately ignored while it is open.
+    // 日志覆盖层只用 Esc 关闭；打开期间故意忽略 Ctrl+L。
+    if (name === 'escape') {
+      closeLogView();
       return;
     }
-    if (name === 'up' || typed === 'k') logScroll += 1;
-    else if (name === 'down' || typed === 'j') logScroll = Math.max(0, logScroll - 1);
+    if (name === 'up') logScroll += 1;
+    else if (name === 'down') logScroll = Math.max(0, logScroll - 1);
     else if (name === 'pageup') logScroll += 10;
     else if (name === 'pagedown') logScroll = Math.max(0, logScroll - 10);
     else if (name === 'home') logScroll = logs.length;
     else if (name === 'end') logScroll = 0;
+    else if (typed === '?' && !ctrl) openHelp();
     refresh();
     return;
   }
-  if (typed === 'l' && !k.ctrl && !modalStack.length && !taskView) {
-    toggleLogView(true);
-    return;
-  }
 
-  // The task view covers whatever is underneath, so it gets the keys while it is open.
-  // 任务视图盖住下面的内容，因此打开时按键归它。
   if (taskView) {
-    if (taskLogView) {
-      // The per-task log tail is a small, scrollable page of its own: Esc / L closes it before
-      // anything else can leave the task view.
-      //
-      // 单任务日志尾部是一个独立的小滚动页：Esc / L 先关它，再谈离开任务视图。
-      if (name === 'escape' || (text === 'l' && !k.ctrl)) {
-        toggleTaskLogView(false);
-        return;
-      }
-      if (name === 'up' || text === 'k') {
-        taskLogScroll += 1;
-        refresh();
-        return;
-      }
-      if (name === 'down' || text === 'j') {
-        taskLogScroll = Math.max(0, taskLogScroll - 1);
-        refresh();
-        return;
-      }
-      if (name === 'pageup') {
-        taskLogScroll += 10;
-        refresh();
-        return;
-      }
-      if (name === 'pagedown') {
-        taskLogScroll = Math.max(0, taskLogScroll - 10);
-        refresh();
-        return;
-      }
-      if (name === 'home') {
-        taskLogScroll = Number.MAX_SAFE_INTEGER;
-        refresh();
-        return;
-      }
-      if (name === 'end') {
-        taskLogScroll = 0;
-        refresh();
-        return;
-      }
-      return;
-    }
-    if (name === 'escape' || (text === 'q' && !k.ctrl)) {
+    if (name === 'escape') {
       toggleTaskView(false);
       return;
     }
-    if (name === 'up' || text === 'k') return moveTaskCursor(-1);
-    if (name === 'down' || text === 'j') return moveTaskCursor(1);
+    if (name === 'up') return moveTaskCursor(-1);
+    if (name === 'down') return moveTaskCursor(1);
     if (name === 'home') {
       taskCursor = 0;
-      taskLogView = false;
       refresh();
       return;
     }
     if (name === 'end') {
       taskCursor = Math.max(0, tasks.listTasks().length - 1);
-      taskLogView = false;
       refresh();
       return;
     }
-    if (text === 'c') return cancelSelectedTask();
-    if (text === 's') return skipSelectedTask();
-    if (text === 'r') return retrySelectedTask();
-    if (text === 'd') return openSelectedTaskDir();
-    if (text === 'l') return toggleTaskLogView(true);
-    if (text === 'x') {
+    if (typed === 'c') return cancelSelectedTask();
+    if (typed === 's') return skipSelectedTask();
+    if (typed === 'r') return retrySelectedTask();
+    if (typed === 'd') return openSelectedTaskDir();
+    if (typed === 'x') {
       tasks.clearFinished();
       taskCursor = 0;
       taskListStart = 0;
-      taskLogView = false;
       notice(t('tui.screen.tasksCleared'), colors.dim);
       return;
     }
+    if (typed === '?' && !ctrl) openHelp();
     return;
   }
 
   const top = modalStack[modalStack.length - 1];
   if (top) {
+    // Pages that accept text own every character, including "?". Pages that already draw their own
+    // help overlay declare handlesHelp and keep the key themselves.
+    //
+    // 文本输入页拥有每个字符（包括 ?）；自己绘制帮助浮层的页面声明 handlesHelp，自行处理该键。
+    if (typed === '?' && !ctrl && !top.spec.acceptsText && !top.spec.handlesHelp) {
+      openHelp();
+      return;
+    }
     try {
-      top.onKey(String(text === undefined || text === null ? '' : text), { ...k, name });
+      top.onKey(typed, { ...k, name });
     } catch (e) {
       top.settle(null);
       logLine(colors.red(t('tui.screen.promptFailed', { error: (e && e.message) || e })));
@@ -443,7 +462,12 @@ function onKey(text, key) {
     return;
   }
 
-  if (name === 'escape' || (text === 'q' && !k.ctrl && !baseScreenAcceptsText())) {
+  if (typed === '?' && !ctrl && !baseScreenAcceptsText()) {
+    openHelp();
+    return;
+  }
+
+  if (name === 'escape') {
     // A running task claims Esc first: "Esc cancels" is what users expect while a download is
     // going on.
     //
@@ -476,9 +500,6 @@ function onKey(text, key) {
   }
   if (baseScreen && typeof baseScreen.onKey === 'function') {
     handled = baseScreen.onKey(String(text || ''), { ...k, name }) === true;
-  }
-  if (!handled && text === '?' && baseScreen && typeof baseScreen.help === 'function') {
-    baseScreen.help();
   }
   refresh();
 }
@@ -676,9 +697,10 @@ function logCount() {
  */
 function toggleTaskView(value) {
   taskView = value === undefined ? !taskView : !!value;
-  if (taskView) logView = false;
-  taskLogView = false;
-  taskLogScroll = 0;
+  if (taskView) {
+    logView = false;
+    logReturnTaskView = false;
+  }
   if (!taskView) return refresh();
   const list = tasks.listTasks();
   const running = list.findIndex((task) => task.status === tasks.RUNNING);
@@ -693,12 +715,10 @@ function toggleTaskView(value) {
  * 显示或隐藏日志页；不带参数时切换。打开时总是停在最新的那一行。
  */
 function toggleLogView(value) {
-  logView = value === undefined ? !logView : !!value;
-  if (logView) {
-    taskView = false;
-    logScroll = 0;
-  }
-  return refresh();
+  if (value === false) return closeLogView();
+  if (value === true) return openLogView();
+  if (logView) return closeLogView();
+  return openLogView();
 }
 
 /**
@@ -719,7 +739,6 @@ function moveTaskCursor(delta) {
   // Wrap around, like every other list in the TUI.
   // 与 TUI 里其它列表一致：两端循环。
   taskCursor = (((taskCursor + delta) % list.length) + list.length) % list.length;
-  taskLogView = false;
   refresh();
 }
 
@@ -801,21 +820,6 @@ function openSelectedTaskDir() {
   } else {
     notice(t('tui.app.openFailed'), colors.yellow);
   }
-}
-
-/**
- * Toggle the per-task log tail in the task view.
- * 在任务视图里切换「这个任务的日志尾部」。
- */
-function toggleTaskLogView(value) {
-  const next = value === undefined ? !taskLogView : !!value;
-  taskLogView = next;
-  taskLogScroll = 0;
-  refresh();
-}
-
-function isTaskLogView() {
-  return taskLogView;
 }
 
 // ---------------------------------------------------------------------------
@@ -955,7 +959,6 @@ function contextHint() {
  * 只有已结束的任务能重试/打开目录。页脚不允许列出按了没反应的键。
  */
 function taskViewHint() {
-  if (taskLogView) return t('tui.hint.taskLog');
   const task = selectedTask();
   if (!task) return t('tui.hint.taskView');
   if (task.status === tasks.QUEUED) return t('tui.hint.taskQueued');
@@ -1067,69 +1070,6 @@ function factLine(fact, all) {
  * 任务知道体积时按字节合计（运行中按已下载部分、排队中按 0 计入），
  * 没有体积信息时退回按任务数量计算。
  */
-function taskOverviewLine(allTasks) {
-  if (!allTasks.length) return colors.dim(t('tui.screen.infoIdle'));
-  // Once every task is finished, the dashboard is idle again: the result stays in the task view, and
-  // the overview must not leave a stale "0.0% · 1/1 done" line behind.
-  //
-  // 所有任务都结束后仪表盘回到「空闲」：结果留在任务视图里，
-  // 总览不应留下一条过时的「0.0% · 完成 1/1」。
-  const hasActive = allTasks.some(
-    (task) => task.status === tasks.RUNNING || task.status === tasks.QUEUED
-  );
-  if (!hasActive) return colors.dim(t('tui.screen.infoIdle'));
-  let done = 0;
-  let running = 0;
-  let queued = 0;
-  let failed = 0;
-  let cancelled = 0;
-  let totalBytes = 0;
-  let bytes = 0;
-  for (const task of allTasks) {
-    totalBytes += Number(task.totalBytes) || 0;
-    bytes += Number(task.bytes) || 0;
-    if (task.status === tasks.DONE) done++;
-    else if (task.status === tasks.RUNNING) running++;
-    else if (task.status === tasks.QUEUED) queued++;
-    else if (task.status === tasks.CANCELLED) cancelled++;
-    else failed++;
-  }
-  const total = allTasks.length;
-  const raw = totalBytes > 0 ? (bytes / totalBytes) * 100 : total > 0 ? (done / total) * 100 : 0;
-  const pct = Math.max(0, Math.min(100, raw));
-  const head = t('tui.screen.infoProgress');
-  const parts = [t('tui.screen.infoDoneCount', { done, total })];
-  if (running) parts.push(t('tui.screen.infoRunningCount', { count: running }));
-  if (queued) parts.push(t('tui.screen.infoQueuedCount', { count: queued }));
-  if (failed) parts.push(t('tui.screen.infoFailedCount', { count: failed }));
-  if (cancelled) parts.push(t('tui.screen.infoCancelledCount', { count: cancelled }));
-  const tail = parts.join(colors.dim(' · '));
-  const barWidth = Math.max(8, Math.min(24, bodyWidth() - displayWidth(head) - displayWidth(tail) - 10));
-  return `${head}  ${progressBar(pct, barWidth)} ${pct.toFixed(1)}%  ${colors.dim('·')} ${tail}`;
-}
-
-/**
- * Display name of a task: the collection, plus the model currently being fetched.
- * 任务的显示名：收藏集，外加当前正在下载的模型。
- */
-function taskHead(task) {
-  const parts = [task.name, task.scope].filter(Boolean);
-  return parts.join(colors.dim(` ${t('tui.screen.nameSeparator')} `));
-}
-
-/**
- * Progress bar text of the info panel and the task view.
- * 信息面板与任务视图使用的进度条文本。
- */
-function progressBar(pct, width) {
-  const w = Math.max(4, Math.floor(width));
-  const clamped = Math.max(0, Math.min(100, Number.isFinite(pct) ? pct : 0));
-  const filled = Math.round((clamped / 100) * w);
-  const gl = layout.glyphs();
-  const bar = gl.barFull.repeat(filled) + gl.barEmpty.repeat(Math.max(0, w - filled));
-  return colors.cyan(bar);
-}
-
 /**
  * Body lines: the open prompt wins, then the task view, then the current screen.
  * 主体行：打开的提问优先，其次是任务视图，最后是当前界面。
@@ -1271,9 +1211,6 @@ function taskViewLines(budget) {
   if (taskCursor >= list.length) taskCursor = list.length - 1;
   const selected = list[taskCursor];
   const room = Math.max(1, Math.floor(budget) || 1);
-
-  if (taskLogView) return taskLogLines(selected, room);
-
   const width = bodyWidth();
   // The detail gets priority; the list keeps at least one row. On a tall terminal the detail is
   // capped so long task histories stay visible.
@@ -1307,218 +1244,10 @@ function taskViewLines(budget) {
  * One line of the task list: kind, name, status (or queue position) and elapsed time.
  * 任务列表的一行：类型、名称、状态（或排队位置）与已用时间。
  */
-function taskLine(task, cursor) {
-  const mark = cursor ? colors.cyan(layout.glyphs().cursor) : ' ';
-  const kind = task.kind ? `${colors.dim(`[${task.kind}]`)} ` : '';
-  const head = taskHead(task) || task.id;
-  const status = statusText(task);
-  if (task.status === tasks.QUEUED) {
-    return `${mark} ${kind}${head}  ${status} ${colors.dim(
-      t('tui.screen.taskQueuePosition', { position: tasks.queuePosition(task.id) })
-    )}`;
-  }
-  return `${mark} ${kind}${head}  ${status}  ${colors.dim(
-    t('tui.screen.taskElapsed', { elapsed: tasks.elapsedText(task) })
-  )}`;
-}
-
-/**
- * Expanded detail of one task: progress while running, result once finished, and the failures the
- * user needs to decide what to do next.
- *
- * 单个任务的展开详情：运行中是进度，结束后是结果，以及用户决定下一步所需的失败项。
- */
-function taskDetailLines(task, width, max) {
-  const limit = Math.max(1, Math.floor(max) || 1);
-  const lines = [];
-  const push = (line) => {
-    if (lines.length < limit) lines.push(line);
-  };
-  const bullet = colors.dim(` ${layout.glyphs().bullet} `);
-
-  if (task.status === tasks.QUEUED) {
-    push(colors.yellow(t('tui.screen.taskQueuedLine', { position: tasks.queuePosition(task.id) })));
-    push(
-      [
-        t('tui.screen.taskPlanSummary', { count: task.total, size: formatBytes(task.totalBytes) }),
-        task.outDir ? t('tui.screen.taskOutDirShort', { dir: task.outDir }) : null,
-      ]
-        .filter(Boolean)
-        .join(bullet)
-    );
-    return lines;
-  }
-
-  if (task.status === tasks.RUNNING) {
-    const pct = tasks.percentOf(task);
-    const parts = [
-      `${progressBar(pct, 16)} ${pct.toFixed(1)}%`,
-      `${formatBytes(task.bytes)}/${formatBytes(task.totalBytes)}`,
-    ];
-    if (task.speed > 0) parts.push(t('tui.screen.taskSpeed', { speed: `${formatBytes(task.speed)}/s` }));
-    if (task.eta) parts.push(t('tui.run.remaining', { eta: task.eta }));
-    if (task.attempts && task.attempts.attempt > 1) {
-      parts.push(
-        colors.yellow(
-          t('tui.run.retry', {
-            attempt: task.attempts.attempt,
-            max: task.attempts.max,
-            code: task.attempts.httpCode || '-',
-          })
-        )
-      );
-    }
-    push(parts.join(bullet));
-    push(
-      [
-        t('tui.screen.taskCounts', {
-          done: task.done,
-          skipped: task.skipped,
-          failed: task.failed,
-          total: task.total,
-        }),
-        task.jobs > 1 ? t('tui.screen.taskJobs', { jobs: task.jobs }) : null,
-      ]
-        .filter(Boolean)
-        .join(bullet)
-    );
-    const current = Array.isArray(task.current) ? task.current : [];
-    if (!current.length) {
-      push(colors.dim(t('tui.screen.taskWaitingFile')));
-    } else {
-      for (const entry of current) {
-        if (lines.length >= limit - 1) break;
-        push(taskCurrentLine(entry, width));
-      }
-    }
-    for (const failure of task.failures.slice(0, Math.max(0, limit - lines.length))) {
-      push(taskFailureLine(failure, width));
-    }
-    return lines;
-  }
-
-  // Finished: done / failed / cancelled. The result is the summary the download flow used to print
-  // to the log; failures and the log file are what the user needs to retry or investigate.
-  //
-  // 已结束：完成 / 失败 / 取消。结果是下载流程过去写到日志里的摘要；
-  // 失败项与日志文件是用户重试或排查所需的信息。
-  const result = task.result || {};
-  const summary = [
-    t('tui.screen.taskResultCounts', {
-      done: result.done === undefined ? task.done : result.done,
-      skipped: result.skipped === undefined ? task.skipped : result.skipped,
-      failed: result.failed === undefined ? task.failed : result.failed,
-    }),
-  ];
-  if (result.metaFailed) summary.push(t('tui.screen.taskMetaFailed', { count: result.metaFailed }));
-  if (result.elapsedMs !== undefined) {
-    summary.push(t('tui.screen.taskElapsed', { elapsed: formatDuration(result.elapsedMs / 1000) }));
-  }
-  push(summary.join(bullet));
-  if (result.error) {
-    push(colors.red(t('tui.screen.taskError', { error: result.error })));
-  }
-
-  const failures = Array.isArray(task.failures) ? task.failures : [];
-  for (const failure of failures.slice(0, Math.max(0, Math.min(3, limit - lines.length - 2)))) {
-    push(taskFailureLine(failure, width));
-  }
-  if (task.logFile) {
-    push(colors.dim(t('tui.screen.taskLogFile', { file: task.logFile })));
-  }
-  if (task.outDir) {
-    push(colors.dim(t('tui.screen.taskOutDir', { dir: task.outDir })));
-  }
-  return lines;
-}
-
-/**
- * One in-flight file line: model · file, a small bar and the byte counts.
- * 一个在途文件的行：模型 · 文件、小进度条与字节数。
- */
-function taskCurrentLine(entry) {
-  const expected = Number(entry.expected) || 0;
-  const bytes = Number(entry.bytes) || 0;
-  const pct = expected > 0 ? Math.min(100, (bytes / expected) * 100) : 0;
-  const model = entry.model ? colors.dim(`[${entry.model}] `) : '';
-  return `  ${model}${entry.file || entry.name || ''}  ${progressBar(pct, 10)} ${pct.toFixed(0)}% ${formatBytes(
-    bytes
-  )}/${formatBytes(expected)}`;
-}
-
-/**
- * One failure line: `! name · reason`.
- * 一条失败行：`! 名称 · 原因`。
- */
-function taskFailureLine(failure) {
-  const text =
-    typeof failure === 'string'
-      ? failure
-      : failure && failure.message
-        ? String(failure.message)
-        : failure && failure.error
-          ? String(failure.error)
-          : '';
-  const name =
-    failure && typeof failure === 'object'
-      ? String(failure.name || failure.file || failure.modelId || '')
-      : '';
-  const label = [name, text].filter(Boolean).join(colors.dim(` ${layout.glyphs().bullet} `));
-  return colors.red(`  ! ${label || String(failure || '')}`);
-}
-
-/**
- * Per-task log tail: the task view's `l` page. Same scrolling convention as the session log page.
- * 单任务日志尾部：任务视图的 `l` 页。滚动约定与会话日志页一致。
- */
-function taskLogLines(task, budget) {
-  const room = Math.max(1, Math.floor(budget) || 1);
-  const lines = [];
-  const title = `${taskHead(task) || task.id} ${colors.dim(t('tui.screen.taskLogTitle'))}`;
-  lines.push(colors.bold(title));
-  const height = Math.max(1, room - 2);
-  const total = Array.isArray(task.logLines) ? task.logLines.length : 0;
-  if (!total) {
-    lines.push(colors.dim(t('tui.screen.taskLogEmpty')));
-    return lines.slice(0, room);
-  }
-  const maxScroll = Math.max(0, total - height);
-  taskLogScroll = Math.max(0, Math.min(taskLogScroll, maxScroll));
-  const end = total - taskLogScroll;
-  const start = Math.max(0, end - height);
-  lines.push(...task.logLines.slice(start, end));
-  lines.push(colors.dim(t('tui.screen.logPosition', { from: start + 1, to: end, total })));
-  return lines.slice(0, room);
-}
-
 /**
  * First line of a task block: name, status and elapsed time (legacy helper kept for callers/tests).
  * 任务块的第一行：名称、状态与已用时间（保留给调用方/测试的旧助手）。
  */
-function taskTitleLine(task) {
-  return taskLine(task, false).trim();
-}
-
-/**
- * Status text of a task, colored by outcome.
- * 任务状态文本，按结果着色。
- */
-function statusText(task) {
-  if (task.status === tasks.QUEUED) return colors.yellow(t('tui.screen.statusQueued'));
-  if (task.status === tasks.RUNNING) return colors.green(t('tui.screen.statusRunning'));
-  if (task.status === tasks.DONE) return colors.cyan(t('tui.screen.statusDone'));
-  if (task.status === tasks.CANCELLED) return colors.yellow(t('tui.screen.statusCancelled'));
-  return colors.red(t('tui.screen.statusFailed'));
-}
-
-/**
- * Second line of a task block (legacy helper): progress bar, counts, speed and ETA.
- * 任务块的第二行（旧助手）：进度条、计数、速度与剩余时间。
- */
-function taskDetailLine(task) {
-  return taskDetailLines(task, bodyWidth(), 2)[0] || '';
-}
-
 /**
  * Draw a boxed block: a titled top border, the content rows and a bottom border.
  * 画一个带边框的区块：带标题的上边框、内容行与下边框。
@@ -1629,8 +1358,6 @@ function resetState() {
   noticeText = '';
   taskView = false;
   taskCursor = 0;
-  taskLogView = false;
-  taskLogScroll = 0;
   taskListStart = 0;
   lastPaint = '';
 }
@@ -1659,8 +1386,6 @@ module.exports = {
   render,
   toggleTaskView,
   isTaskView,
-  toggleTaskLogView,
-  isTaskLogView,
   toggleLogView,
   isLogView,
   bodyGeometry,
@@ -1672,7 +1397,6 @@ module.exports = {
   // 重新导出，便于测试在没有终端时组装框架。
   infoPanel,
   taskViewLines,
-  taskLogLines,
   taskDetailLines,
   taskLine,
   statusText,

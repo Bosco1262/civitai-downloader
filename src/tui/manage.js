@@ -23,6 +23,7 @@ const view = require('./view');
 const pages = require('./pages');
 const screen = require('./screen');
 const reportPage = require('./report');
+const { color } = require('./tokens');
 
 /**
  * One picker row per known collection.
@@ -136,7 +137,7 @@ async function resetModels(config, collectionId) {
       return (entry && entry.name) || t('tui.manage.modelIdLabel', { modelId });
     })
     .join(t('tui.manage.nameSeparator'));
-  view.notice(t('tui.manage.resetDone', { count: n, names: view.truncate(names, 120) }), view.colors.green);
+  view.notice(t('tui.manage.resetDone', { count: n, names: view.truncate(names, 120) }), color.success);
 }
 
 // ---------------------------------------------------------------------------
@@ -210,7 +211,7 @@ async function openMembers(config, collectionId) {
   });
   if (!chosen) return null;
   if (!chosen.hasRecord) {
-    view.notice(t('tui.manage.memberNoRecord', { modelId: chosen.modelId }), view.colors.yellow);
+    view.notice(t('tui.manage.memberNoRecord', { modelId: chosen.modelId }), color.warning);
     return null;
   }
   return require('./models').modelActions(config, chosen.modelId);
@@ -243,7 +244,7 @@ function snapshotReportModel(config, collectionId) {
     summary.push({
       label: t('tui.manage.snapshot.factCorrupt'),
       value: t('tui.manage.snapshot.corrupt', { message: corrupt.message }),
-      color: view.colors.red,
+      color: color.danger,
     });
   }
 
@@ -306,7 +307,7 @@ function snapshotReportModel(config, collectionId) {
         description: t('tui.manage.resetChangedDesc'),
         run: async () => {
           if (!total) {
-            view.notice(t('tui.manage.resetChangedEmpty'), view.colors.yellow);
+            view.notice(t('tui.manage.resetChangedEmpty'), color.warning);
             return reportPage.REFRESH;
           }
           const confirm = await pages.promptConfirm(
@@ -315,7 +316,7 @@ function snapshotReportModel(config, collectionId) {
           );
           if (!confirm) return reportPage.REFRESH;
           const n = resetChangedRecords(config, collectionId);
-          view.notice(t('tui.manage.resetChangedDone', { count: n }), view.colors.green);
+          view.notice(t('tui.manage.resetChangedDone', { count: n }), color.success);
           return reportPage.REFRESH;
         },
       },
@@ -364,7 +365,7 @@ async function collectionActions(config, collectionId) {
   if (screen.isActive()) return collectionSnapshotPage(config, collectionId);
   const { snapshot } = readCollection(config, collectionId, { allowCorrupt: true });
   view.note('');
-  view.note(view.colors.bold(`  ${t('tui.manage.collectionLabel', { id: collectionId })}`));
+  view.note(color.emphasis(`  ${t('tui.manage.collectionLabel', { id: collectionId })}`));
   printSnapshot(snapshot);
 
   for (;;) {
