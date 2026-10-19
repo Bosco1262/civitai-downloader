@@ -76,6 +76,7 @@ const TUI_FILES = [
   'manage.js',
   'settings.js',
   'pages.js',
+  'report.js',
 ];
 /**
  * Keys added by this change.
@@ -101,6 +102,9 @@ const TUI_MODULES = new Set([
   'settings',
   'pages',
   'help',
+  'report',
+  'verify',
+  'doctor',
 ]);
 /**
  * Keys whose English and Chinese text is identical (pure format strings / proper nouns / language endonyms);
@@ -118,6 +122,9 @@ const SAME_IN_BOTH = new Set([
   'tui.settings.userAgent',
   'tui.settings.languageZh',
   'tui.settings.languageEn',
+  // Pure format strings: an arrow between two version labels is the same in both languages.
+  // 纯格式串：两个版本标签之间的箭头在两种语言下相同。
+  'tui.report.fromTo',
 ]);
 
 const tr = i18n.t;

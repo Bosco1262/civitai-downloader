@@ -68,6 +68,19 @@ function queuedDownloads() {
  * `names` 由 job 自己给出（`onItemFiles`），布局目录、已记录目录与版本后缀改名都已处理。
  * 以前按 `outDir/<模型名>` 猜目录，量到的是不存在的文件（大小为 0、速度 0）。
  */
+/**
+ * Identity of one plan row. The same model can appear in several versions in one plan, so the
+ * in-flight map and the last-error map must include the version.
+ *
+ * 计划行的标识。同一模型可能在一份计划里出现多个版本，因此「下载中」和「最近错误」
+ * 两张表都必须带上版本号。
+ */
+function planKey(item) {
+  if (!item) return '';
+  const version = item.versionId === undefined || item.versionId === null ? '' : item.versionId;
+  return `${item.modelId}:${version}`;
+}
+
 function addItemEntries(entries, item, dir, names) {
   const files = Array.isArray(item.files) ? item.files : [];
   for (let index = 0; index < files.length; index++) {
@@ -263,8 +276,9 @@ async function runJob(job) {
         },
         onFileStart: (item, file, dir) => {
           job.attemptInfo = null;
-          job.current.set(String(item.modelId), {
+          job.current.set(planKey(item), {
             modelId: String(item.modelId),
+            versionId: item.versionId === undefined ? null : String(item.versionId),
             model: item.name || String(item.modelId),
             name: file.diskName || file.name,
             entry: entryOfFile(job.entries, dir, file),
@@ -275,16 +289,16 @@ async function runJob(job) {
           job.attemptInfo = info;
         },
         onFileError: (item, file, error) => {
-          job.lastErrors.set(String(item.modelId), (error && error.message) || String(error));
+          job.lastErrors.set(planKey(item), (error && error.message) || String(error));
         },
         onFileDone: (item, file, status) => {
           if (status === 'failed') {
-            const key = String(item.modelId);
+            const key = planKey(item);
             if (!job.lastErrors.has(key)) job.lastErrors.set(key, file && file.name ? file.name : '');
           }
         },
         onItemDone: (item, ok, status) => {
-          job.current.delete(String(item.modelId));
+          job.current.delete(planKey(item));
           if (status === 'skipped') {
             job.skipped++;
           } else if (ok) {
@@ -294,8 +308,9 @@ async function runJob(job) {
             if (item && item.name) {
               job.failures.push({
                 modelId: item.modelId === undefined ? null : String(item.modelId),
+                versionId: item.versionId === undefined ? null : String(item.versionId),
                 name: item.name,
-                message: job.lastErrors.get(String(item.modelId)) || '',
+                message: job.lastErrors.get(planKey(item)) || '',
               });
             }
           }
@@ -376,9 +391,13 @@ async function runJob(job) {
  * 下载失败且仍带文件清单（可重试）的计划项。
  */
 function retryPlan(job) {
-  const failedIds = new Set(job.failures.map((failure) => String(failure.modelId)));
+  const failedIds = new Set(
+    job.failures.map(
+      (failure) => `${failure.modelId}:${failure.versionId === undefined || failure.versionId === null ? '' : failure.versionId}`
+    )
+  );
   return job.plan.filter(
-    (item) => failedIds.has(String(item.modelId)) && Array.isArray(item.files) && item.files.length > 0
+    (item) => failedIds.has(planKey(item)) && Array.isArray(item.files) && item.files.length > 0
   );
 }
 

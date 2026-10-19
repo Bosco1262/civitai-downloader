@@ -275,6 +275,7 @@
   "web.job.login": "登录",
 
   "web.log.connectingBrowser": "启动 / 连接浏览器…",
+  "web.log.pinsApplied": "已为 {count} 个模型改用固定版本",
   "web.log.fetchMeta": "拉取 {count} 项的文件元数据…",
   "web.log.snapshotFailed": "写入收藏集快照失败：{message}",
   "web.log.planWriteFailed": "写入计划文件失败：{message}",

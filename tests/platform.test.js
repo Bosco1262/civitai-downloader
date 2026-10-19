@@ -18,6 +18,7 @@ const crypto = require('crypto');
 
 const { loadConfig, safeHostSlug, DEFAULTS } = require('../src/config');
 const downloader = require('../src/downloader');
+const browser = require('../src/browser');
 const { createDedupIndex, loadIndex, indexPath } = require('../src/dedup');
 const notify = require('../src/notify');
 
@@ -30,6 +31,53 @@ function writeConfig(dir, extra = {}) {
   fs.writeFileSync(file, JSON.stringify({ ...extra }), 'utf8');
   return file;
 }
+
+// ---------------------------------------------------------------------------
+// Browser launch decisions
+// 浏览器启动决策
+// ---------------------------------------------------------------------------
+
+test('browser: 识别无头实例，并只在需要窗口时替换它', () => {
+  assert.equal(
+    browser.isHeadlessBrowser({
+      'User-Agent': 'Mozilla/5.0 Chrome/155.0.0.0 Safari/537.36 HeadlessChrome/155.0.0.0',
+    }),
+    true
+  );
+  assert.equal(
+    browser.isHeadlessBrowser({ 'User-Agent': 'Mozilla/5.0 Chrome/155.0.0.0 Safari/537.36' }),
+    false
+  );
+  assert.equal(browser.isHeadlessBrowser({}), false);
+  assert.equal(browser.isHeadlessBrowser(null), false);
+
+  const dir = tempDir('browser');
+  const cookiesFile = path.join(dir, 'cookies.txt');
+  const config = {
+    headless: 'auto',
+    cookiesFile,
+    debugPort: 9333,
+    profileDir: path.join(dir, 'profile'),
+  };
+  try {
+    assert.equal(browser.wantsHeadless(config), false, '没有 Cookie 时需要可见窗口');
+    fs.writeFileSync(cookiesFile, 'x', 'utf8');
+    assert.equal(browser.wantsHeadless(config), true, '已有 Cookie 时 auto 走无头');
+    assert.equal(browser.wantsHeadless(config, { headless: false }), false, '登录强制可见');
+    assert.equal(browser.wantsHeadless({ ...config, headless: 'always' }), true);
+    assert.equal(browser.wantsHeadless({ ...config, headless: 'never' }), false);
+
+    const headful = browser.browserArgs(config, { headless: false });
+    assert.ok(!headful.includes('--headless=new'));
+    assert.ok(headful.includes('--remote-debugging-port=9333'));
+    assert.ok(headful.includes(`--user-data-dir=${config.profileDir}`));
+    const headless = browser.browserArgs(config, { headless: true });
+    assert.ok(headless.includes('--headless=new'));
+    assert.ok(headless.includes('--no-startup-window'));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 // ---------------------------------------------------------------------------
 // Site-isolated Chrome profile

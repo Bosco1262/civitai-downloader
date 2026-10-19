@@ -35,6 +35,7 @@ const {
   checkUpdates,
   checkModelUpdates,
   changedItems,
+  applyPinsToItems,
   reportLines,
   summarize,
   markForRedownload,
@@ -571,6 +572,14 @@ function createActions(opts = {}) {
           ctx.log(t('web.log.snapshotFailed', { message: e.message }));
         }
 
+        // Pins decide the target version before metadata is fetched, so the plan shown in the UI
+        // and the version the job downloads agree.
+        //
+        // 在拉元数据之前先按固定版本决定目标版本，界面展示的计划与实际下载的版本才会一致。
+        const { entries } = readLibrary(config, { allowCorrupt: true });
+        const pinnedCount = applyPinsToItems(entries, items);
+        if (pinnedCount) ctx.log(t('web.log.pinsApplied', { count: pinnedCount }));
+
         ctx.log(t('web.log.fetchMeta', { count: items.length }));
         const { plan, totalBytes, failed } = await buildPlan(config.site, items, config.userAgent, {
           concurrency: config.metaConcurrency,
@@ -590,7 +599,6 @@ function createActions(opts = {}) {
           ctx.log(t('web.log.planWriteFailed', { message: e.message }));
         }
 
-        const { entries } = readLibrary(config, { allowCorrupt: true });
         const rows = plan.map((item) => {
           const entry = entries[String(item.modelId)];
           return {

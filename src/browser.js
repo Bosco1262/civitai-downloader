@@ -133,6 +133,22 @@ async function fetchDebugInfo(port) {
   return info;
 }
 
+/**
+ * Whether the browser behind the debug port is running headless.
+ *
+ * `--headless=new` still reports `HeadlessChrome` in the User-Agent, and that is the only reliable
+ * signal available from `/json/version` (the `Browser` field says plain "Chrome").
+ *
+ *
+ * 调试端口后面的浏览器是否为无头模式。
+ *
+ * `--headless=new` 的 User-Agent 仍然包含 `HeadlessChrome`，这是 `/json/version`
+ * 里唯一可靠的信号（`Browser` 字段只写 "Chrome"）。
+ */
+function isHeadlessBrowser(info) {
+  return !!(info && /HeadlessChrome/i.test(String(info['User-Agent'] || info.userAgent || '')));
+}
+
 async function connectBrowser(port) {
   const info = await fetchDebugInfo(port);
   if (!info || !info.webSocketDebuggerUrl) return null;
@@ -226,16 +242,47 @@ async function launchBrowser(config, opts = {}) {
  */
 async function ensureBrowser(config, opts = {}) {
   const { info, reason, status } = await probeDebugPort(config.debugPort);
+  const headless = wantsHeadless(config, opts);
+
   if (info && info.webSocketDebuggerUrl) {
-    log(t('browser.connected', { port: config.debugPort }));
-    return puppeteer.connect({ browserWSEndpoint: info.webSocketDebuggerUrl, defaultViewport: null });
+    // A leftover headless instance must not silently swallow a request for a visible window
+    // (login passes `headless: false`, and `headless: never` means every flow shows the window).
+    // Reuse it only when a window is not wanted.
+    //
+    // 遗留的无头实例不能悄悄吞掉「要可见窗口」的请求（登录会传 `headless: false`，
+    // 而 `headless: never` 表示所有流程都显示窗口）。只有不需要窗口时才复用它。
+    if (!headless && isHeadlessBrowser(info)) {
+      log(t('browser.replacingHeadless', { port: config.debugPort }));
+      const stale = await puppeteer
+        .connect({ browserWSEndpoint: info.webSocketDebuggerUrl, defaultViewport: null })
+        .catch(() => null);
+      if (stale) await stale.close().catch(() => {});
+      // Wait for the port to be released before spawning the visible browser on the same profile.
+      // 等端口释放后再用同一个 profile 启动可见窗口。
+      for (let attempt = 0; attempt < 30; attempt++) {
+        await sleep(200);
+        const again = await probeDebugPort(config.debugPort);
+        if (!again.info) break;
+      }
+      const still = await probeDebugPort(config.debugPort);
+      if (still.info) {
+        throw new ConfigError(
+          t('browser.headlessCloseFailed', {
+            port: config.debugPort,
+            reason: still.reason,
+          })
+        );
+      }
+    } else {
+      log(t('browser.connected', { port: config.debugPort }));
+      return puppeteer.connect({ browserWSEndpoint: info.webSocketDebuggerUrl, defaultViewport: null });
+    }
   }
   if (status && !info) {
     log(t('browser.portOccupied', { port: config.debugPort, reason }));
   } else {
     log(t('browser.portNotReady', { port: config.debugPort, reason }));
   }
-  const headless = wantsHeadless(config, opts);
   const browser = await launchBrowser(config, { headless });
   log(headless ? t('browser.startedHeadless') : t('browser.started'));
   return browser;
@@ -296,6 +343,7 @@ module.exports = {
   lookupOnPath,
   probeDebugPort,
   fetchDebugInfo,
+  isHeadlessBrowser,
   connectBrowser,
   browserArgs,
   wantsHeadless,

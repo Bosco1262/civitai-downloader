@@ -16,11 +16,13 @@
  * 让下次下载重新拉取。
  */
 
-const { readLibrary, readCollection, listCollectionIds } = require('../storage');
+const { readLibrary, readCollection, listCollectionIds, entryVersions } = require('../storage');
 const { markForRedownload } = require('../updater');
 const { t } = require('../i18n');
 const view = require('./view');
 const pages = require('./pages');
+const screen = require('./screen');
+const reportPage = require('./report');
 
 /**
  * One picker row per known collection.
@@ -137,11 +139,229 @@ async function resetModels(config, collectionId) {
   view.notice(t('tui.manage.resetDone', { count: n, names: view.truncate(names, 120) }), view.colors.green);
 }
 
+// ---------------------------------------------------------------------------
+// Snapshot page
+// 快照页
+// ---------------------------------------------------------------------------
+
+/**
+ * Change buckets of a snapshot, always complete (callers never have to check for missing arrays).
+ * 快照的变化桶，始终完整（调用方不必检查数组是否存在）。
+ */
+function changeBuckets(snapshot) {
+  const changes = (snapshot && snapshot.changes) || {};
+  return {
+    added: Array.isArray(changes.added) ? changes.added : [],
+    removed: Array.isArray(changes.removed) ? changes.removed : [],
+    versionChanged: Array.isArray(changes.versionChanged) ? changes.versionChanged : [],
+    previousFetchedAt: changes.previousFetchedAt || null,
+  };
+}
+
+/**
+ * Reset the records of the changes a snapshot reports: added models and the "to" version of every
+ * version change. Removed members have no record left to reset, so they are skipped.
+ *
+ * 重置快照里变化项的记录：新增的模型，以及每条版本变化的目标版本。
+ * 已移除的成员没有记录可重置，直接跳过。
+ *
+ * @returns {number} how many records were reset
+ */
+function resetChangedRecords(config, collectionId) {
+  const { snapshot } = readCollection(config, collectionId, { allowCorrupt: true });
+  const changes = changeBuckets(snapshot);
+  const items = [
+    ...changes.added.map((item) => ({ modelId: String(item.modelId) })),
+    ...changes.versionChanged.map((item) => ({
+      modelId: String(item.modelId),
+      versionId:
+        item.toVersionId === undefined || item.toVersionId === null ? null : String(item.toVersionId),
+    })),
+  ];
+  return markForRedownload(config, items);
+}
+
+/**
+ * Member list of one snapshot: searchable picker, Enter opens the member's model page when the
+ * model has a local record.
+ *
+ * 一份快照的成员列表：可搜索的选择器，成员有本地记录时 Enter 打开它的模型页面。
+ */
+async function openMembers(config, collectionId) {
+  const { snapshot } = readCollection(config, collectionId, { allowCorrupt: true });
+  if (!snapshot) return null;
+  const entries = readLibrary(config, { allowCorrupt: true }).entries;
+  const rows = snapshot.items.map((item) => {
+    const entry = entries[item.modelId] || null;
+    return {
+      modelId: String(item.modelId),
+      name: (entry && entry.name) || item.name || t('tui.manage.modelIdLabel', { modelId: item.modelId }),
+      versions: entryVersions(entry).length,
+      pinned: entry && entry.pinnedVersionId ? t('tui.manage.pinnedVersion') : t('tui.manage.notPinned'),
+      hasRecord: !!entry,
+    };
+  });
+  const chosen = await pages.pickOne(rows, {
+    message: t('tui.manage.membersPick'),
+    title: t('tui.manage.membersAction'),
+    describe: (row) => t('tui.manage.memberVersions', { versions: row.versions, pinned: row.pinned }),
+    decidedMessage: 'tui.check.selectedModel',
+    decidedParams: (row) => ({ id: row && row.modelId }),
+  });
+  if (!chosen) return null;
+  if (!chosen.hasRecord) {
+    view.notice(t('tui.manage.memberNoRecord', { modelId: chosen.modelId }), view.colors.yellow);
+    return null;
+  }
+  return require('./models').modelActions(config, chosen.modelId);
+}
+
+/**
+ * Report model of one collection: snapshot facts, the three change buckets and its actions.
+ * 单个收藏集的报告模型：快照事实、三个变化分区与操作。
+ */
+function snapshotReportModel(config, collectionId) {
+  const { snapshot, corrupt } = readCollection(config, collectionId, { allowCorrupt: true });
+  if (!snapshot) return null;
+  const changes = changeBuckets(snapshot);
+  const total = changes.added.length + changes.removed.length + changes.versionChanged.length;
+
+  const summary = [
+    { label: t('tui.manage.snapshot.factId'), value: String(collectionId) },
+    { label: t('tui.manage.snapshot.factMembers'), value: String(snapshot.items.length) },
+    {
+      label: t('tui.manage.snapshot.factFetchedAt'),
+      value: snapshot.fetchedAt || t('tui.manage.unknownTime'),
+    },
+    {
+      label: t('tui.manage.snapshot.factPrevious'),
+      value: changes.previousFetchedAt || t('tui.manage.firstSnapshot'),
+    },
+    { label: t('tui.manage.snapshot.factChanges'), value: String(total) },
+  ];
+  if (corrupt) {
+    summary.push({
+      label: t('tui.manage.snapshot.factCorrupt'),
+      value: t('tui.manage.snapshot.corrupt', { message: corrupt.message }),
+      color: view.colors.red,
+    });
+  }
+
+  const modelName = (item) =>
+    (item && item.name) || t('tui.manage.modelIdLabel', { modelId: item && item.modelId });
+
+  const sections = [
+    {
+      title: t('tui.manage.snapshot.sectionAdded'),
+      rows: changes.added.map((item) => ({
+        label: modelName(item),
+        detail: t('tui.manage.modelIdLabel', { modelId: item.modelId }),
+      })),
+      emptyText: t('tui.manage.snapshot.emptyAdded'),
+    },
+    {
+      title: t('tui.manage.snapshot.sectionRemoved'),
+      rows: changes.removed.map((item) => ({
+        label: modelName(item),
+        detail: t('tui.manage.modelIdLabel', { modelId: item.modelId }),
+      })),
+      emptyText: t('tui.manage.snapshot.emptyRemoved'),
+    },
+    {
+      title: t('tui.manage.snapshot.sectionChanged'),
+      rows: changes.versionChanged.map((item) => ({
+        label: modelName(item),
+        detail: t('tui.report.fromTo', {
+          from:
+            item.fromVersionId === undefined || item.fromVersionId === null
+              ? t('common.unknown')
+              : item.fromVersionId,
+          to:
+            item.toVersionId === undefined || item.toVersionId === null
+              ? t('common.unknown')
+              : item.toVersionId,
+        }),
+      })),
+      emptyText: t('tui.manage.snapshot.emptyChanged'),
+    },
+  ];
+
+  return {
+    title: t('tui.manage.collectionLabel', { id: collectionId }),
+    summary,
+    sections,
+    actions: [
+      {
+        label: t('tui.app.menuCheck'),
+        description: t('tui.app.menuCheckDesc'),
+        run: () => require('./check').checkCollectionsFlow(config, [String(collectionId)]),
+      },
+      {
+        label: t('tui.app.menuDownload'),
+        description: t('tui.manage.downloadActionDesc'),
+        run: () => require('./download').downloadFlow(config, { collectionId: String(collectionId) }),
+      },
+      {
+        label: t('tui.manage.resetChanged'),
+        description: t('tui.manage.resetChangedDesc'),
+        run: async () => {
+          if (!total) {
+            view.notice(t('tui.manage.resetChangedEmpty'), view.colors.yellow);
+            return reportPage.REFRESH;
+          }
+          const confirm = await pages.promptConfirm(
+            t('tui.manage.resetChangedConfirm', { count: total }),
+            { danger: true }
+          );
+          if (!confirm) return reportPage.REFRESH;
+          const n = resetChangedRecords(config, collectionId);
+          view.notice(t('tui.manage.resetChangedDone', { count: n }), view.colors.green);
+          return reportPage.REFRESH;
+        },
+      },
+      {
+        label: t('tui.manage.resetAction'),
+        description: t('tui.manage.resetActionDesc'),
+        run: () => resetModels(config, collectionId),
+      },
+      {
+        label: t('tui.manage.membersAction'),
+        description: t('tui.manage.membersActionDesc'),
+        run: () => openMembers(config, collectionId),
+      },
+      { label: t('tui.manage.back'), run: () => reportPage.BACK },
+    ],
+    rebuild: () => snapshotReportModel(config, collectionId),
+  };
+}
+
+/**
+ * Shell page of one collection: the snapshot report page.
+ * 单个收藏集的外壳页面：快照报告页。
+ */
+async function collectionSnapshotPage(config, collectionId) {
+  const model = snapshotReportModel(config, collectionId);
+  if (!model) {
+    const { corrupt } = readCollection(config, collectionId, { allowCorrupt: true });
+    const lines = [t('tui.manage.snapshotMissing', { id: collectionId }), '', t('tui.manage.noRecordsHint')];
+    if (corrupt) lines.unshift(t('tui.manage.snapshot.corrupt', { message: corrupt.message }));
+    await pages.promptMessage(t('tui.manage.collectionLabel', { id: collectionId }), lines);
+    return null;
+  }
+  return reportPage.showReportPage(config, model);
+}
+
 /**
  * Page of one collection: everything that can be done to it.
  * 单个收藏集的页面：针对它能做的一切。
  */
 async function collectionActions(config, collectionId) {
+  // Inside the shell the snapshot is a page: time, member count and change details are visible
+  // without opening the log. The printed block below stays for non-shell callers.
+  //
+  // 外壳接管时快照是一页：时间、成员数与变化明细不必打开日志就能看到。
+  // 下面的打印版本保留给没有外壳的调用方。
+  if (screen.isActive()) return collectionSnapshotPage(config, collectionId);
   const { snapshot } = readCollection(config, collectionId, { allowCorrupt: true });
   view.note('');
   view.note(view.colors.bold(`  ${t('tui.manage.collectionLabel', { id: collectionId })}`));
@@ -236,4 +456,15 @@ async function manageFlow(config) {
   return collectionsFlow(config);
 }
 
-module.exports = { collectionsFlow, collectionActions, collectionRows, manageFlow, printSnapshot, resetModels };
+module.exports = {
+  collectionsFlow,
+  collectionActions,
+  collectionRows,
+  collectionSnapshotPage,
+  snapshotReportModel,
+  resetChangedRecords,
+  openMembers,
+  manageFlow,
+  printSnapshot,
+  resetModels,
+};

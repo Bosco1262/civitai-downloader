@@ -662,6 +662,34 @@ function reportLines(report) {
 }
 
 /**
+ * Point automatically built collection items at their pinned versions.
+ *
+ * A collection snapshot names the version the collection currently uses; a pin says "stay on this
+ * version instead". Applying the pin *before* the plan is built keeps the plan page honest: it
+ * shows the version that will actually be downloaded, instead of the job silently replacing it.
+ * Explicit plans (a version chosen in the plan page, a check report's change, a verify repair)
+ * never pass through here.
+ *
+ *
+ * 把自动构建的收藏集条目指向固定版本。
+ *
+ * 收藏集快照记录的是它当前使用的版本；固定版本表示「仍用这个版本」。
+ * 在生成计划**之前**应用固定，计划页展示的就是实际会下载的版本，而不是在任务里被悄悄替换。
+ * 显式计划（计划页里手选的版本、检查报告的变化项、校验修复）不会经过这里。
+ */
+function applyPinsToItems(entries, items) {
+  let changed = 0;
+  for (const item of items || []) {
+    const entry = entries && entries[item.modelId];
+    const pin = entry && entry.pinnedVersionId ? String(entry.pinnedVersionId) : null;
+    if (!pin || String(item.versionId) === pin) continue;
+    item.versionId = pin;
+    changed++;
+  }
+  return changed;
+}
+
+/**
  * Turn the report into the entries that "need downloading" (for a one-shot --download / TUI download).
  * 把报告整理为「需要下载」的条目（供 --download / TUI 一次性下载）
  */
@@ -774,6 +802,7 @@ module.exports = {
   checkModelUpdates,
   reportLines,
   changedItems,
+  applyPinsToItems,
   markForRedownload,
   setPin,
   summarize,

@@ -9,6 +9,7 @@ const { performLogin, checkLogin } = require('../loginFlow');
 const { t } = require('../i18n');
 const view = require('./view');
 const pages = require('./pages');
+const downloadTask = require('./downloadTask');
 
 async function loginFlow(config) {
   const mode = await pages.promptMenu(t('tui.login.title', { site: config.site }), [
@@ -25,6 +26,15 @@ async function loginFlow(config) {
 
   const go = await pages.promptConfirm(t('tui.login.startConfirm', { site: config.site }));
   if (!go) return;
+
+  // Opening the visible window may replace a background headless browser; ask before disturbing a
+  // running download (its metadata requests use that browser).
+  //
+  // 打开可见窗口可能会替换后台的无头浏览器；正在下载时先确认，避免打断它的元数据请求。
+  if (downloadTask.hasActiveDownload()) {
+    const proceed = await pages.promptConfirm(t('tui.login.activeDownloadConfirm'), { initial: false });
+    if (!proceed) return;
+  }
 
   await performLogin(config, {
     log: view.log,

@@ -29,6 +29,7 @@ const layout = require('./layout');
 const view = require('./view');
 const pages = require('./pages');
 const screen = require('./screen');
+const reportPage = require('./report');
 
 const { colors, displayWidth, truncateTo } = layout;
 
@@ -199,54 +200,98 @@ function shortLabel(text) {
 }
 
 /**
- * Adjust a scroll window so a section heading is never separated from its rows.
+ * Kept as a re-export: the report page and the settings page share the same window adjustment, and
+ * existing callers (and tests) still look it up here.
  *
- * A heading is part of the section, not a free-standing line: the window may not start *inside* a
- * section (its heading would be scrolled off, so the first visible row would look orphaned), and it
- * may not end on a heading either (a header with nothing under it is just noise). Both adjustments
- * respect the one hard rule — the cursor always stays visible.
- *
- *
- * 调整滚动视窗，避免分组标题与它的行被拆开。
- *
- * 标题属于分组，不是独立的一行：视窗不能在分组「中间」开始（标题被滚出去后，第一行看起来就没有归属），
- * 也不能停在标题上（下面什么都没有的标题只是噪音）。两个调整都遵守唯一的硬约束——光标始终可见。
- *
- * @param {{start:number, end:number, cursor:number}} win window from `pages.windowOf`
- * @param {string[]} lines all rendered lines
- * @param {number} body how many lines fit
- * @param {number} cursorLine line of the cursor
- * @param {Map<number, number>} headingOfLine line → its section heading line
- * @param {Set<number>} headingLines the heading lines themselves
- * @returns {{start:number, end:number, cursor:number}}
+ * 保留为重新导出：报告页与设置页共用同一套视窗调整，既有调用方（与测试）仍从这里取用。
  */
-function scrollToSection(win, lines, body, cursorLine, headingOfLine, headingLines) {
-  let start = win.start;
-  let end = win.end;
+const scrollToSection = pages.scrollToSection;
 
-  // The section heading must be on screen when the cursor sits on that section's *first row*: coming
-  // back to that row should not leave the user without the section name. It is deliberately NOT
-  // applied to every row of the section: the window starts where the user scrolled to, so stepping
-  // inside a long section must not yank the view back to its heading.
-  //
-  // 光标停在本组「第一行」时，标题必须在视窗内：回到这一行时不能丢掉分组名。
-  // 这条规则刻意不适用于组内的其它行：视窗应停在用户滚到的位置，
-  // 在长分组内部上下移动时不能把视图拽回分组开头。
-  const heading = headingOfLine.get(cursorLine);
-  if (heading !== undefined && heading === cursorLine - 1 && heading < start) {
-    start = heading;
-    end = Math.min(lines.length, start + body);
+// ---------------------------------------------------------------------------
+// Environment check page
+// 环境体检页
+// ---------------------------------------------------------------------------
+
+/**
+ * Status badge of one check item (the CLI catalog already owns the three tags).
+ * 一项检查的状态标签（三个标签由命令行文案表提供）。
+ */
+function doctorTag(status) {
+  if (status === 'ok') return t('doctor.tagOk');
+  if (status === 'warn') return t('doctor.tagWarn');
+  return t('doctor.tagFail');
+}
+
+/**
+ * Color of one check status: green / yellow / red.
+ * 检查状态的颜色：绿 / 黄 / 红。
+ */
+function doctorColor(status) {
+  if (status === 'ok') return colors.green;
+  if (status === 'warn') return colors.yellow;
+  return colors.red;
+}
+
+/**
+ * Report model of the environment check: counts on top, one row per item with its hint.
+ * 环境体检的报告模型：上面是计数，每个检查项一行并带上建议。
+ */
+function doctorReportModel(items, deep) {
+  const count = (status) => items.filter((item) => item.status === status).length;
+  const modes = deep ? t('tui.doctor.report.modeDeep') : t('tui.doctor.report.modeQuick');
+  return {
+    title: t('tui.doctor.report.title'),
+    summary: [
+      { label: t('tui.doctor.report.factTotal'), value: String(items.length) },
+      { label: t('tui.doctor.report.factOk'), value: String(count('ok')), color: colors.green },
+      { label: t('tui.doctor.report.factWarn'), value: String(count('warn')), color: colors.yellow },
+      { label: t('tui.doctor.report.factFail'), value: String(count('fail')), color: colors.red },
+      { label: t('tui.doctor.report.factMode'), value: modes },
+    ],
+    sections: [
+      {
+        title: t('tui.doctor.report.sectionItems'),
+        rows: items.map((item) => ({
+          label: `${doctorTag(item.status)} ${item.name}`,
+          detail: String(item.detail || ''),
+          extra: item.hint ? String(item.hint) : '',
+          color: doctorColor(item.status),
+        })),
+      },
+    ],
+    actions: [
+      { label: t('tui.doctor.report.actionQuick'), run: () => 'quick' },
+      {
+        label: t('tui.doctor.report.actionDeep'),
+        description: t('tui.doctor.report.actionDeepDesc'),
+        run: () => 'deep',
+      },
+      { label: t('tui.manage.back'), run: () => reportPage.BACK },
+    ],
+  };
+}
+
+/**
+ * Shell environment-check loop: collect → page → (quick / deep) until the user leaves.
+ * 外壳环境体检循环：体检 → 页面 → （快速 / 深度）直到用户离开。
+ */
+async function doctorReportPage(config) {
+  let deep = false;
+  for (;;) {
+    const items = await pages.withSpinner(t('tui.doctor.report.collecting'), () =>
+      require('../commands/doctor').collect(config, { deep })
+    );
+    const outcome = await reportPage.showReportPage(config, doctorReportModel(items, deep));
+    if (outcome === 'quick') {
+      deep = false;
+      continue;
+    }
+    if (outcome === 'deep') {
+      deep = true;
+      continue;
+    }
+    return undefined;
   }
-
-  // Drop a heading (and the blank line above it) that ended up as the last visible line.
-  // 丢掉被挤到最后一行的标题（连同它上面的空行）。
-  while (end > start + 1 && (headingLines.has(end - 1) || lines[end - 1] === '')) end -= 1;
-
-  // Whatever happened above, the cursor must stay on screen.
-  // 无论上面怎么调整，光标都必须留在屏幕内。
-  if (cursorLine < start) start = cursorLine;
-  if (cursorLine >= end) end = Math.min(lines.length, cursorLine + 1);
-  return { start, end, cursor: win.cursor };
 }
 
 // ---------------------------------------------------------------------------
@@ -551,11 +596,12 @@ async function settingsPage(config) {
     }
     if (row.action === 'login') return require('./login').loginFlow(config);
     if (row.action === 'doctor') {
-      // The environment check prints through the CLI catalog: keep its lines inside the frame.
-      // 环境体检按命令行方式打印：把它的输出留在框架内。
-      return view.captureOutput(() =>
-        require('../commands/doctor').main(config, { positionals: [], flags: {} })
-      );
+      // The checks are structured items, so the page renders OK/WARN/FAIL (and each hint) directly
+      // instead of printing the CLI report into the log.
+      //
+      // 检查结果是结构化条目，因此页面直接渲染 OK/WARN/FAIL（以及每项的建议），
+      // 而不是把命令行报告打印进日志。
+      return doctorReportPage(config);
     }
     if (row.action === 'open') {
       if (view.openDir(config.outDir)) view.log(t('tui.app.opened', { dir: config.outDir }));
@@ -705,6 +751,8 @@ module.exports = {
   displayValue,
   applyField,
   scrollToSection,
+  doctorReportModel,
+  doctorReportPage,
   SECTIONS,
   VALIDATORS,
 };

@@ -275,6 +275,7 @@
   "web.job.login": "Login",
 
   "web.log.connectingBrowser": "Launching / connecting the browser…",
+  "web.log.pinsApplied": "Using the pinned version for {count} model(s)",
   "web.log.fetchMeta": "Fetching file metadata for {count} items…",
   "web.log.snapshotFailed": "Failed to write the collection snapshot: {message}",
   "web.log.planWriteFailed": "Failed to write the plan file: {message}",

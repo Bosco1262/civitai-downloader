@@ -9,7 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const { formatBytes, ensureDir } = require('../util');
 const { checkCurl, checkAria2 } = require('../downloader');
-const { findBrowserPath, probeDebugPort, wantsHeadless } = require('../browser');
+const { findBrowserPath, probeDebugPort, wantsHeadless, isHeadlessBrowser } = require('../browser');
 const { readLibrary, readCollection } = require('../storage');
 const { freeSpaceBytes } = require('../job');
 const { parseCollectionId } = require('../urls');
@@ -164,10 +164,12 @@ async function collect(config, opts = {}) {
 
   const port = await probeDebugPort(config.debugPort);
   if (port.info) {
+    const leftoverHeadless = isHeadlessBrowser(port.info) && !wantsHeadless(config, {});
     rep.add(
       t('doctor.itemDebugPort'),
       'ok',
-      t('doctor.portReady', { port: config.debugPort, browser: port.info.Browser || t('doctor.unknownBrowser') })
+      t('doctor.portReady', { port: config.debugPort, browser: port.info.Browser || t('doctor.unknownBrowser') }),
+      leftoverHeadless ? t('doctor.hintHeadlessLeftover') : undefined
     );
   } else {
     rep.add(
@@ -236,7 +238,7 @@ async function collect(config, opts = {}) {
 
   // Local records related to a collection: the membership snapshot written by list/download.
   // 收藏集相关的本地记录：由 list/download 写下的成员快照。
-  const collectionId = args && args.positionals && args.positionals[0] ? parseCollectionId(args.positionals[0]) : null;
+  const collectionId = opts.collectionId ? parseCollectionId(opts.collectionId) : null;
   if (collectionId) {
     const { snapshot, corrupt } = readCollection(config, collectionId, { allowCorrupt: true });
     if (corrupt) rep.add(t('doctor.itemSnapshot'), 'fail', corrupt.message, t('doctor.hintSnapshot'));
@@ -311,7 +313,12 @@ async function collect(config, opts = {}) {
  * 命令行入口：执行检查并打印。
  */
 async function main(config, args) {
-  const rep = { items: await collect(config, { deep: !!(args && args.flags.deep) }) };
+  const rep = {
+    items: await collect(config, {
+      deep: !!(args && args.flags.deep),
+      collectionId: args && args.positionals ? args.positionals[0] : null,
+    }),
+  };
 
   if (args && args.flags.json) {
     console.log(JSON.stringify(rep.items, null, 2));

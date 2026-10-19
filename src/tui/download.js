@@ -25,7 +25,7 @@ const { buildPlan, fetchModelDetail, extractFiles, versionToItem } = require('..
 const { resolveOutDir } = require('../config');
 const { parseCollectionId } = require('../urls');
 const { createSiteLimiter } = require('../runtime');
-const { setPin } = require('../updater');
+const { setPin, applyPinsToItems } = require('../updater');
 const { freeSpaceBytes } = require('../job');
 const { t } = require('../i18n');
 const view = require('./view');
@@ -458,6 +458,11 @@ async function downloadFlow(config, opts = {}) {
   }
   view.log(t('tui.download.collectionCount', { collectionId, count: items.length }));
 
+  // Pins decide the target version before metadata is fetched, so the plan and the job agree.
+  // 在拉元数据之前先按固定版本决定目标版本，计划与任务才会一致。
+  const pinnedCount = applyPinsToItems(readLibrary(config, { allowCorrupt: true }).entries, items);
+  if (pinnedCount) view.log(t('tui.download.pinsApplied', { count: pinnedCount }));
+
   view.log(t('tui.download.fetchMeta', { count: items.length, concurrency: config.metaConcurrency }));
   const { plan, totalBytes, failed } = await buildPlan(config.site, items, config.userAgent, {
     concurrency: config.metaConcurrency,
@@ -614,6 +619,24 @@ function selectablePlan(plan) {
 }
 
 /**
+ * Unique key of one plan row.
+ *
+ * A model may occupy several rows now (several versions downloaded together), so the model id alone
+ * is not a key. The version is: the picker never allows two identical versions of one model.
+ *
+ *
+ * 计划行的唯一键。
+ *
+ * 同一模型现在可以占多行（一次下载多个版本），因此只用模型 ID 不唯一；版本号才是唯一的，
+ * 因为选择器不允许同一模型出现两个相同版本。
+ */
+function planRowKey(item) {
+  if (!item) return '';
+  const version = item.versionId === undefined || item.versionId === null ? '' : item.versionId;
+  return `${item.modelId}:${version}`;
+}
+
+/**
  * The initial selection: everything selected whose target version is not recorded yet. That includes
  * both brand-new items and items whose collection version moved on (the old code only selected the
  * former).
@@ -625,7 +648,7 @@ function defaultSelection(plan, entries) {
   return new Set(
     selectablePlan(plan)
       .filter((item) => !recordedOf(entries, item))
-      .map((item) => String(item.modelId))
+      .map(planRowKey)
   );
 }
 
@@ -671,7 +694,7 @@ function planRowDetail(config, item, entries) {
  * 计划页第二行表头：已选、体积、状态与磁盘余量。
  */
 function planSummaryText(config, plan, selected, entries, outDir) {
-  const chosen = plan.filter((item) => !item.error && selected.has(String(item.modelId)));
+  const chosen = plan.filter((item) => !item.error && selected.has(planRowKey(item)));
   const selectable = selectablePlan(plan);
   const bytes = chosen.reduce((sum, item) => sum + (item.totalBytes || 0), 0);
   const done = chosen.filter((item) => recordedOf(entries, item)).length;
@@ -729,6 +752,16 @@ async function runDownloadPlan(config, opts) {
   const entries = opts.entries || readLibrary(config, { allowCorrupt: true }).entries;
   if (!selectablePlan(plan).length) {
     view.notice(t('tui.download.noDownloadable'), view.colors.yellow);
+    const failed = plan.filter((item) => item.error);
+    if (failed.length) {
+      view.notice(
+        t('tui.download.noDownloadableReason', {
+          count: failed.length,
+          error: view.truncate(String(failed[0].error), 120),
+        }),
+        view.colors.red
+      );
+    }
     return false;
   }
 
@@ -768,7 +801,7 @@ async function runDownloadPlan(config, opts) {
       baseModel: state.baseModel,
       sort: state.sort,
       label: (item) => item.name || String(item.modelId),
-      idOf: (item) => String(item.modelId),
+      idOf: planRowKey,
       onLog: view.log,
     });
     if (!answer) return false;
@@ -787,8 +820,11 @@ async function runDownloadPlan(config, opts) {
       continue;
     }
     if (answer.action === 'version') {
-      const item = plan.find((entry) => String(entry.modelId) === String(answer.currentId));
-      if (item) await pickPlanVersion(config, item, entries);
+      const item = plan.find((entry) => planRowKey(entry) === String(answer.currentId));
+      if (item) {
+        const picked = await pickPlanVersions(config, item, entries, plan);
+        if (picked) replacePlanRows(config, plan, item, picked.detail, picked.rows, state);
+      }
       continue;
     }
 
@@ -797,7 +833,7 @@ async function runDownloadPlan(config, opts) {
     //
     // 回车与 `o` 都进入确认页：计划页负责选择，确认页才是做出「开始」决定的那一屏。
     const chosen = plan.filter(
-      (item) => state.selected.has(String(item.modelId)) && !item.error && Array.isArray(item.files) && item.files.length
+      (item) => state.selected.has(planRowKey(item)) && !item.error && Array.isArray(item.files) && item.files.length
     );
     if (!chosen.length) {
       view.notice(t('tui.download.noSelection'), view.colors.yellow);
@@ -870,27 +906,12 @@ async function runDownloadPlan(config, opts) {
 }
 
 /**
- * Version picker of one plan item (per-item override, with optional pinning).
- * 单个计划项的版本选择（逐项覆盖，可顺带固定）。
+ * Rows of every online version of one model, shaped for the shared picker.
+ * 把一个模型的全部线上版本转成公共选择器需要的行。
  */
-async function pickPlanVersion(config, item, entries) {
-  view.log(t('tui.download.fetchVersions'));
-  let detail = null;
-  try {
-    detail = await pages.withSpinner(t('tui.download.fetchVersions'), () =>
-      fetchModelDetail(config.site, item.modelId, config.userAgent)
-    );
-  } catch (e) {
-    view.notice(t('tui.download.versionListFailed', { name: item.name, error: e.message }), view.colors.red);
-    return;
-  }
-  const versions = Array.isArray(detail.modelVersions) ? detail.modelVersions : [];
-  if (!versions.length) {
-    view.notice(t('tui.download.noVersions'), view.colors.yellow);
-    return;
-  }
+function versionChoiceRows(config, detail, item, entries) {
   const entry = entryOf(entries, item);
-  const rows = versions.map((version) => {
+  return (Array.isArray(detail.modelVersions) ? detail.modelVersions : []).map((version) => {
     const files = extractFiles(version, config.site, {
       fileTypes: config.fileTypes,
       primaryOnly: config.primaryOnly,
@@ -910,67 +931,184 @@ async function pickPlanVersion(config, item, entries) {
       pinned: !!(entry && entry.pinnedVersionId && String(entry.pinnedVersionId) === versionId),
     };
   });
-  const initialCursor = Math.max(0, rows.findIndex((row) => row.current));
-  const answer = await selectItems(rows, {
-    mode: 'single',
-    pageSize: PICK_PAGE_SIZE,
-    title: t('tui.download.versionTitle', { name: view.truncateTo(String(item.name), 56) }),
-    hints: () => t('tui.hint.downloadVersion'),
-    actions: { p: 'pin' },
-    describe: (row) =>
-      [
-        row.current ? t('tui.download.currentMark') : null,
-        row.downloaded ? t('tui.download.statusDownloaded') : null,
-        row.pinned ? t('tui.download.statusPinned') : null,
-        row.baseModel || t('common.unknown'),
-        t('tui.download.fileCount', { count: row.fileCount }),
-        formatBytes(row.totalBytes || 0),
-        row.publishedAt ? String(row.publishedAt).slice(0, 10) : t('tui.download.unknownDate'),
-      ]
-        .filter(Boolean)
-        .join(view.separator()),
-    initialCursor,
-    label: (row) => row.name,
-    idOf: (row) => row.versionId,
-    onLog: view.log,
+}
+
+/**
+ * One plan row built from an online version (files, totals and the model context the job needs).
+ * 用一个线上版本构造计划行（文件、合计，以及下载任务需要的模型上下文）。
+ */
+function versionPlanItem(config, item, detail, row) {
+  const built = versionToItem(config.site, row.raw, {
+    fileTypes: config.fileTypes,
+    primaryOnly: config.primaryOnly,
   });
-  if (!answer) return;
-  const chosen = rows.find((row) => row.versionId === String(answer.currentId)) || null;
-  if (!chosen) return;
+  const versionId = String(built.versionId);
+  return {
+    ...built,
+    modelId: item.modelId,
+    name: item.name,
+    type: item.type,
+    baseModel: row.baseModel || built.baseModel,
+    modelMeta: detail,
+    versionId: built.versionId,
+    versionName: built.versionName,
+    totalBytes: built.files.reduce((sum, file) => sum + (Number(file.bytes) || 0), 0),
+    baseVersionId:
+      item.baseVersionId === undefined || item.baseVersionId === null
+        ? versionId
+        : String(item.baseVersionId),
+    manual: String(built.versionId) !== String(item.baseVersionId),
+    pinVersionId: String(item.pinVersionId) === versionId ? item.pinVersionId : undefined,
+  };
+}
 
-  const pinnedId = entry && entry.pinnedVersionId ? String(entry.pinnedVersionId) : null;
-  if (pinnedId && pinnedId !== chosen.versionId) {
-    const unpin = await pages.promptConfirm(
-      t('tui.download.unpinToUse', { pinned: pinnedId, chosen: chosen.name }),
-      { initial: false }
+/**
+ * Version picker of one plan row, multi-select.
+ *
+ * The plan row is no longer "one version per model": opening `v` shows every online version with
+ * the versions already in the plan pre-checked, so ticking another one adds it to the same plan.
+ * `p` still pins the version under the cursor (the picker reopens so the mark is visible).
+ *
+ *
+ * 计划行的版本选择器，可多选。
+ *
+ * 计划行不再「一个模型只对应一个版本」：按 `v` 会列出全部线上版本，并预选计划里已有的版本；
+ * 再勾一个就会把同一模型的另一个版本加进同一份计划。`p` 仍然固定光标所在版本
+ * （之后选择器会重新打开，以便看到固定标记）。
+ *
+ * @returns {Promise<{detail:object, rows:Array<object>}|null>}
+ */
+async function pickPlanVersions(config, item, entries, plan) {
+  view.log(t('tui.download.fetchVersions'));
+  let detail = null;
+  try {
+    detail = await pages.withSpinner(t('tui.download.fetchVersions'), () =>
+      fetchModelDetail(config.site, item.modelId, config.userAgent)
     );
-    if (!unpin) return;
-    setPin(config, item.modelId, null);
-    if (entry) entry.pinnedVersionId = null;
+  } catch (e) {
+    view.notice(t('tui.download.versionListFailed', { name: item.name, error: e.message }), view.colors.red);
+    return null;
   }
-
-  if (chosen.versionId !== String(item.versionId)) {
-    Object.assign(
-      item,
-      versionToItem(config.site, chosen.raw, {
-        fileTypes: config.fileTypes,
-        primaryOnly: config.primaryOnly,
-      })
-    );
-    item.manual = String(item.versionId) !== String(item.baseVersionId);
-    view.log(t('tui.download.versionSwitched', { name: item.name, version: item.versionName }));
+  const rows = versionChoiceRows(config, detail, item, entries);
+  if (!rows.length) {
+    view.notice(t('tui.download.noVersions'), view.colors.yellow);
+    return null;
   }
+  const entry = entryOf(entries, item);
+  const inPlan = new Set(
+    plan.filter((row) => String(row.modelId) === String(item.modelId)).map((row) => String(row.versionId))
+  );
+  let selectedIds = new Set(inPlan);
 
-  if (answer.action === 'pin') {
-    if (entry) {
-      setPin(config, item.modelId, chosen.versionId);
-      entry.pinnedVersionId = chosen.versionId;
-      view.notice(t('tui.download.pinMarkedOne', { version: chosen.name }), view.colors.green);
-    } else {
-      item.pinVersionId = chosen.versionId;
-      view.notice(t('tui.download.pinPending', { count: 1 }), view.colors.dim);
+  for (;;) {
+    const answer = await selectItems(rows, {
+      mode: 'multi',
+      pageSize: PICK_PAGE_SIZE,
+      title: t('tui.download.versionTitle', { name: view.truncateTo(String(item.name), 56) }),
+      hints: () => t('tui.hint.downloadVersion'),
+      actions: { p: 'pin' },
+      disabledOf: (row) => row.fileCount === 0,
+      describe: (row) =>
+        [
+          row.current ? t('tui.download.currentMark') : null,
+          row.downloaded ? t('tui.download.statusDownloaded') : null,
+          row.pinned ? t('tui.download.statusPinned') : null,
+          inPlan.has(row.versionId) ? t('tui.download.inPlanMark') : null,
+          row.baseModel || t('common.unknown'),
+          t('tui.download.fileCount', { count: row.fileCount }),
+          formatBytes(row.totalBytes || 0),
+          row.publishedAt ? String(row.publishedAt).slice(0, 10) : t('tui.download.unknownDate'),
+        ]
+          .filter(Boolean)
+          .join(view.separator()),
+      initialSelected: selectedIds,
+      initialCursor: Math.max(0, rows.findIndex((row) => row.current)),
+      label: (row) => row.name,
+      idOf: (row) => row.versionId,
+      onLog: view.log,
+    });
+    if (!answer) return null;
+
+    // Keep what the user already toggled when the picker reopens after a pin.
+    // 固定之后选择器会重新打开，保留用户已经勾好的版本。
+    selectedIds = new Set(Array.from(answer.selected || [], (value) => String(value)));
+
+    if (answer.action === 'pin') {
+      const pinRow = rows.find((row) => row.versionId === String(answer.currentId));
+      if (pinRow) {
+        if (entry) {
+          setPin(config, item.modelId, pinRow.versionId);
+          entry.pinnedVersionId = pinRow.versionId;
+          view.notice(t('tui.download.pinMarkedOne', { version: pinRow.name }), view.colors.green);
+        } else {
+          item.pinVersionId = pinRow.versionId;
+          view.notice(t('tui.download.pinPending', { count: 1 }), view.colors.dim);
+        }
+        for (const row of rows) row.pinned = row.versionId === pinRow.versionId;
+      }
+      continue;
+    }
+
+    if (!selectedIds.size) {
+      view.notice(t('tui.download.noSelection'), view.colors.yellow);
+      continue;
+    }
+
+    const pinnedId = entry && entry.pinnedVersionId ? String(entry.pinnedVersionId) : null;
+    if (pinnedId && !selectedIds.has(pinnedId)) {
+      const unpin = await pages.promptConfirm(
+        t('tui.download.unpinToDownload', { pinned: pinnedId }),
+        { initial: false }
+      );
+      if (!unpin) continue;
+      setPin(config, item.modelId, null);
+      entry.pinnedVersionId = null;
+    }
+
+    return { detail, rows: rows.filter((row) => selectedIds.has(row.versionId)) };
+  }
+}
+
+/**
+ * Replace every plan row of one model with the rows of the selected versions.
+ *
+ * Rows that already exist keep their object (files, manual flag, overrides); new versions get a
+ * fresh row built from the online metadata. The selection follows the model: if any of its rows was
+ * selected, every version of the new set is selected too.
+ *
+ *
+ * 用一个模型所选版本的行替换它的全部计划行。
+ *
+ * 已存在的行保留原对象（文件、手动标记、目录覆盖）；新版本用线上元数据新建一行。
+ * 勾选状态跟随这个模型：只要它原来有任意一行被勾选，新的整组版本都会被勾选。
+ */
+function replacePlanRows(config, plan, item, detail, chosenRows, state) {
+  const modelId = String(item.modelId);
+  const oldRows = plan.filter((row) => String(row.modelId) === modelId);
+  if (!oldRows.length) return;
+  const start = plan.indexOf(oldRows[0]);
+  const wasSelected = oldRows.some((row) => state.selected.has(planRowKey(row)));
+  const existing = new Map(oldRows.map((row) => [String(row.versionId), row]));
+  const newRows = chosenRows.map(
+    (row) => existing.get(String(row.versionId)) || versionPlanItem(config, item, detail, row)
+  );
+  if (item.pinVersionId) {
+    for (const row of newRows) {
+      row.pinVersionId = String(row.versionId) === String(item.pinVersionId) ? item.pinVersionId : undefined;
     }
   }
+
+  plan.splice(start, oldRows.length, ...newRows);
+  for (const row of oldRows) state.selected.delete(planRowKey(row));
+  for (const row of newRows) if (wasSelected) state.selected.add(planRowKey(row));
+
+  view.log(
+    t('tui.download.versionsPlanned', {
+      name: item.name,
+      count: newRows.length,
+      versions: newRows.map((row) => row.versionName || row.versionId).join(t('updater.nameSeparator')),
+    })
+  );
 }
 
 /**
@@ -1260,6 +1398,11 @@ async function downloadCollectionShell(config, opts = {}) {
     view.log(t('tui.download.snapshotFailed', { error: e.message }));
   }
 
+  // The snapshot above records the collection's own versions; the download plan follows the pins.
+  // 上面的快照记录收藏集自己的版本；下面的下载计划跟随固定版本。
+  const pinnedCount = applyPinsToItems(readLibrary(config, { allowCorrupt: true }).entries, items);
+  if (pinnedCount) view.log(t('tui.download.pinsApplied', { count: pinnedCount }));
+
   view.log(t('tui.download.fetchMeta', { count: items.length, concurrency: config.metaConcurrency }));
   const { plan, totalBytes, failed } = await buildPlan(config.site, items, config.userAgent, {
     concurrency: config.metaConcurrency,
@@ -1299,5 +1442,9 @@ module.exports = {
   prefilter,
   askOptions,
   versionChoices,
+  planRowKey,
+  replacePlanRows,
+  versionPlanItem,
+  versionChoiceRows,
 };
 

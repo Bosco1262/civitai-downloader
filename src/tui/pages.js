@@ -136,6 +136,57 @@ function windowOf(count, cursor, size, previousStart = 0) {
 }
 
 /**
+ * Adjust a scroll window so a section heading is never separated from its rows.
+ *
+ * A heading is part of the section, not a free-standing line: the window may not start *inside* a
+ * section (its heading would be scrolled off, so the first visible row would look orphaned), and it
+ * may not end on a heading either (a header with nothing under it is just noise). Both adjustments
+ * respect the one hard rule — the cursor always stays visible.
+ *
+ *
+ * 调整滚动视窗，避免分组标题与它的行被拆开。
+ *
+ * 标题属于分组，不是独立的一行：视窗不能在分组「中间」开始（标题被滚出去后，第一行看起来就没有归属），
+ * 也不能停在标题上（下面什么都没有的标题只是噪音）。两个调整都遵守唯一的硬约束——光标始终可见。
+ *
+ * @param {{start:number, end:number, cursor:number}} win window from `windowOf`
+ * @param {string[]} lines all rendered lines
+ * @param {number} body how many lines fit
+ * @param {number} cursorLine line of the cursor
+ * @param {Map<number, number>} headingOfLine line → its section heading line
+ * @param {Set<number>} headingLines the heading lines themselves
+ * @returns {{start:number, end:number, cursor:number}}
+ */
+function scrollToSection(win, lines, body, cursorLine, headingOfLine, headingLines) {
+  let start = win.start;
+  let end = win.end;
+
+  // The section heading must be on screen when the cursor sits on that section's *first row*: coming
+  // back to that row should not leave the user without the section name. It is deliberately NOT
+  // applied to every row of the section: the window starts where the user scrolled to, so stepping
+  // inside a long section must not yank the view back to its heading.
+  //
+  // 光标停在本组「第一行」时，标题必须在视窗内：回到这一行时不能丢掉分组名。
+  // 这条规则刻意不适用于组内的其它行：视窗应停在用户滚到的位置，
+  // 在长分组内部上下移动时不能把视图拽回分组开头。
+  const heading = headingOfLine.get(cursorLine);
+  if (heading !== undefined && heading === cursorLine - 1 && heading < start) {
+    start = heading;
+    end = Math.min(lines.length, start + body);
+  }
+
+  // Drop a heading (and the blank line above it) that ended up as the last visible line.
+  // 丢掉被挤到最后一行的标题（连同它上面的空行）。
+  while (end > start + 1 && (headingLines.has(end - 1) || lines[end - 1] === '')) end -= 1;
+
+  // Whatever happened above, the cursor must stay on screen.
+  // 无论上面怎么调整，光标都必须留在屏幕内。
+  if (cursorLine < start) start = cursorLine;
+  if (cursorLine >= end) end = Math.min(lines.length, cursorLine + 1);
+  return { start, end, cursor: win.cursor };
+}
+
+/**
  * One "cursor + title + description" row, used by every in-body list.
  * 一行「光标 + 标题 + 说明」，供所有主体列表共用。
  */
@@ -805,6 +856,7 @@ async function pickMany(items, opts = {}) {
       describe: opts.describe,
       state: opts.state,
       label,
+      idOf: opts.idOf,
       initialSelected: initial,
       onLog,
       onEnter: opts.onEnter,
@@ -1052,6 +1104,7 @@ module.exports = {
   hintLines,
   heading,
   windowOf,
+  scrollToSection,
   rowLine,
   packageVersion,
   promptMenu,

@@ -22,9 +22,34 @@ const path = require('path');
 const crypto = require('crypto');
 
 const { runDownloadJob } = require('../src/job');
-const { checkModelUpdates, changedItems, summarize, reportLines, markForRedownload, checkUpdates } = require('../src/updater');
+const {
+  checkModelUpdates,
+  changedItems,
+  applyPinsToItems,
+  summarize,
+  reportLines,
+  markForRedownload,
+  checkUpdates,
+} = require('../src/updater');
 const { readLibrary, writeLibrary, upsertVersion, getVersion, versionIds } = require('../src/storage');
 const { validateConfig, DEFAULTS } = require('../src/config');
+
+test('applyPinsToItems: 自动构建的收藏集条目改用固定版本', () => {
+  const entries = {
+    5: { pinnedVersionId: '1', versions: {} },
+    6: { pinnedVersionId: null, versions: {} },
+  };
+  const items = [
+    { modelId: '5', versionId: '2' },
+    { modelId: 6, versionId: 3 },
+    { modelId: '7', versionId: '4' },
+  ];
+  assert.equal(applyPinsToItems(entries, items), 1);
+  assert.equal(items[0].versionId, '1');
+  assert.equal(items[1].versionId, 3, '未固定的模型保持原版本');
+  assert.equal(items[2].versionId, '4');
+  assert.equal(applyPinsToItems(entries, items), 0, '重复调用是幂等的');
+});
 
 function tempDir(tag) {
   return fs.mkdtempSync(path.join(os.tmpdir(), `civitai-models-${tag}-`));

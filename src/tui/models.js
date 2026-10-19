@@ -41,6 +41,7 @@ const view = require('./view');
 const pages = require('./pages');
 const screen = require('./screen');
 const layout = require('./layout');
+const reportPage = require('./report');
 const { runWithProgress } = require('./run');
 
 /**
@@ -730,6 +731,251 @@ async function askCollectionFilter(config) {
 }
 
 /**
+ * Directory of one recorded version (its own output override wins over the global one).
+ * 某个已记录版本的目录（版本自己的输出目录优先于全局目录）。
+ */
+function versionDir(config, versionRec) {
+  return path.join(versionRec.outDir || config.outDir, versionRec.dirName || '');
+}
+
+/**
+ * Report model of one library record: facts on top, one row per recorded version, model actions at
+ * the bottom. The version rows carry their own action menu through `onEnter`.
+ *
+ * 一条模型库记录的报告模型：上面是事实，中间是每个已记录版本一行，底部是模型操作。
+ * 版本行通过 `onEnter` 打开自己的小菜单。
+ */
+function modelDetailReport(config, modelId) {
+  const entry = readEntry(config, modelId);
+  if (!entry) return null;
+  const versions = entryVersions(entry);
+  const pinnedId = entry.pinnedVersionId ? String(entry.pinnedVersionId) : null;
+  const pinnedRec = pinnedId ? getVersion(entry, pinnedId) : null;
+  const dirs = versions.map((version) => versionDir(config, version));
+  const firstDir = dirs[0] || config.outDir;
+  const recorded = versions.filter((version) => (version.files || []).length).length;
+  const baseModels = [...new Set(versions.map((version) => version.baseModel).filter(Boolean))];
+
+  const summary = [
+    { label: t('tui.models.factModelId'), value: String(modelId) },
+    { label: t('tui.models.factType'), value: entry.type || t('common.unknown') },
+    {
+      label: t('tui.models.factBaseModel'),
+      value: baseModels.join(' / ') || entry.baseModel || t('common.unknown'),
+    },
+    {
+      label: t('tui.models.factVersions'),
+      value: t('tui.models.versionCountDetail', { count: versions.length, recorded }),
+    },
+    { label: t('tui.models.factSize'), value: formatBytes(entryBytes(entry)) },
+    {
+      label: t('tui.models.factPinned'),
+      value: pinnedRec
+        ? String(pinnedRec.versionName || pinnedRec.versionId)
+        : t('tui.manage.notPinned'),
+    },
+    { label: t('tui.models.factDir'), value: firstDir },
+  ];
+
+  const rows = versions.map((version) => {
+    const files = version.files || [];
+    const bytes = files.reduce((sum, file) => sum + (Number(file.bytes) || 0), 0);
+    const pinned = pinnedId === String(version.versionId);
+    const parts = [
+      files.length ? t('tui.models.versionDownloaded') : t('tui.models.versionNotDownloaded'),
+      pinned ? t('tui.manage.pinnedMark') : null,
+      t('tui.download.fileCount', { count: files.length }),
+      formatBytes(bytes),
+    ].filter(Boolean);
+    return {
+      label: String(version.versionName || version.versionId),
+      detail: parts.join(view.separator()),
+      extra: version.verifiedAt ? String(version.verifiedAt).slice(0, 10) : t('tui.manage.unknownTime'),
+      raw: version,
+    };
+  });
+
+  return {
+    title: entry.name || t('tui.manage.modelIdLabel', { modelId }),
+    summary,
+    sections: [
+      {
+        title: t('tui.models.detailVersions'),
+        rows,
+        emptyText: t('tui.models.noVersionsRecorded'),
+        onEnter: (version) => versionActions(config, modelId, version),
+      },
+    ],
+    actions: [
+      {
+        label: t('tui.models.actionCheck'),
+        description: t('tui.models.actionCheckDesc'),
+        run: () => checkFlow(config, { modelIds: [String(modelId)] }),
+      },
+      {
+        label: t('tui.app.menuVerify'),
+        description: t('tui.app.menuVerifyDesc'),
+        run: () => verifyFlow(config, { modelIds: [String(modelId)] }),
+      },
+      {
+        label: t('tui.models.actionDownload'),
+        description: t('tui.models.actionDownloadDesc'),
+        run: () => downloadVersions(config, modelId),
+      },
+      {
+        label: pinnedId ? t('tui.manage.unpinAction') : t('tui.manage.pinAction'),
+        description: pinnedId ? t('tui.manage.unpinActionDesc') : t('tui.manage.pinActionDesc'),
+        run: () => togglePin(config, modelId),
+      },
+      {
+        label: t('tui.models.actionOpenDir'),
+        description: t('tui.models.actionOpenDirDesc', { dir: firstDir }),
+        run: () => {
+          if (!view.openDir(firstDir)) view.notice(t('tui.app.openFailed'), view.colors.yellow);
+        },
+      },
+      {
+        label: t('tui.models.menuForget'),
+        description: t('tui.models.menuForgetDesc'),
+        danger: true,
+        run: async () => {
+          await forgetFlow(config, { preset: [String(modelId)] });
+          return readEntry(config, modelId) ? reportPage.REFRESH : reportPage.BACK;
+        },
+      },
+      { label: t('tui.manage.back'), run: () => reportPage.BACK },
+    ],
+    initialSection: versions.length ? t('tui.models.detailVersions') : undefined,
+    rebuild: () => modelDetailReport(config, modelId),
+  };
+}
+
+/**
+ * Action menu of one version row: download / pin / verify / open its folder.
+ * 版本行的操作菜单：下载 / 固定 / 校验 / 打开目录。
+ */
+async function versionActions(config, modelId, versionRec) {
+  const entry = readEntry(config, modelId);
+  if (!entry) {
+    view.notice(t('tui.models.recordMissing', { modelId }), view.colors.yellow);
+    return;
+  }
+  const versionId = String(versionRec.versionId);
+  const pinned = !!(entry.pinnedVersionId && String(entry.pinnedVersionId) === versionId);
+  const dir = versionDir(config, versionRec);
+  const label = entry.name || t('tui.manage.modelIdLabel', { modelId });
+
+  const action = await pages.promptMenu(
+    t('tui.models.versionActionPrompt', {
+      name: label,
+      version: versionRec.versionName || versionId,
+    }),
+    [
+      {
+        title: t('tui.models.versionActionDownload'),
+        value: 'download',
+        description: t('tui.models.versionActionDownloadDesc'),
+      },
+      {
+        title: pinned ? t('tui.models.versionUnpin') : t('tui.models.versionPin'),
+        value: 'pin',
+        description: pinned ? t('tui.models.versionUnpinDesc') : t('tui.models.versionPinDesc'),
+      },
+      {
+        title: t('tui.models.versionActionVerify'),
+        value: 'verify',
+        description: t('tui.models.versionActionVerifyDesc'),
+      },
+      {
+        title: t('tui.models.versionActionOpenDir'),
+        value: 'open',
+        description: t('tui.models.actionOpenDirDesc', { dir }),
+      },
+      { title: t('tui.manage.back'), value: 'back' },
+    ],
+    { stage: label }
+  );
+  if (action === null || action === 'back') return;
+
+  if (action === 'download') return downloadFlow(config, { refs: [`version:${versionId}`] });
+  if (action === 'verify') return verifyFlow(config, { modelIds: [String(modelId)] });
+  if (action === 'open') {
+    if (!view.openDir(dir)) view.notice(t('tui.app.openFailed'), view.colors.yellow);
+    return;
+  }
+  if (action === 'pin') {
+    updater.setPin(config, modelId, pinned ? null : versionId);
+    view.notice(
+      pinned
+        ? t('pin.unpinned', { name: label })
+        : t('pin.pinned', { name: label, version: versionRec.versionName || versionId }),
+      view.colors.green
+    );
+  }
+  return undefined;
+}
+
+/**
+ * Download several versions of one model.
+ *
+ * The model page lists the versions that are already on disk. To bring in more, this opens the
+ * online version list as a multi-select picker and hands every checked version to the same plan:
+ * one plan row per version, downloaded together.
+ *
+ *
+ * 下载同一模型的多个版本。
+ *
+ * 模型页只列出已经落盘的版本；要增加版本时，这里把线上版本列表作为多选选择器打开，
+ * 再把勾选的每个版本交给同一份计划：每个版本一行，一次下载。
+ */
+async function downloadVersions(config, modelId) {
+  const name = modelLabel(config, modelId);
+  let detail = null;
+  try {
+    detail = await pages.withSpinner(t('tui.models.fetchingModel', { modelId }), () =>
+      fetchModelDetail(config.site, modelId, config.userAgent)
+    );
+  } catch (e) {
+    view.notice(t('tui.models.fetchFailed', { name, error: e.message }), view.colors.red);
+    return;
+  }
+  const rows = versionRows(config, detail).filter((row) => row.fileCount > 0);
+  if (!rows.length) {
+    view.notice(t('tui.models.noDownloadableVersions', { name }), view.colors.yellow);
+    return;
+  }
+
+  const entry = readEntry(config, modelId);
+  const pinned = entry && entry.pinnedVersionId ? String(entry.pinnedVersionId) : null;
+  const initial = pinned && rows.some((row) => String(row.modelId) === pinned)
+    ? [pinned]
+    : [String(rows[0].modelId)];
+  const chosen = await pages.pickMany(rows, {
+    message: t('tui.models.chooseVersions', { name: view.truncate(name, 56) }),
+    title: t('tui.models.chooseVersions', { name: view.truncate(name, 56) }),
+    describe: describeVersion,
+    initialSelected: initial,
+    idOf: (row) => row.modelId,
+    label: (row) => row.name,
+  });
+  if (!chosen || !chosen.length) return;
+  return downloadFlow(config, { refs: chosen.map((row) => `version:${row.modelId}`) });
+}
+
+/**
+ * Shell entry of one model: the detail report page.
+ * 单个模型的外壳入口：详情报告页。
+ */
+async function modelDetailPage(config, modelId) {
+  const model = modelDetailReport(config, modelId);
+  if (!model) {
+    view.notice(t('tui.models.recordMissing', { modelId }), view.colors.yellow);
+    return null;
+  }
+  return reportPage.showReportPage(config, model);
+}
+
+/**
  * Print the detail page of one model: identity, versions and disk locations.
  * 打印某个模型的详情页：标识、版本与磁盘位置。
  */
@@ -796,6 +1042,13 @@ function printModelDetail(config, modelId) {
  * 因此这里的每个动作都围绕这个模型——更新、校验文件、固定版本、打开目录、删除记录。
  */
 async function modelActions(config, modelId) {
+  // Inside the shell the model gets a page of its own: facts, versions and actions are all visible
+  // without opening the log. The printed block below stays for non-shell callers.
+  //
+  // 外壳接管时模型有自己的页面：事实、版本与操作都在同一页，不必打开日志。
+  // 下面的打印版本保留给没有外壳的调用方。
+  if (screen.isActive()) return modelDetailPage(config, modelId);
+
   // The detail page is printed once; re-printing it after every action used to push the page up by
   // a full screen each time. The menu title carries the model name so the context is never lost.
   //
@@ -966,6 +1219,22 @@ async function checkFlow(config, opts = {}) {
   ]);
   if (mode === null) return;
 
+  // Inside the shell the report is a page: statistics and buckets are visible without opening `L`,
+  // and "download changes" goes through the shared plan/confirm flow.
+  //
+  // 外壳接管时报告是一页：统计与明细不必按 `L` 就能看到，
+  // 「下载变化项」走共享的计划/确认流程。
+  if (screen.isActive()) {
+    const check = require('./check');
+    for (;;) {
+      const reports = await pages.withSpinner(t('tui.check.checking'), () =>
+        check.collectModelReports(config, targets, mode)
+      );
+      const outcome = await check.showCheckReports(config, reports);
+      if (outcome !== 'recheck') return;
+    }
+  }
+
   const reports = [];
   for (const modelId of targets) {
     // Deep checks hash the local files: name the model being checked so a slow one is not "frozen".
@@ -1035,40 +1304,11 @@ async function checkFlow(config, opts = {}) {
 // ---------------------------------------------------------------------------
 
 /**
- * Verify the local files of the library (or of the models a caller preset).
- * 校验模型库（或调用方预先指定的模型）的本地文件。
- *
- * @param {{modelIds?:string[]}} [opts] preset targets (used by the per-model page)
+ * Run one verification pass with the heartbeat that keeps a long hashing phase alive.
+ * 跑一次校验，并用心跳让漫长的哈希阶段保持「还在动」。
  */
-async function verifyFlow(config, opts = {}) {
-  const ids = libraryModelIds(config);
-  if (!ids.length) {
-    view.log(t('tui.models.noRecords'));
-    return;
-  }
-  let targets = Array.isArray(opts.modelIds) && opts.modelIds.length ? opts.modelIds.map(String) : null;
-  if (!targets) {
-    const scope = await pages.promptMenu(t('tui.models.verifyPick'), [
-      { title: t('tui.models.verifyAll', { count: ids.length }), value: '__all__' },
-      { title: t('tui.models.checkOne'), value: '__one__' },
-    ]);
-    if (scope === null) return;
-    targets = ids;
-    if (scope === '__one__') {
-      const picked = await pickModel(config, t('tui.models.checkPick'));
-      if (!picked) return;
-      targets = [picked];
-    }
-  }
-
-  const deep = await pages.promptConfirm(t('tui.manage.hashConfirm'));
-  if (deep === null) return;
-
-  // Verification hashes every file, which can take minutes: report each model as it starts and let
-  // the heartbeat keep the screen alive in between.
-  //
-  // 校验要逐个文件算哈希，可能好几分钟：每开始一个模型就报一行，中间的沉默由心跳补上。
-  const result = await pages.withSpinner(
+async function runVerification(config, targets, deep) {
+  return pages.withSpinner(
     t('tui.manage.verifying'),
     () =>
       verifyModels(config, targets, {
@@ -1084,32 +1324,86 @@ async function verifyFlow(config, opts = {}) {
       }),
     { intervalMs: 15000 }
   );
-  view.note('');
-  view.note(
-    t('tui.manage.verifySummary', {
-      label: result.label,
-      total: result.total,
-      size: formatBytes(result.totalBytes),
-    })
-  );
-  if (result.corrupt) view.note(`  ! ${result.corrupt}`);
-  view.note(`  ${t('tui.manage.verifyCounts', { ok: result.ok.length, broken: result.broken.length })}`);
-  for (const b of result.broken) {
-    view.note(
-      `  ! ${t('tui.manage.brokenLine', {
-        name: b.name,
-        reasons: b.reasons.join(t('tui.manage.reasonSeparator')),
-      })}`
-    );
-    view.note(`    ${t('tui.manage.dirLine', { dir: b.dir })}`);
-  }
-  if (!result.broken.length) {
-    view.notice(t('tui.manage.verifyAllOk'), view.colors.green);
-    return;
+}
+
+/**
+ * Report model of a verification result: summary facts, the broken files and the repair actions.
+ * 校验结果的报告模型：摘要事实、异常文件与修复操作。
+ */
+function verifyReportModel(config, result, deep) {
+  const summary = [
+    { label: t('tui.verify.report.factScope'), value: result.label },
+    { label: t('tui.verify.report.factModels'), value: String(result.total) },
+    { label: t('tui.verify.report.factVersions'), value: String(result.versions) },
+    { label: t('tui.verify.report.factSize'), value: formatBytes(result.totalBytes) },
+    { label: t('tui.verify.report.factOk'), value: String(result.ok.length) },
+    { label: t('tui.verify.report.factBroken'), value: String(result.broken.length) },
+  ];
+  if (result.corrupt) {
+    summary.push({
+      label: t('tui.verify.report.factLibrary'),
+      value: t('tui.verify.report.libraryCorrupt', { message: result.corrupt }),
+      color: view.colors.red,
+    });
   }
 
+  const rows = result.broken.map((item) => ({
+    label: t('tui.verify.report.rowBroken', {
+      name: item.name || item.modelId,
+      versionId: item.versionId || '-',
+    }),
+    detail: item.reasons.join(t('tui.manage.reasonSeparator')),
+    // The folder is the one detail a repair decision needs, so it keeps a line of its own.
+    // 修复决策最需要的是目录，因此它单独占一行。
+    sub: item.dir,
+    raw: item,
+  }));
+
+  const actions = [];
+  if (result.broken.length) {
+    actions.push({
+      label: t('tui.verify.report.actionRepair'),
+      description: t('tui.verify.report.actionRepairDesc'),
+      run: async () => {
+        const repaired = await repairBroken(config, result);
+        return repaired ? 'recheck' : reportPage.REFRESH;
+      },
+    });
+  }
+  actions.push({ label: t('tui.verify.report.actionRecheck'), run: () => 'recheck' });
+  if (!deep) {
+    actions.push({
+      label: t('tui.verify.report.actionDeep'),
+      description: t('tui.verify.report.actionDeepDesc'),
+      run: () => 'deep',
+    });
+  }
+  actions.push({ label: t('tui.manage.back'), run: () => reportPage.BACK });
+
+  return {
+    title: t('tui.verify.report.title'),
+    summary,
+    sections: [
+      {
+        title: t('tui.verify.report.sectionBroken'),
+        rows,
+        emptyText: t('tui.manage.verifyAllOk'),
+        emptyColor: view.colors.green,
+      },
+    ],
+    actions,
+  };
+}
+
+/**
+ * Re-download the broken/missing files of every broken version (the fine-grained repair).
+ * 重新下载每个异常版本里损坏/缺失的文件（细粒度修复）。
+ *
+ * @returns {Promise<boolean>} whether any repair was attempted
+ */
+async function repairBroken(config, result) {
   const repair = await pages.promptConfirm(t('tui.manage.repairConfirm', { count: result.broken.length }));
-  if (!repair) return;
+  if (!repair) return false;
 
   let failed = 0;
   for (const item of result.broken) {
@@ -1150,6 +1444,91 @@ async function verifyFlow(config, opts = {}) {
   }
   view.bell();
   if (failed) view.notice(t('tui.manage.repairFailed'), view.colors.red);
+  return true;
+}
+
+/**
+ * Shell verify loop: verify → report page → (recheck / deep) until the user leaves.
+ * 外壳校验循环：校验 → 报告页 → （重新校验 / 深度）直到用户离开。
+ */
+async function verifyReportFlow(config, opts) {
+  let deep = !!opts.deep;
+  for (;;) {
+    const result = await runVerification(config, opts.targets, deep);
+    const outcome = await reportPage.showReportPage(config, verifyReportModel(config, result, deep));
+    if (outcome === 'recheck') continue;
+    if (outcome === 'deep') {
+      deep = true;
+      continue;
+    }
+    return undefined;
+  }
+}
+
+/**
+ * Verify the local files of the library (or of the models a caller preset).
+ * 校验模型库（或调用方预先指定的模型）的本地文件。
+ *
+ * @param {{modelIds?:string[]}} [opts] preset targets (used by the per-model page)
+ */
+async function verifyFlow(config, opts = {}) {
+  const ids = libraryModelIds(config);
+  if (!ids.length) {
+    view.log(t('tui.models.noRecords'));
+    return;
+  }
+  let targets = Array.isArray(opts.modelIds) && opts.modelIds.length ? opts.modelIds.map(String) : null;
+  if (!targets) {
+    const scope = await pages.promptMenu(t('tui.models.verifyPick'), [
+      { title: t('tui.models.verifyAll', { count: ids.length }), value: '__all__' },
+      { title: t('tui.models.checkOne'), value: '__one__' },
+    ]);
+    if (scope === null) return;
+    targets = ids;
+    if (scope === '__one__') {
+      const picked = await pickModel(config, t('tui.models.checkPick'));
+      if (!picked) return;
+      targets = [picked];
+    }
+  }
+
+  const deep = await pages.promptConfirm(t('tui.manage.hashConfirm'));
+  if (deep === null) return;
+
+  // Inside the shell the result is a page: reasons and directories are readable before repairing.
+  // 外壳接管时结果是一页：修复之前就能读到原因与目录。
+  if (screen.isActive()) return verifyReportFlow(config, { targets, deep });
+
+  // Verification hashes every file, which can take minutes: report each model as it starts and let
+  // the heartbeat keep the screen alive in between.
+  //
+  // 校验要逐个文件算哈希，可能好几分钟：每开始一个模型就报一行，中间的沉默由心跳补上。
+  const result = await runVerification(config, targets, deep);
+  view.note('');
+  view.note(
+    t('tui.manage.verifySummary', {
+      label: result.label,
+      total: result.total,
+      size: formatBytes(result.totalBytes),
+    })
+  );
+  if (result.corrupt) view.note(`  ! ${result.corrupt}`);
+  view.note(`  ${t('tui.manage.verifyCounts', { ok: result.ok.length, broken: result.broken.length })}`);
+  for (const b of result.broken) {
+    view.note(
+      `  ! ${t('tui.manage.brokenLine', {
+        name: b.name,
+        reasons: b.reasons.join(t('tui.manage.reasonSeparator')),
+      })}`
+    );
+    view.note(`    ${t('tui.manage.dirLine', { dir: b.dir })}`);
+  }
+  if (!result.broken.length) {
+    view.notice(t('tui.manage.verifyAllOk'), view.colors.green);
+    return;
+  }
+
+  await repairBroken(config, result);
 }
 
 // ---------------------------------------------------------------------------
@@ -1312,6 +1691,7 @@ module.exports = {
   // 「下载」子菜单里的「下载模型」通过惰性 require 调用它。
   downloadFlow,
   modelActions,
+  downloadVersions,
   browseFlow,
   parseRefs,
   resolveRefs,
@@ -1326,6 +1706,10 @@ module.exports = {
   describeVersion,
   versionRows,
   printModelDetail,
+  modelDetailReport,
+  modelDetailPage,
+  versionActions,
+  verifyReportModel,
   togglePin,
   verifyFlow,
 };

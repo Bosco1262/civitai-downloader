@@ -1023,6 +1023,54 @@ test('settings: 下载分组包含请求超时、重试、目录布局、底模�
   assert.notEqual(settings.VALIDATORS.retries('11'), true);
 });
 
+test('download: 计划行以「模型 + 版本」为键，同一模型可保留多个版本', () => {
+  const config = {
+    site: 'https://example.invalid',
+    fileTypes: ['Model'],
+    primaryOnly: true,
+  };
+  const versionMeta = (id, name) => ({
+    id,
+    name,
+    baseModel: 'SDXL',
+    files: [
+      {
+        id,
+        name: `${name}.bin`,
+        sizeKB: 1,
+        type: 'Model',
+        primary: true,
+        downloadUrl: `https://example.invalid/${name}.bin`,
+      },
+    ],
+  });
+  const item = {
+    modelId: '5',
+    versionId: '1',
+    versionName: 'v1',
+    name: 'Twin',
+    type: 'LORA',
+    baseVersionId: '1',
+    files: [{ name: 'v1.bin', bytes: 10 }],
+    totalBytes: 10,
+  };
+  const other = { ...item, versionId: '2', versionName: 'v2', files: [{ name: 'v2.bin', bytes: 20 }], totalBytes: 20 };
+  assert.notEqual(download.planRowKey(item), download.planRowKey(other), '版本不同则键不同');
+
+  const plan = [item];
+  const state = { selected: new Set([download.planRowKey(item)]) };
+  const rows = [
+    { versionId: '1', name: 'v1', baseModel: 'SDXL', raw: versionMeta(1, 'v1') },
+    { versionId: '2', name: 'v2', baseModel: 'SDXL', raw: versionMeta(2, 'v2') },
+  ];
+  download.replacePlanRows(config, plan, item, { modelVersions: rows.map((row) => row.raw) }, rows, state);
+
+  assert.deepEqual(plan.map((row) => String(row.versionId)), ['1', '2'], '两个版本各占一行');
+  assert.equal(String(plan[0].totalBytes), '10', '已有行保留原对象');
+  assert.equal(String(plan[1].totalBytes), String(1024), '新行按线上大小构造');
+  assert.ok(state.selected.has('5:1') && state.selected.has('5:2'), '原行被勾选时新组版本也勾选');
+});
+
 test('download: 计划页 → 确认页 → Esc 回到计划页（不发起下载）', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'civitai-dl-plan-'));
   const config = {
@@ -1094,6 +1142,82 @@ test('download: 计划页 → 确认页 → Esc 回到计划页（不发起下�
       await settle();
       await flow;
       assert.equal(finished, false, 'Esc 计划页取消整个流程');
+    });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('download: 同一模型的两个版本各占一行，并一起进入确认页', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'civitai-dl-multi-'));
+  const config = {
+    site: 'https://example.invalid',
+    root,
+    outDir: root,
+    dataDir: path.join(root, '.data'),
+    cookiesFile: path.join(root, '.data', 'cookies.txt'),
+    configFile: path.join(root, 'config.json'),
+    fileTypes: ['Model'],
+    primaryOnly: true,
+    jobs: 1,
+    downloadAttempts: 1,
+    metaConcurrency: 1,
+    userAgent: 'test',
+  };
+  const base = {
+    modelId: '55',
+    name: 'Twin',
+    type: 'LORA',
+    baseModel: 'SDXL',
+    baseVersionId: '1',
+  };
+  const plan = [
+    {
+      ...base,
+      versionId: '1',
+      versionName: 'v1',
+      files: [{ name: 'v1.bin', bytes: 1024, downloadUrl: 'https://example.invalid/v1' }],
+      totalBytes: 1024,
+    },
+    {
+      ...base,
+      versionId: '2',
+      versionName: 'v2',
+      files: [{ name: 'v2.bin', bytes: 1024, downloadUrl: 'https://example.invalid/v2' }],
+      totalBytes: 1024,
+    },
+  ];
+  try {
+    await withFakeTerminal(async ({ frame, key, settle }) => {
+      assert.equal(screen.start({ onQuit: () => {} }), true);
+      let finished = null;
+      const flow = download
+        .runDownloadPlan(config, {
+          plan,
+          collectionId: 'model-55',
+          name: 'Twin',
+          sourceLine: 'Twin · 2 项',
+          outDir: root,
+          jobs: 1,
+        })
+        .then((value) => {
+          finished = value;
+        });
+      await settle();
+      const text = frame().join('\n');
+      assert.ok((text.match(/Twin/g) || []).length >= 2, '同一模型出现两行');
+      assert.ok(text.includes('已选 2/2 项'), text);
+
+      key('return');
+      await settle();
+      assert.ok(frame().join('\n').includes('本次下载 2 项'), frame().join('\n'));
+
+      key('escape');
+      await settle();
+      key('escape');
+      await settle();
+      await flow;
+      assert.equal(finished, false);
     });
   } finally {
     fs.rmSync(root, { recursive: true, force: true });

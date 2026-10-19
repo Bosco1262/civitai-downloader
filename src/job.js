@@ -178,7 +178,12 @@ async function runDownloadJob(config, opts, hooks = {}) {
   }
 
   const entries = libraryRead.entries;
+  // One model may be downloaded in several versions during one run, so completion is tracked per
+  // plan row (model + version), not per model.
+  //
+  // 一次运行里同一模型可能下载多个版本，因此完成状态按计划行（模型 + 版本）记录，而不是按模型。
   const completedIds = new Set();
+  const itemKey = (p) => `${p.modelId}:${p.versionId === undefined || p.versionId === null ? '' : p.versionId}`;
 
   try {
     logFn(t('job.start', { collectionId, outDir }));
@@ -259,11 +264,20 @@ async function runDownloadJob(config, opts, hooks = {}) {
     const needOverride = [];
     const prePlanned = [];
 
-    for (const item of items) {
+    for (let index = 0; index < items.length; index++) {
+      const item = items[index];
       const prev = entries[item.modelId];
       const pin = prev && prev.pinnedVersionId ? String(prev.pinnedVersionId) : null;
       const overrideId = overrides[String(item.modelId)] ? String(overrides[String(item.modelId)]) : null;
-      const wanted = overrideId || pin;
+      // A fully planned row (TUI / check --download / verify --repair) already names its version
+      // and carries its file list. The pin is a default for enumeration, not an override of an
+      // explicit plan; applying it here would turn the second version of a two-version plan back
+      // into the pinned one.
+      //
+      // 完整计划行（TUI / check --download / verify --repair）已经指明版本并自带文件清单。
+      // 固定版本只是枚举时的默认值，不应覆盖显式计划；否则「同模型两个版本」的计划会被改成固定的那一个。
+      const hasFiles = Array.isArray(item.files) && item.files.length > 0;
+      const wanted = overrideId || (hasFiles ? null : pin);
       const collectionVersion =
         item.versionId === undefined || item.versionId === null ? null : String(item.versionId);
       const effectiveVersionId = wanted || collectionVersion;
@@ -274,7 +288,7 @@ async function runDownloadJob(config, opts, hooks = {}) {
       const upToDate = !force && !refreshMeta && !dryRun && !!recorded && recorded.files.length > 0;
 
       if (upToDate) {
-        skippedItems.push({ ...item, skipped: true, files: [], totalBytes: 0 });
+        skippedItems.push({ index, item: { ...item, skipped: true, files: [], totalBytes: 0 } });
         continue;
       }
       if (prev && effectiveVersionId && !recorded) {
@@ -295,18 +309,17 @@ async function runDownloadJob(config, opts, hooks = {}) {
       //
       // 调用方已给出完整计划（TUI / check --download / verify --repair）时，
       // 条目自带文件清单，直接使用，不再重复拉元数据。
-      const hasFiles = Array.isArray(item.files) && item.files.length > 0;
       const versionMatches =
         !wanted || !item.versionId || String(item.versionId) === String(wanted);
       if (hasFiles && versionMatches) {
-        prePlanned.push(item);
+        prePlanned.push({ index, item });
         continue;
       }
 
       if (wanted && wanted !== collectionVersion) {
-        needOverride.push({ item, versionId: wanted, source: overrideId ? '--version' : 'pin' });
+        needOverride.push({ index, item, versionId: wanted, source: overrideId ? '--version' : 'pin' });
       } else {
-        needDefault.push(item);
+        needDefault.push({ index, item });
       }
     }
 
@@ -314,7 +327,16 @@ async function runDownloadJob(config, opts, hooks = {}) {
     // 2) Fetch metadata only for the items that need downloading (concurrent)
     // 2) 只为需要下载的条目获取元数据（并发）
     // ---------------------------------------------------------------------
-    let defaultPlan = prePlanned.slice();
+
+    // Merge by input index, not by model id: one model may occupy several rows (several versions
+    // downloaded in one plan), and a model-id map would silently collapse them into one.
+    //
+    // 按输入下标合并，而不是按模型 ID：同一模型可能占多行（一次下载多个版本），
+    // 用模型 ID 做 Map 会把它们悄悄折叠成一条。
+    const merged = new Array(items.length);
+    for (const entry of prePlanned) merged[entry.index] = entry.item;
+    for (const entry of skippedItems) merged[entry.index] = entry.item;
+
     if (needDefault.length) {
       logFn(
         t('job.fetchingMeta', {
@@ -322,37 +344,50 @@ async function runDownloadJob(config, opts, hooks = {}) {
           concurrency: config.metaConcurrency || 4,
         })
       );
-      const built = await deps.buildPlan(config.site, needDefault, config.userAgent, {
-        concurrency: config.metaConcurrency,
-        fileTypes,
-        primaryOnly,
-        onLog: logFn,
+      const built = await deps.buildPlan(
+        config.site,
+        needDefault.map((entry) => entry.item),
+        config.userAgent,
+        {
+          concurrency: config.metaConcurrency,
+          fileTypes,
+          primaryOnly,
+          onLog: logFn,
+        }
+      );
+      needDefault.forEach((entry, i) => {
+        merged[entry.index] = built.plan[i];
       });
-      defaultPlan = built.plan;
     }
 
-    let overridePlan = [];
     if (needOverride.length) {
       logFn(t('job.resolvingVersions', { count: needOverride.length }));
-      overridePlan = await mapPool(needOverride, config.metaConcurrency || 4, async ({ item, versionId, source }) => {
-        try {
-          const detail = await deps.fetchModelDetail(config.site, item.modelId, config.userAgent);
-          const version = (detail.modelVersions || []).find((v) => String(v.id) === String(versionId));
-          if (!version) throw new Error(t('job.versionNotFound', { versionId }));
-          const mapped = deps.versionToItem(config.site, version, { fileTypes, primaryOnly });
-          if (!mapped.files.length) throw new Error(t('job.versionNoFiles'));
-          logFn(
-            t('job.versionOverride', {
-              source,
-              name: item.name,
-              version: mapped.versionName || mapped.versionId,
-            })
-          );
-          const totalBytes = mapped.files.reduce((sum, f) => sum + f.bytes, 0);
-          return { ...item, ...mapped, totalBytes };
-        } catch (e) {
-          return { ...item, error: t('job.versionOverrideFailed', { message: e.message }) };
+      const overridePlan = await mapPool(
+        needOverride,
+        config.metaConcurrency || 4,
+        async ({ item, versionId, source }) => {
+          try {
+            const detail = await deps.fetchModelDetail(config.site, item.modelId, config.userAgent);
+            const version = (detail.modelVersions || []).find((v) => String(v.id) === String(versionId));
+            if (!version) throw new Error(t('job.versionNotFound', { versionId }));
+            const mapped = deps.versionToItem(config.site, version, { fileTypes, primaryOnly });
+            if (!mapped.files.length) throw new Error(t('job.versionNoFiles'));
+            logFn(
+              t('job.versionOverride', {
+                source,
+                name: item.name,
+                version: mapped.versionName || mapped.versionId,
+              })
+            );
+            const totalBytes = mapped.files.reduce((sum, f) => sum + f.bytes, 0);
+            return { ...item, ...mapped, totalBytes };
+          } catch (e) {
+            return { ...item, error: t('job.versionOverrideFailed', { message: e.message }) };
+          }
         }
+      );
+      needOverride.forEach((entry, i) => {
+        merged[entry.index] = overridePlan[i];
       });
       for (const key of Object.keys(overrides)) {
         if (!items.some((it) => String(it.modelId) === key)) {
@@ -361,15 +396,8 @@ async function runDownloadJob(config, opts, hooks = {}) {
       }
     }
 
-    // Merge back into the original order
-    // 合并回原始顺序
-    const byModelId = new Map();
-    for (const p of defaultPlan) byModelId.set(String(p.modelId), p);
-    for (const p of overridePlan) byModelId.set(String(p.modelId), p);
-    const skippedById = new Map(skippedItems.map((s) => [String(s.modelId), s]));
     const plan = items.map(
-      (it) =>
-        byModelId.get(String(it.modelId)) || skippedById.get(String(it.modelId)) || { ...it, error: t('job.noMetadata') }
+      (it, index) => merged[index] || { ...it, error: t('job.noMetadata') }
     );
 
     // ---------------------------------------------------------------------
@@ -840,7 +868,7 @@ async function runDownloadJob(config, opts, hooks = {}) {
           files: [...byName.values()],
           pinnedVersionId: prev ? prev.pinnedVersionId : null,
         });
-        completedIds.add(String(item.modelId));
+        completedIds.add(itemKey(item));
         summary.done++;
         await persistState();
         logger.trace(`完成 ${item.name}，用时 ${formatDuration((Date.now() - startedAt) / 1000)}`);
@@ -854,21 +882,43 @@ async function runDownloadJob(config, opts, hooks = {}) {
         );
         if (hooks.onItemDone) hooks.onItemDone(item, true, 'done');
       } else if (skippedByUser) {
-        completedIds.add(String(item.modelId));
+        completedIds.add(itemKey(item));
         summary.skipped++;
         logFn(t('job.itemSkipped', { name: item.name }));
         if (hooks.onItemDone) hooks.onItemDone(item, false, 'skipped');
       } else {
-        completedIds.add(String(item.modelId));
+        completedIds.add(itemKey(item));
         summary.failed++;
         if (hooks.onItemDone) hooks.onItemDone(item, false, 'failed');
       }
     }
 
+    // Rows of the same model run one after another even when several download jobs are allowed:
+    // two versions of one model may share a directory, and the second one must see the first one's
+    // recorded file names before it decides about version suffixes and renames.
+    //
+    // 同一模型的多行即使允许多个下载并发也串行执行：同模型的两个版本可能共用一个目录，
+    // 第二个要在决定版本后缀与改名之前先看到第一个已记录的文件名。
+    const modelGates = new Map();
+    const serialByModel = async (key, fn) => {
+      const previous = modelGates.get(key) || Promise.resolve();
+      let release;
+      const gate = new Promise((resolve) => {
+        release = resolve;
+      });
+      modelGates.set(key, previous.then(() => gate));
+      await previous;
+      try {
+        return await fn();
+      } finally {
+        release();
+      }
+    };
+
     const ordered = todo.map((item, i) => ({ item, index: i + 1 }));
     await mapPool(ordered, jobs, async ({ item, index }) => {
       if (isCancelled()) return;
-      await downloadItem(item, index, ordered.length);
+      await serialByModel(String(item.modelId), () => downloadItem(item, index, ordered.length));
     });
 
     // A cancel may happen between two models (no CancelError is thrown then), so mark it here,
@@ -885,7 +935,7 @@ async function runDownloadJob(config, opts, hooks = {}) {
     // 8) Wrap-up: resume list + summary
     // 8) 收尾：断点清单 + 汇总
     // ---------------------------------------------------------------------
-    const remaining = todo.filter((p) => !completedIds.has(String(p.modelId)));
+    const remaining = todo.filter((p) => !completedIds.has(itemKey(p)));
     summary.remaining = remaining.length;
     if (summary.cancelled && remaining.length) {
       try {

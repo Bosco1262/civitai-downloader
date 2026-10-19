@@ -512,6 +512,28 @@ test('job 端到端：同一模型两个版本 → 目录符合 layout，库里�
   assert.ok(fs.existsSync(path.join(config.outDir, 'Lora', 'Layout Model', 'm-v2.bin')));
 });
 
+test('job 端到端：同一份计划里同一模型两个版本 → 两个版本都下载', async () => {
+  const config = makeConfig();
+  const v1 = Buffer.from('same-plan-v1\n'.repeat(20));
+  const v2 = Buffer.from('same-plan-v2\n'.repeat(25));
+  const deps = downloadDeps({ 'same-v1.bin': v1, 'same-v2.bin': v2 });
+
+  const plan = [
+    planItem({ modelId: 55, name: 'Twin Model', type: 'LORA', baseModel: 'SDXL', versionId: 1, versionName: 'v1', fileName: 'same-v1.bin', content: v1, fileId: 11 }),
+    planItem({ modelId: 55, name: 'Twin Model', type: 'LORA', baseModel: 'SDXL', versionId: 2, versionName: 'v2', fileName: 'same-v2.bin', content: v2, fileId: 12 }),
+  ];
+  await runDownloadJob(
+    config,
+    { collectionId: 'model-55', plan, outDir: config.outDir, jobs: 2, deps },
+    { log: () => {} }
+  );
+
+  const { entries } = storage.readLibrary(config);
+  assert.deepEqual(storage.versionIds(entries['55']).sort(), ['1', '2'], '同一计划里的两个版本都入库');
+  assert.ok(fs.existsSync(path.join(config.outDir, 'Lora', 'Twin Model', 'same-v1.bin')));
+  assert.ok(fs.existsSync(path.join(config.outDir, 'Lora', 'Twin Model', 'same-v2.bin')));
+});
+
 test('job 端到端：底模层开启 + 同一模型横跨两种底模 → 按底模各放一处', async () => {
   const config = makeConfig({ baseModelLayer: true });
   const sdxl = Buffer.from('sdxl-content\n'.repeat(30));
