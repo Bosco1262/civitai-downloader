@@ -23,7 +23,7 @@
  * 没有应用外壳时（非 TTY、CI），同样的分组改由简易提问库逐项询问，保证脚本化运行仍可用。
  */
 
-const { saveConfig } = require('../config');
+const { saveConfig, DEFAULTS } = require('../config');
 const { t } = require('../i18n');
 const layout = require('./layout');
 const view = require('./view');
@@ -79,7 +79,21 @@ const SECTIONS = [
       { key: 'jobs', type: 'text', label: 'tui.settings.jobs', validate: 'jobs' },
       { key: 'metaConcurrency', type: 'text', label: 'tui.settings.metaConcurrency', validate: 'jobs' },
       { key: 'downloadAttempts', type: 'text', label: 'tui.settings.downloadAttempts', validate: 'integer' },
+      { key: 'requestTimeoutMs', type: 'text', label: 'tui.settings.requestTimeoutMs', validate: 'timeout' },
+      { key: 'retries', type: 'text', label: 'tui.settings.retries', validate: 'retries' },
       { key: 'fileTypes', type: 'text', label: 'tui.settings.fileTypes', validate: 'fileTypes' },
+      {
+        key: 'layout',
+        type: 'select',
+        label: 'tui.settings.layout',
+        options: [
+          ['a1111', 'tui.settings.layoutA1111'],
+          ['comfy', 'tui.settings.layoutComfy'],
+          ['custom', 'tui.settings.layoutCustom'],
+        ],
+      },
+      { key: 'baseModelLayer', type: 'confirm', label: 'tui.settings.baseModelLayer' },
+      { key: 'primaryOnly', type: 'confirm', label: 'tui.settings.primaryOnly' },
       {
         key: 'engine',
         type: 'select',
@@ -133,6 +147,14 @@ const VALIDATORS = {
   port: (v) => /^\d{2,5}$/.test(String(v).trim()) || t('tui.settings.invalidPort'),
   jobs: (v) => (/^[1-8]$/.test(String(v).trim()) ? true : t('tui.settings.invalidJobs')),
   integer: (v) => (/^\d+$/.test(String(v).trim()) ? true : t('tui.settings.invalidInteger')),
+  timeout: (v) => {
+    const n = Number(String(v).trim());
+    return Number.isFinite(n) && n >= 1000 && n <= 600000 ? true : t('tui.settings.invalidTimeout');
+  },
+  retries: (v) => {
+    const n = Number(String(v).trim());
+    return Number.isFinite(n) && n >= 0 && n <= 10 ? true : t('tui.settings.invalidRetries');
+  },
   proxy: (v) =>
     !String(v).trim() || /^(https?|socks[45]?):\/\/\S+$/i.test(String(v).trim()) || t('tui.settings.invalidProxy'),
   webhook: (v) => !String(v).trim() || /^https?:\/\/\S+$/i.test(String(v).trim()) || t('tui.settings.invalidSite'),
@@ -176,14 +198,67 @@ function shortLabel(text) {
   return cut || value;
 }
 
+/**
+ * Adjust a scroll window so a section heading is never separated from its rows.
+ *
+ * A heading is part of the section, not a free-standing line: the window may not start *inside* a
+ * section (its heading would be scrolled off, so the first visible row would look orphaned), and it
+ * may not end on a heading either (a header with nothing under it is just noise). Both adjustments
+ * respect the one hard rule — the cursor always stays visible.
+ *
+ *
+ * 调整滚动视窗，避免分组标题与它的行被拆开。
+ *
+ * 标题属于分组，不是独立的一行：视窗不能在分组「中间」开始（标题被滚出去后，第一行看起来就没有归属），
+ * 也不能停在标题上（下面什么都没有的标题只是噪音）。两个调整都遵守唯一的硬约束——光标始终可见。
+ *
+ * @param {{start:number, end:number, cursor:number}} win window from `pages.windowOf`
+ * @param {string[]} lines all rendered lines
+ * @param {number} body how many lines fit
+ * @param {number} cursorLine line of the cursor
+ * @param {Map<number, number>} headingOfLine line → its section heading line
+ * @param {Set<number>} headingLines the heading lines themselves
+ * @returns {{start:number, end:number, cursor:number}}
+ */
+function scrollToSection(win, lines, body, cursorLine, headingOfLine, headingLines) {
+  let start = win.start;
+  let end = win.end;
+
+  // The section heading must be on screen when the cursor sits on that section's *first row*: coming
+  // back to that row should not leave the user without the section name. It is deliberately NOT
+  // applied to every row of the section: the window starts where the user scrolled to, so stepping
+  // inside a long section must not yank the view back to its heading.
+  //
+  // 光标停在本组「第一行」时，标题必须在视窗内：回到这一行时不能丢掉分组名。
+  // 这条规则刻意不适用于组内的其它行：视窗应停在用户滚到的位置，
+  // 在长分组内部上下移动时不能把视图拽回分组开头。
+  const heading = headingOfLine.get(cursorLine);
+  if (heading !== undefined && heading === cursorLine - 1 && heading < start) {
+    start = heading;
+    end = Math.min(lines.length, start + body);
+  }
+
+  // Drop a heading (and the blank line above it) that ended up as the last visible line.
+  // 丢掉被挤到最后一行的标题（连同它上面的空行）。
+  while (end > start + 1 && (headingLines.has(end - 1) || lines[end - 1] === '')) end -= 1;
+
+  // Whatever happened above, the cursor must stay on screen.
+  // 无论上面怎么调整，光标都必须留在屏幕内。
+  if (cursorLine < start) start = cursorLine;
+  if (cursorLine >= end) end = Math.min(lines.length, cursorLine + 1);
+  return { start, end, cursor: win.cursor };
+}
+
 // ---------------------------------------------------------------------------
 // Shell page
 // 外壳页面
 // ---------------------------------------------------------------------------
 
 /**
- * Rows of the settings page: section headers, one row per field and the action rows.
- * 设置页的行：分组标题、每个字段一行，以及操作行。
+ * Rows of the settings page: section headers, one row per field and the action rows. There is no
+ * "save" row: every field is written to config.json the moment it is confirmed.
+ *
+ * 设置页的行：分组标题、每个字段一行，以及操作行。没有「保存」行：每个字段确认后立刻写入 config.json。
  */
 function buildRows() {
   const rows = [];
@@ -197,7 +272,7 @@ function buildRows() {
   rows.push({ kind: 'action', action: 'login', label: t('tui.settings.actionLogin'), help: t('tui.settings.actionLoginDesc') });
   rows.push({ kind: 'action', action: 'open', label: t('tui.settings.actionOpenDir'), help: t('tui.settings.actionOpenDirDesc') });
   rows.push({ kind: 'action', action: 'doctor', label: t('tui.settings.actionDoctor'), help: t('tui.settings.actionDoctorDesc') });
-  rows.push({ kind: 'action', action: 'save', label: t('tui.settings.saveAction'), help: t('tui.settings.saveActionDesc') });
+  rows.push({ kind: 'action', action: 'reset', label: t('tui.settings.actionReset'), help: t('tui.settings.actionResetDesc') });
   return rows;
 }
 
@@ -205,26 +280,76 @@ function buildRows() {
  * Value shown on the right of one field row.
  * 字段行右侧显示的值。
  */
-function rowValue(config, draft, field) {
-  const current = field.key === 'fileTypes' ? (config.fileTypes || ['Model']).join(',') : config[field.key];
-  const changed = Object.prototype.hasOwnProperty.call(draft, field.key);
-  const text = changed ? displayValue({ ...config, ...draft }, field) : displayValue(config, field);
-  return {
-    text,
-    changed: changed && String(draft[field.key]) !== String(current),
-  };
+function rowValue(config, field) {
+  return displayValue(config, field);
 }
 
 /**
- * Edit one field: open the matching prompt and write the answer into the draft.
- * 修改一个字段：打开对应提问，并把答案写进草稿。
+ * Write one field to config.json right away and report it.
+ *
+ * Nothing is staged any more: confirming a field is the save. Re-entering the same value writes
+ * nothing and says so, and changing the site still reminds the user to log in again.
+ *
+ *
+ * 立即把一个字段写进 config.json 并给出反馈。
+ *
+ * 不再有暂存：确认字段就是保存。重填同样的值不会写盘，只会说明「未修改」；
+ * 改动站点时仍然提醒需要重新登录。
+ *
+ * @returns {boolean} whether anything was written
  */
-async function editField(config, draft, field) {
+function applyField(config, field, value) {
+  const before = field.key === 'fileTypes' ? (config.fileTypes || []).join(',') : config[field.key];
+  const after = field.key === 'fileTypes' ? value.join(',') : value;
+  const label = shortLabel(t(field.label));
+  if (String(before) === String(after)) {
+    view.decision('tui.settings.unchanged', { label });
+    return false;
+  }
+  saveConfig(config, { [field.key]: value });
+  config[field.key] = value;
+  if (field.key === 'site') {
+    // Changing the site is the one edit with a follow-up (a new Chrome profile + a new login), so it
+    // takes over the toast instead of the generic "saved" line.
+    //
+    // 改站点是唯一需要后续动作的修改（新的 Chrome profile + 重新登录），
+    // 因此它顶替通用的「已保存」提示。
+    view.notice(t('tui.settings.siteChanged'), colors.yellow);
+    return true;
+  }
+  view.decision('tui.settings.savedItem', { label, value: displayValue(config, field) });
+  return true;
+}
+
+/**
+ * Default value of one field, formatted for its editor. Text editors work on strings (the file-type
+ * list is joined again), so the same helper feeds both the Ctrl+R shortcut and "restore all".
+ *
+ * 某个字段的默认值，按编辑器需要的形态给出。文本编辑器用字符串（文件类型列表重新用逗号连接），
+ * 因此 Ctrl+R 与「全部恢复默认」共用这个助手。
+ *
+ * @returns {any} undefined when the field has no default
+ */
+function defaultOf(field) {
+  if (!Object.prototype.hasOwnProperty.call(DEFAULTS, field.key)) return undefined;
+  const value = DEFAULTS[field.key];
+  if (field.validate === 'fileTypes' && Array.isArray(value)) return value.join(',');
+  return value;
+}
+
+/**
+ * Edit one field: open the matching prompt and write the answer immediately.
+ * 修改一个字段：打开对应提问，并立即写入答案。
+ *
+ * @returns {Promise<boolean>} false when the user cancelled the editor
+ */
+async function editField(config, field) {
   const current = config[field.key];
+  const fallback = defaultOf(field);
   if (field.type === 'confirm') {
     const answer = await pages.promptConfirm(t(field.label), { initial: !!current, stage: '' });
     if (answer === null) return false;
-    draft[field.key] = answer;
+    applyField(config, field, answer);
     return true;
   }
   if (field.type === 'select') {
@@ -236,7 +361,7 @@ async function editField(config, draft, field) {
       { initial }
     );
     if (picked === null) return false;
-    draft[field.key] = picked;
+    applyField(config, field, picked);
     return true;
   }
 
@@ -247,40 +372,37 @@ async function editField(config, draft, field) {
     // 编辑器以原始值为初值：否则显示用的兜底值（「-」）会被写回空的可选字段。
     initial: current === undefined || current === null ? '' : String(current),
     validate: field.validate ? VALIDATORS[field.validate] : undefined,
+    // Paths get the platform's folder dialog on top of typing (Ctrl+O fills the field, Enter still
+    // saves it), so the same page works on devices where no dialog can open.
+    //
+    // 路径字段在输入之外还能用系统目录对话框（Ctrl+O 填入，Enter 仍然负责保存），
+    // 因此弹不出对话框的设备也能用同一页。
+    pick: field.key === 'outDir' ? 'directory' : undefined,
+    // Ctrl+R puts the config default back into the field (editable, then Enter applies it).
+    // Ctrl+R 把配置默认值填回输入框（仍可编辑，Enter 才生效）。
+    resetValue: fallback === undefined ? undefined : String(fallback),
   });
   if (text === null) return false;
   if (field.validate === 'fileTypes') {
-    draft[field.key] = text
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean);
+    applyField(
+      config,
+      field,
+      text
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+    );
     return true;
   }
-  if (field.key === 'site') draft[field.key] = text.replace(/\/+$/, '');
-  else if (['debugPort', 'jobs', 'metaConcurrency', 'apiRateLimit', 'downloadAttempts'].includes(field.key)) {
-    draft[field.key] = Number(text);
-  } else draft[field.key] = text;
+  if (field.key === 'site') applyField(config, field, text.replace(/\/+$/, ''));
+  else if (
+    ['debugPort', 'jobs', 'metaConcurrency', 'apiRateLimit', 'downloadAttempts', 'requestTimeoutMs', 'retries'].includes(
+      field.key
+    )
+  ) {
+    applyField(config, field, Number(text));
+  } else applyField(config, field, text);
   return true;
-}
-
-/**
- * List the differences between the original config and the draft.
- * 列出原配置与草稿之间的差异。
- */
-function changedPatch(config, draft) {
-  const patch = {};
-  const changed = [];
-  for (const section of SECTIONS) {
-    for (const field of section.fields) {
-      if (!Object.prototype.hasOwnProperty.call(draft, field.key)) continue;
-      const before = field.key === 'fileTypes' ? (config.fileTypes || ['Model']).join(',') : config[field.key];
-      const after = field.key === 'fileTypes' ? draft[field.key].join(',') : draft[field.key];
-      if (String(before) === String(after)) continue;
-      patch[field.key] = draft[field.key];
-      changed.push({ label: t(field.label), before, after });
-    }
-  }
-  return { patch, changed };
 }
 
 /**
@@ -292,20 +414,21 @@ function changedPatch(config, draft) {
  *
  * 渲染在应用外壳里的设置页。
  *
- * 所有交互都发生在一个提问内部：字段编辑器是嵌套的提问，因此 Esc 先关闭编辑器，
- * 再按一次才离开本页（第一次会提示还有多少项没保存）。
+ * 每个字段确认后立刻写盘，因此离开本页时没有「未保存」可言：Esc 就是返回上一级。
  *
  * @returns {Promise<boolean>} whether anything was written to config.json
  */
 async function settingsPage(config) {
-  const draft = {};
   const rows = buildRows();
   const selectable = rows.map((row, index) => (row.kind === 'section' ? -1 : index)).filter((index) => index >= 0);
-  const state = { cursor: selectable[0], saved: false, escapeArmed: false };
+  const state = { cursor: selectable[0], written: false, windowStart: 0 };
 
+  // The cursor wraps around at both ends: ↑ on the first row jumps to the last one.
+  // 光标在两端循环：在第一行按 ↑ 会跳到最后一行。
   const step = (delta) => {
     const position = selectable.indexOf(state.cursor);
-    const next = Math.max(0, Math.min(selectable.length - 1, position + delta));
+    const count = selectable.length;
+    const next = (((position + delta) % count) + count) % count;
     state.cursor = selectable[next];
   };
 
@@ -313,47 +436,93 @@ async function settingsPage(config) {
 
   return screen.prompt({
     title: t('tui.app.menuSettings'),
-    hints: () => [t('tui.settings.pageHint')],
+    // Saving has no shortcut of its own, so the line does not mention one either.
+    // 保存没有单独的快捷键，因此这一行也不提它。
+    hints: () => [t('tui.hint.settings')],
     // Prompts are rendered with `(state, ctx)`; the page keeps its own state in the closure, so only
     // the geometry (`ctx`) is used here.
     //
     // 提问的渲染签名是 `(state, ctx)`；本页的状态保存在闭包里，因此这里只用到几何信息 `ctx`。
     render(_state, ctx) {
-      const lines = [];
-      const valueColumn = Math.min(labelWidth, Math.floor(ctx.width * 0.4));
-      for (const [index, row] of rows.entries()) {
-        if (row.kind === 'section') {
-          if (index > 0) lines.push('');
-          lines.push(colors.dim(row.label));
-          continue;
-        }
+      const width = Math.max(20, Math.floor(ctx.width) || 80);
+      const room = Math.max(3, Math.floor(ctx.rows) || 3);
+      const valueColumn = Math.min(labelWidth, Math.floor(width * 0.4));
+
+      // Every row becomes one line first, so the scroll window can be computed over lines (section
+      // headings and blank separators included) and the cursor can never leave the screen.
+      //
+      // 先把每一行都变成一行文本，再按「行」计算滚动视窗（包含分组标题与分隔空行），
+      // 这样光标永远不会跑到屏幕外。
+      const items = rows.map((row, index) => {
+        if (row.kind === 'section') return { section: row.label };
         const cursor = index === state.cursor;
         const marker = cursor ? colors.cyan(layout.glyphs().cursor) : ' ';
-        const label = cursor ? colors.bold(layout.padTo(row.label, valueColumn)) : layout.padTo(row.label, valueColumn);
-        let value = '';
-        if (row.kind === 'field') {
-          const shown = rowValue(config, draft, row.field);
-          value = shown.changed ? colors.green(`* ${shown.text}`) : shown.text;
-        } else if (row.action === 'save') {
-          const pending = changedPatch(config, draft).changed.length;
-          value = pending ? colors.yellow(t('tui.settings.pendingCount', { count: pending })) : colors.dim(t('tui.settings.noChangesShort'));
+        const label = layout.padTo(row.label, valueColumn);
+        // The row always shows what is in config.json right now: every edit was written already.
+        // 这一行显示的就是 config.json 里的当前值：每次修改都已经写盘了。
+        const value = row.kind === 'field' ? rowValue(config, row.field) : '';
+        return {
+          row: index,
+          text: `${marker} ${cursor ? colors.bold(label) : label}   ${truncateTo(value, Math.max(8, width - valueColumn - 4))}`,
+        };
+      });
+
+      // Expand the section entries into "blank line + heading", remember which line each row is on and
+      // which heading each line belongs to.
+      //
+      // 把分组项展开成「空行 + 标题」，记下每一行对应的文本行号，以及每一行属于哪个标题。
+      const lines = [];
+      const lineOfRow = new Map();
+      const headingOfLine = new Map();
+      const headingLines = new Set();
+      let currentHeading = -1;
+      for (const item of items) {
+        if (item.section !== undefined) {
+          if (lines.length) lines.push('');
+          currentHeading = lines.length;
+          headingLines.add(currentHeading);
+          headingOfLine.set(currentHeading, currentHeading);
+          lines.push(colors.dim(item.section));
+          continue;
         }
-        lines.push(`${marker} ${label}   ${truncateTo(value, Math.max(8, ctx.width - valueColumn - 4))}`);
+        lineOfRow.set(item.row, lines.length);
+        headingOfLine.set(lines.length, currentHeading < 0 ? lines.length : currentHeading);
+        lines.push(item.text);
       }
+
       const help = rows[state.cursor] && rows[state.cursor].help;
-      if (help) lines.push('', colors.dim(truncateTo(help, ctx.width)));
-      return lines;
+      const position = selectable.length > 1 ? t('tui.pages.listPosition', {
+        index: selectable.indexOf(state.cursor) + 1,
+        total: selectable.length,
+      }) : '';
+      // Keep one blank line plus the help line under the list; they never scroll away.
+      // 列表下方固定留一行空行与一行说明，它们不参与滚动。
+      const body = Math.max(1, room - 2);
+      const cursorLine = lineOfRow.get(state.cursor) === undefined ? 0 : lineOfRow.get(state.cursor);
+      const win = scrollToSection(
+        pages.windowOf(lines.length, cursorLine, body, state.windowStart),
+        lines,
+        body,
+        cursorLine,
+        headingOfLine,
+        headingLines
+      );
+      state.windowStart = win.start;
+      const shown = lines.slice(win.start, win.end);
+      // The status line (position + explanation of the selected row) is pinned to the last body row:
+      // spare rows go between the list and the status line, never between it and the footer, so the
+      // gap the user sees is always above the status line, not below it.
+      //
+      // 状态行（序号 + 当前项说明）固定在主体最后一行：多余的空行留在列表与状态行之间，
+      // 而不是状态行与页脚之间——用户看到的空行始终在状态行上方。
+      while (shown.length + 2 < room) shown.push('');
+      shown.push('', colors.dim(truncateTo([position, help].filter(Boolean).join(view.separator()), width)));
+      return shown;
     },
     onEscape(entry) {
-      const pending = changedPatch(config, draft).changed.length;
-      // First Esc with unsaved edits asks once; the second one really leaves without saving.
-      // 有未保存改动时第一次 Esc 先问一次，第二次才真正放弃并离开。
-      if (pending && !state.escapeArmed) {
-        state.escapeArmed = true;
-        screen.notice(t('tui.settings.unsavedNotice', { count: pending }), colors.yellow);
-        return true;
-      }
-      entry.settle(state.saved);
+      // Nothing is pending: every field was written when it was confirmed, so Esc is just "go back".
+      // 没有待保存的东西：每个字段确认时就写盘了，因此 Esc 就是返回。
+      entry.settle(state.written);
       return true;
     },
     async onKey(text, key, entry) {
@@ -364,28 +533,22 @@ async function settingsPage(config) {
       else if (key.name === 'home') state.cursor = selectable[0];
       else if (key.name === 'end') state.cursor = selectable[selectable.length - 1];
       else if (key.name === 'return') await activate();
-      else if (text === 's') await save();
       else return;
-      state.escapeArmed = false;
     },
   });
 
   /**
    * Enter on the current row: edit a field, or run an action row.
-   * 在当前行按回车：修改字段，或执行操作行。
+   * Enter 在当前行：修改字段，或执行操作行。
    */
   async function activate() {
     const row = rows[state.cursor];
     if (!row || row.kind === 'section') return;
     if (row.kind === 'field') {
-      const done = await editField(config, draft, row.field);
-      if (done) {
-        const pending = changedPatch(config, draft).changed.length;
-        if (pending) view.decision('tui.settings.draftUpdated', { count: pending });
-      }
+      const done = await editField(config, row.field);
+      if (done) state.written = true;
       return;
     }
-    if (row.action === 'save') return save();
     if (row.action === 'login') return require('./login').loginFlow(config);
     if (row.action === 'doctor') {
       // The environment check prints through the CLI catalog: keep its lines inside the frame.
@@ -399,39 +562,11 @@ async function settingsPage(config) {
       else view.log(t('tui.app.openFailed'));
       return;
     }
+    if (row.action === 'reset') {
+      if (await resetEverything(config)) state.written = true;
+      return;
+    }
     return undefined;
-  }
-
-  /**
-   * Write the pending changes to config.json.
-   * 把待保存的改动写入 config.json。
-   */
-  async function save() {
-    const { patch, changed } = changedPatch(config, draft);
-    if (!changed.length) {
-      screen.notice(t('tui.settings.noChanges'), colors.dim);
-      return;
-    }
-    pages.printBlock(
-      t('tui.settings.changeTitle', { count: changed.length }),
-      changed.map(
-        (item) => `${item.label}: ${colors.dim(String(item.before))} → ${colors.cyan(String(item.after))}`
-      )
-    );
-    const confirm = await pages.promptConfirm(t('tui.settings.saveConfirm', { count: changed.length }), {
-      initial: true,
-    });
-    if (!confirm) {
-      view.note(t('tui.settings.cancelled'));
-      return;
-    }
-    saveConfig(config, patch);
-    Object.assign(config, patch);
-    for (const key of Object.keys(draft)) delete draft[key];
-    state.saved = true;
-    state.escapeArmed = false;
-    view.log(t('tui.settings.saved'));
-    if (patch.site !== undefined) view.log(t('tui.settings.siteChanged'));
   }
 }
 
@@ -444,20 +579,22 @@ async function settingsPage(config) {
  * Ask for one field and patch the draft. Returns false when the user cancelled the field.
  * 询问一个字段并写入草稿。用户取消该字段时返回 false。
  */
-async function askField(config, draft, field) {
-  return editField(config, draft, field);
+async function askField(config, field) {
+  return editField(config, field);
 }
 
 /**
- * Ask every field of one section. Returns false when the user cancelled the section.
- * 逐项询问某一组的全部字段。用户取消该组时返回 false。
+ * Ask every field of one section, writing each answer as soon as it is confirmed.
+ * Returns false when the user cancelled the section.
+ *
+ * 逐项询问某一组的全部字段，每个答案确认后立即写盘。用户取消该组时返回 false。
  */
-async function askSection(config, draft, section) {
+async function askSection(config, section) {
   view.note('');
   view.note(colors.bold(`  ${t(section.titleKey)}`));
   view.note(colors.dim(`  ${t(section.descKey)}`));
   for (const field of section.fields) {
-    const done = await askField(config, draft, field);
+    const done = await askField(config, field);
     if (!done) {
       view.log(t('tui.settings.sectionCancelled', { section: t(section.titleKey) }));
       return false;
@@ -485,12 +622,13 @@ function printSummary(config) {
 }
 
 /**
- * Section-by-section settings flow used without the app shell.
- * 没有应用外壳时使用的分组式设置流程。
+ * Section-by-section settings flow used without the app shell. Same rule as the page: a confirmed
+ * field is written immediately, so there is no save step here either.
+ *
+ * 没有应用外壳时使用的分组式设置流程。与页面一致：确认的字段立即写盘，因此这里也没有「保存」这一步。
  */
 async function plainSettingsFlow(config) {
-  const draft = {};
-  let saved = false;
+  let written = false;
   printSummary(config);
 
   for (;;) {
@@ -499,47 +637,54 @@ async function plainSettingsFlow(config) {
       value: section.key,
       description: t(section.descKey),
     }));
-    choices.push({ title: t('tui.settings.saveAction'), value: '__save__', description: t('tui.settings.saveActionDesc') });
+    choices.push({
+      title: t('tui.settings.actionReset'),
+      value: '__reset__',
+      description: t('tui.settings.actionResetDesc'),
+    });
 
     const action = await pages.promptMenu(t('tui.settings.menuTitle'), choices);
-    if (action === null) {
-      if (!saved) view.log(t('tui.settings.cancelled'));
-      return saved;
-    }
-    if (action === '__save__') break;
+    if (action === null) return written;
 
+    if (action === '__reset__') {
+      if (await resetEverything(config)) written = true;
+      continue;
+    }
     const section = SECTIONS.find((s) => s.key === action);
     if (!section) continue;
-    await askSection(config, draft, section);
-    const pending = changedPatch(config, draft).changed.length;
-    if (pending) view.decision('tui.settings.draftUpdated', { count: pending });
+    await askSection(config, section);
   }
+}
 
-  const { patch, changed } = changedPatch(config, draft);
+/**
+ * Put every setting back to its built-in default, after one confirmation. Only the keys this page
+ * owns are reset; anything else the user keeps in config.json is left untouched, and values that
+ * already match the default are neither counted nor written.
+ *
+ * 一次性把这一页拥有的所有设置恢复成内置默认值（先确认一次）。只重置本页负责的键，
+ * config.json 里的其它自定义内容保持原样；已经等于默认值的项不计数、也不写入。
+ *
+ * @returns {Promise<boolean>} whether anything was written
+ */
+async function resetEverything(config) {
+  const patch = {};
+  for (const section of SECTIONS) {
+    for (const field of section.fields) {
+      if (Object.prototype.hasOwnProperty.call(DEFAULTS, field.key)) patch[field.key] = DEFAULTS[field.key];
+    }
+  }
+  const changed = Object.keys(patch).filter((key) => String(config[key]) !== String(patch[key]));
   if (!changed.length) {
-    view.log(t('tui.settings.noChanges'));
+    view.decision('tui.settings.resetNothing');
     return false;
   }
-
-  pages.printBlock(
-    t('tui.settings.changeTitle', { count: changed.length }),
-    changed.map(
-      (item) => `${item.label}: ${colors.dim(String(item.before))} → ${colors.cyan(String(item.after))}`
-    )
-  );
-
-  const confirm = await pages.promptConfirm(t('tui.settings.saveConfirm', { count: changed.length }), {
-    initial: true,
+  const confirm = await pages.promptConfirm(t('tui.settings.resetConfirm', { count: changed.length }), {
+    danger: true,
   });
-  if (!confirm) {
-    view.log(t('tui.settings.cancelled'));
-    return false;
-  }
-
+  if (!confirm) return false;
   saveConfig(config, patch);
   Object.assign(config, patch);
-  view.log(t('tui.settings.saved'));
-  if (patch.site !== undefined) view.log(t('tui.settings.siteChanged'));
+  view.decision('tui.settings.resetDone', { count: changed.length });
   return true;
 }
 
@@ -558,8 +703,8 @@ module.exports = {
   buildRows,
   shortLabel,
   displayValue,
+  applyField,
+  scrollToSection,
   SECTIONS,
   VALIDATORS,
-  changedPatch,
-  settingsPatch: changedPatch,
 };

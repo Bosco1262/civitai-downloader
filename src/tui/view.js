@@ -207,6 +207,32 @@ function note(msg) {
 }
 
 /**
+ * Show one transient line above the footer (a toast), and keep a copy in the log.
+ *
+ * Flows use it for results the user must see without leaving the current page — "saved", "3 items
+ * failed", "operation failed: …". Details stay in the log page (`L`) and in the run log file.
+ *
+ *
+ * 在页脚上方显示一行临时提示（toast），同时留一份到日志里。
+ *
+ * 各流程用它汇报「必须当场看到」的结果——「已保存」「失败 3 项」「操作失败：…」；
+ * 细节留在日志页（`L`）与运行日志文件里。
+ *
+ * @param {string} text already translated line
+ * @param {(s:string)=>string} [color]
+ */
+function notice(text, color) {
+  const value = String(text === undefined || text === null ? '' : text);
+  if (!value.trim()) return;
+  if (screen.isActive()) {
+    screen.notice(value, color);
+    for (const line of value.split('\n')) screen.logLine(line);
+    return;
+  }
+  console.log(color ? color(value) : value);
+}
+
+/**
  * Live status block of the legacy (non-shell) full-screen path.
  * 传统（无外壳）全屏路径的实时状态块。
  */
@@ -396,6 +422,7 @@ function openDir(dir) {
 module.exports = {
   log,
   note,
+  notice,
   beginStatus,
   endStatus,
   redrawStatus,

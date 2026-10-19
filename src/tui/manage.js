@@ -134,7 +134,7 @@ async function resetModels(config, collectionId) {
       return (entry && entry.name) || t('tui.manage.modelIdLabel', { modelId });
     })
     .join(t('tui.manage.nameSeparator'));
-  view.log(t('tui.manage.resetDone', { count: n, names: view.truncate(names, 120) }));
+  view.notice(t('tui.manage.resetDone', { count: n, names: view.truncate(names, 120) }), view.colors.green);
 }
 
 /**
@@ -191,12 +191,23 @@ async function collectionActions(config, collectionId) {
 
 /**
  * Entry point of the collection section: pick one collection, then open its page.
+ *
+ * With no snapshot yet the section still opens a page that explains what to do; answering the key
+ * press with a log line only made it look like nothing had happened.
+ *
+ *
  * 收藏集分区的入口：选中一个收藏集，然后进入它的页面。
+ *
+ * 还没有任何快照时，本分区也会打开一页说明该怎么做；只在日志里回一行会让人以为按键没生效。
  */
 async function collectionsFlow(config) {
   const rows = collectionRows(config);
   if (!rows.length) {
-    view.log(t('tui.manage.noRecords'));
+    await pages.promptMessage(t('tui.app.menuCollections'), [
+      t('tui.manage.noRecords'),
+      '',
+      t('tui.manage.noRecordsHint'),
+    ]);
     return;
   }
   const chosen = await pages.pickOne(rows, {

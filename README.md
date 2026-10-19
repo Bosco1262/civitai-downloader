@@ -142,7 +142,6 @@ The terminal UI is a full-screen app rather than a scrolling log: the screen is 
 
 ```
   civitai-downloader
-  ↑↓ Select · Enter Select/Confirm · Tab Task view · Esc Cancel/Quit · Ctrl+C Quit
 
   ┌── Dashboard ─────────────────────────────────────────────────┐
   │ Current settings                                             │
@@ -151,11 +150,12 @@ The terminal UI is a full-screen app rather than a scrolling log: the screen is 
   │ Download dir  D:\downloads                                   │
   │ Concurrency   3                                              │
   │                                                              │
-  │ Current tasks                                                │
-  │ Collection 12345 · Model A  ███████░░░░░░░░░ 42.5%           │
+  │ Task overview                                                │
+  │ Total  ███████░░░░░░░░░ 42.5% · 1/3 done · 1 running · 1 queued │
   └──────────────────────────────────────────────────────────────┘
 
   Main menu
+  ────────────────────────────────────────────────────────────────
 
   ▸ Download                  Download models or collections: paste a link / ID, tick the items
     Local model management    Manage local files per model: update, verify, pin, delete records
@@ -163,22 +163,28 @@ The terminal UI is a full-screen app rather than a scrolling log: the screen is 
     Settings                  Login, download directory, concurrency, proxy and every option
     Exit
 
-  Enter opens · Tab task view · Esc quits
+  ↑↓ Select · Enter Open · Tab Task view · Ctrl+C Quit
 ```
 
-The fixed part of the screen: the project name on the first line, the global key hint below it, the **dashboard** in the middle — "Current settings" (site, session, download directory, concurrency), a blank line, then "Current tasks" (the model or collection being downloaded, with a bar and a percentage) — the current screen below that (breadcrumb, content, log pane) and the key hints of that screen at the bottom. The wording follows the configured language; the sample above is the English one.
+The fixed part of the screen: the project name on the first line, the **dashboard** in the middle — "Current settings" (site, session, download directory, concurrency), a blank line, then **"Task overview"** (one fixed aggregate progress line over every task in the registry: a bar, the percentage and the counts per state; it returns to "idle" once nothing is running or queued, and `Tab` opens the per-task detail) — the current page below that (a **breadcrumb** such as `Main menu › Settings` with a rule under it, the content and, when there is something to say, one transient `✔ …` line that fades after 5 seconds), and **the last line is the key hint of that page**. The wording follows the configured language; the sample above is the English one.
+
+The raw log is no longer a permanent strip: it is **a page** — `L` opens it, `L` or `Esc` closes it (`↑↓` / `PgUp` / `PgDn` scroll), and it keeps being written to the run log on disk. Results show up in that transient line (saved, download summary, failure), and the details live in the log page.
+
+There is only one hint line: the page owns it and lists **only the keys that work there**. That is why the main menu's line does not mention Esc (it does nothing there), a text field's line does not mention ↑↓, and the task view's line changes with the selected task (`c` / `s` while running, `r` / `d` / `l` when finished). On a terminal too narrow for the page's own line, a compact universal spelling takes over instead of clipping it.
+
+Two "system views" open on top of whatever is there and are mutually exclusive: `Tab` is the task view, `L` is the log page, and each one's footer lists its own keys. The task view is the **only** home of a download's progress and result: a download keeps running after you leave the download pages, and the task view shows its live progress, current files, failures and final result (plus `c` cancel, `s` skip, `r` retry failed items, `d` open the output folder and `l` the per-task log tail).
 
 The main menu has exactly five entries:
 
-- **Download**: one entry point for models and collections. "Download models" accepts model links, `model:<ID>` and `version:<ID>` (several per line or comma separated); "Download a collection" enumerates the items → **filter and tick them in a full-screen list** (search / by type / by base model / sort) → choose a version strategy → **one confirmation screen** for the output directory, the concurrency and how already-finished items are handled
-- **Local model management**: the list of locally known models (Enter opens one), and that model's page holds **everything that concerns this one model** — check for updates, verify/repair its files, download another version, pin/unpin a version, open its folder, delete its record. The library-wide "check every model" and "verify every file" passes sit next to the list
+- **Download**: one entry point for models and collections. "Download models" accepts model links, `model:<ID>` and `version:<ID>` (several per line or comma separated); "Download a collection" enumerates the items and records the collection snapshot. Both then share the same shell flow: **plan page** (filter / tick / `v` choose a version per item / `n` select only new) → **confirmation page** (totals, disk space, output directory, concurrency, already-finished handling, start) → **receipt page** ("added to the task list", `Tab` for progress, `Esc` leaves the download screen). If a download is already running, the new one is **queued** and starts automatically when the previous task ends
+- **Local model management**: the list of locally known models (`Enter` opens one), and that model's page holds **everything that concerns this one model** — check for updates, verify/repair its files, download another version, pin/unpin a version, open its folder, delete its record. The library-wide "check every model" and "verify every file" passes sit next to the list
 - **Local collection management**: the list of collections (members, enumeration time, changes); opening one gives **check for updates** (quick/deep), **re-download**, **reset the members for re-download**, and the membership/change report
-- **Settings**: one page listing **every option** (site, download directory, browser, language, concurrency, retries, file types, engine, dedup, rate limit, proxy, User-Agent, notifications) with its current value; Enter edits the selected row, `s` (or the "save" row) writes it, and **Esc goes back without saving**. Login, "open the download directory" and the environment check live here too
+- **Settings**: one page listing **every option** (site, download directory, browser, language, concurrency, request timeout, retries, file types, directory layout, base-model layer, primary-only, engine, dedup, rate limit, proxy, User-Agent, notifications) with its current value; `Enter` edits the current row and **confirms it straight into config.json** (there is no separate save step), while `Esc` goes back. `Ctrl+R` in a text field fills in that field's built-in default (still editable; `Enter` applies it), and the last row, "Restore all defaults", resets the whole page after a confirmation. The download directory can also be filled with the platform's folder dialog (`Ctrl+O`): the picked path is put into the input line, so it can still be edited, and a device without a dialog simply types it. Login, "open the download directory" and the environment check live here too
 - **Exit**
 
-Keys: `↑↓` move, `Enter` selects/confirms and always moves on to the next screen, `Esc` cancels or goes back one level without saving (in the main menu it quits), `Tab` switches to the task view from anywhere (press again to return; `c` cancels the selected task, `x` clears finished ones), `Ctrl+C` quits the program, `?` opens the key reference. While a download runs, `Esc` cancels it (already downloaded parts are kept and can be resumed) and `s` skips the current model.
+Keys: `↑↓` move (wrapping at both ends), `Enter` selects/confirms and always moves on to the next screen, `Esc` cancels or goes back one level without saving (it has **no effect in the main menu**, so a repeated Esc cannot quit the program by accident), `Tab` switches to the task view from anywhere (press again to return; while running `c` cancels and `s` skips the current model, when finished `r` retries failed items, `d` opens the output folder, `l` shows the task log tail and `x` clears finished ones), `L` opens the log page (press again or `Esc` to go back), `Ctrl+C` quits the program, `?` opens the key reference. During a download, `Esc` on the receipt page only leaves the download screen; the task keeps running in the task list. `s` (skip) and `c` (cancel) live in the task view; Ctrl+C on a running task asks to cancel it first.
 
-Keys on the settings page: `↑↓` select, `Enter` edits or runs the row, `s` saves, `Esc` goes back (with a warning when there are unsaved changes). Edited rows are marked with `*`, and every change is listed for review before anything is written.
+Keys on the settings page: `↑↓` select (wrapping), `Enter` edits or runs the row, `Esc` goes back; inside a text field `Ctrl+R` restores the default and `Ctrl+O` picks a folder. Every confirmation is written immediately, and the line under the list briefly shows `✔ Saved: <field> = <new value>`; re-entering the same value says "unchanged" and writes nothing.
 
 Keys in the item-selection screen (useful when there are many entries):
 
@@ -189,6 +195,8 @@ Keys in the item-selection screen (useful when there are many entries):
 | `1`-`9` | Jump to row n; `Shift`+`1`-`9` toggles row n directly |
 | `space` | Tick / untick the current item; `Shift`+`↑`/`↓` extends the selection |
 | `a` / `i` | Select all **current filter results** (press again to clear) / invert the selection |
+| `n` / `c` | Select only items whose target version is not downloaded yet / clear the selection (download plan) |
+| `v` / `o` | Choose the version of the current item / open the download confirmation (download plan) |
 | `/` | Search (Enter exits and keeps the keyword, `Esc` exits and clears it, backspace is supported) |
 | `t` / `b` / `s` | Cycle the type / base model / sort order (default, name, largest first, smallest first) |
 | `?` | Show the key reference of the screen you are in |

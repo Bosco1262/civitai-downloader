@@ -158,10 +158,13 @@ async function checkCollectionsFlow(config, ids) {
     });
     if (summary.failed) failed++;
     const stats = { done: summary.done, skipped: summary.skipped, failed: summary.failed };
-    view.log(summary.cancelled ? t('tui.check.summaryCancelled', stats) : t('tui.check.summaryDone', stats));
+    view.notice(
+      summary.cancelled ? t('tui.check.summaryCancelled', stats) : t('tui.check.summaryDone', stats),
+      summary.cancelled || summary.failed ? view.colors.yellow : view.colors.green
+    );
   }
   view.bell();
-  if (failed) view.log(view.colors.red(t('tui.check.failedNotice')));
+  if (failed) view.notice(t('tui.check.failedNotice'), view.colors.red);
 }
 
 /**

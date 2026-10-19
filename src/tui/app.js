@@ -68,6 +68,7 @@ const state = {
   busy: false,
   quitting: false,
   quitArmed: false,
+  quitArmedIds: null,
 };
 
 /**
@@ -89,7 +90,7 @@ const MAIN_MENU = [
 function banner() {
   console.log('');
   console.log(`  ${colors.bold(t('tui.app.bannerTitle'))}`);
-  console.log(colors.dim(`  ${t('tui.screen.headerHint')}`));
+  console.log(colors.dim(`  ${t('tui.hint.menu')}`));
 }
 
 /**
@@ -202,9 +203,20 @@ function waitForKey(onQuit) {
  */
 function quit(code = 0) {
   if (state.quitting) return;
-  if (!state.quitArmed && tasks.runningTasks().length) {
+  const active = tasks.activeTasks().map((task) => task.id).sort();
+  const sameSet =
+    Array.isArray(state.quitArmedIds) &&
+    state.quitArmedIds.length === active.length &&
+    state.quitArmedIds.every((id, index) => id === active[index]);
+  // First press on a task set asks it to cancel; a second press on the same set exits. A new task
+  // that appeared in between is a new set, so it is cancelled first instead of being killed abruptly.
+  //
+  // 对同一组任务第一次按 Ctrl+C 请求取消；再按一次退出。中途新出现的任务属于新的一组，
+  // 因此先取消它，而不是被直接杀掉。
+  if (active.length && (!state.quitArmed || !sameSet)) {
     state.quitArmed = true;
-    view.triggerCancel();
+    state.quitArmedIds = active;
+    tasks.cancelAll();
     screen.notice(t('tui.app.quitAfterCancel'), colors.yellow);
     return;
   }
@@ -224,7 +236,7 @@ function quit(code = 0) {
  * 常驻的主菜单界面：菜单行、说明文字与按键处理。
  */
 function mainScreen() {
-  const cursor = { index: 0 };
+  const cursor = { index: 0, windowStart: 0 };
   const labelWidth = MAIN_MENU.reduce((max, item) => Math.max(max, layout.displayWidth(t(item.titleKey))), 0);
 
   return {
@@ -232,6 +244,12 @@ function mainScreen() {
     help: () => {
       runExclusive(() => pages.showHelp({ onQuit: () => quit() }), t('tui.app.menuHelp'));
     },
+    // Esc does nothing here: the menu is the root, and a repeated Esc on the way back must not quit
+    // the program by accident. Ctrl+C and the "exit" entry are the ways out.
+    //
+    // 这里 Esc 不做任何事：主菜单就是根，返回途中连按 Esc 不应误退出程序。
+    // 退出用 Ctrl+C 或「退出」这一项。
+    onEscape: () => {},
     render(ctx) {
       const lines = [];
       // On a very short terminal the five entries do not all fit: the window follows the cursor and a
@@ -239,7 +257,9 @@ function mainScreen() {
       //
       // 终端特别矮时五项放不下：视窗跟随光标滚动，并用一行位置提示说明总数，不会显得缺项。
       const room = Math.max(1, ctx.rows - (state.busy ? 2 : 0));
-      const win = pages.windowOf(MAIN_MENU.length, cursor.index, room);
+      const win = pages.windowOf(MAIN_MENU.length, cursor.index, room, cursor.windowStart);
+      cursor.windowStart = win.start;
+      cursor.index = win.cursor;
       MAIN_MENU.slice(win.start, win.end).forEach((item, index) => {
         lines.push(
           pages.rowLine(t(item.titleKey), item.descKey ? t(item.descKey) : '', {
@@ -255,14 +275,20 @@ function mainScreen() {
       if (state.busy) lines.push('', colors.dim(t('tui.app.busyHint')));
       return lines;
     },
-    hints: () => [t('tui.app.menuHint')],
+    // The menu can be left with Ctrl+C only: its line says so and does not advertise Esc.
+    // 主菜单只能用 Ctrl+C 退出：这一行只写它，不宣传 Esc。
+    hints: () => [t('tui.hint.main')],
     onKey(text, key) {
       // While a flow is running the menu is only a backdrop: prompts own the keys.
       // 流程运行期间菜单只是背景：按键归提问所有。
       if (state.busy) return true;
-      if (key.name === 'up' || text === 'k') cursor.index = Math.max(0, cursor.index - 1);
-      else if (key.name === 'down' || text === 'j') cursor.index = Math.min(MAIN_MENU.length - 1, cursor.index + 1);
-      else if (key.name === 'home') cursor.index = 0;
+      // ↑ on the first entry jumps to the last one and vice versa, like every other list here.
+      // 在第一项按 ↑ 跳到末项，反之亦然：与其它列表保持一致。
+      if (key.name === 'up' || text === 'k') {
+        cursor.index = cursor.index <= 0 ? MAIN_MENU.length - 1 : cursor.index - 1;
+      } else if (key.name === 'down' || text === 'j') {
+        cursor.index = cursor.index >= MAIN_MENU.length - 1 ? 0 : cursor.index + 1;
+      } else if (key.name === 'home') cursor.index = 0;
       else if (key.name === 'end') cursor.index = MAIN_MENU.length - 1;
       else if (/^[1-9]$/.test(text) && Number(text) <= MAIN_MENU.length) {
         cursor.index = Number(text) - 1;
@@ -287,7 +313,11 @@ function runExclusive(fn, stageLabel) {
     .then(fn)
     .catch((e) => {
       const { describeError } = require('../runtime');
-      view.note(colors.red(t('tui.app.operationFailed', { error: describeError(e) })));
+      // The failure is the one thing the user must see: show it as a toast (it also lands in the log,
+      // reachable with L, and in the run log file).
+      //
+      // 失败是用户必须看到的一件事：用 toast 显示（同时进入日志页 `L` 与运行日志文件）。
+      view.notice(t('tui.app.operationFailed', { error: describeError(e) }), colors.red);
       if (process.env.DEBUG) console.error(e);
     })
     .finally(() => {
@@ -348,24 +378,35 @@ async function dispatch(action) {
 
 /**
  * Download submenu: models and collections share one entry point.
+ *
+ * The menu stays open after a flow returns, so Esc on the plan / receipt page comes back here (the
+ * page the user entered the download from) instead of jumping all the way to the main menu. Leaving
+ * the submenu with Esc is still what returns to the main menu.
+ *
+ *
  * 「下载」子菜单：模型与收藏集共用一个入口。
+ *
+ * 流程返回后菜单保持打开，因此计划页/回执页按 Esc 会回到这里（用户进入下载前的页面），
+ * 而不是一路跳回主菜单；在子菜单再按 Esc 才回主菜单。
  */
 async function downloadMenu(config) {
-  const kind = await pages.promptMenu(
-    t('tui.app.downloadTitle'),
-    [
-      { title: t('tui.app.downloadModel'), value: 'model', description: t('tui.app.downloadModelDesc') },
-      {
-        title: t('tui.app.downloadCollection'),
-        value: 'collection',
-        description: t('tui.app.downloadCollectionDesc'),
-      },
-    ],
-    { stage: t('tui.app.menuDownload') }
-  );
-  if (kind === null) return;
-  if (kind === 'model') return require('./models').downloadFlow(config);
-  return downloadFlow(config);
+  for (;;) {
+    const kind = await pages.promptMenu(
+      t('tui.app.downloadTitle'),
+      [
+        { title: t('tui.app.downloadModel'), value: 'model', description: t('tui.app.downloadModelDesc') },
+        {
+          title: t('tui.app.downloadCollection'),
+          value: 'collection',
+          description: t('tui.app.downloadCollectionDesc'),
+        },
+      ],
+      { stage: t('tui.app.menuDownload') }
+    );
+    if (kind === null) return;
+    if (kind === 'model') await require('./models').downloadFlow(config);
+    else await downloadFlow(config);
+  }
 }
 
 /**

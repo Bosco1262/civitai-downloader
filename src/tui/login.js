@@ -33,7 +33,7 @@ async function loginFlow(config) {
       return !!done;
     },
   });
-  view.log(t('tui.login.done'));
+  view.notice(t('tui.login.done'), view.colors.green);
 }
 
 module.exports = { loginFlow };

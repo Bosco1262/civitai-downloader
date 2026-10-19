@@ -82,39 +82,38 @@ for (const [mode, key] of Object.entries(SORT_LABEL_KEYS)) {
 const SORT_MODES = Object.keys(SORT_LABELS);
 
 /**
- * Footer key hints, one line per group (CJK counts as two columns, so three lines fit an 80-column
- * terminal). Keys: ↑/↓ or k/j to move, Home/End for first/last, PgUp/PgDn or [ ] to page,
- * space to toggle, a to select/deselect all, i to invert, / to search, t for type, b for base model,
- * s to sort, Enter to confirm, Esc/q/Ctrl+C to cancel, ? for help.
- * Also lazily resolved (getters), so iteration and index access stay unchanged.
+ * The picker's single footer line. Like every other page it says what works *here* — moving,
+ * toggling, searching, filtering, confirming, cancelling and the help overlay — and nothing else.
  *
- * 底部按键说明，每组一行（CJK 按 2 列算，三行即可在 80 列终端完整显示）。
- * 键位：↑/↓ 或 k/j 移动，Home/End 首尾，PgUp/PgDn 或 [ ] 翻页，
- *       空格勾选，a 全选/全不选，i 反选，/ 搜索，t 类型，b 基础模型，s 排序，
- *       回车确认，Esc/q/Ctrl+C 取消，? 帮助。
- * 同样是惰性取词（getter），遍历/下标访问方式不变。
+ * Lazily resolved (getter), so iteration and index access stay unchanged.
+ *
+ *
+ * 选择器唯一的一行页脚说明。和其它页面一样，它只说这里能用的键——
+ * 移动、勾选、搜索、筛选、确认、取消与帮助浮层。
+ *
+ * 惰性取词（getter），遍历/下标访问方式不变。
  */
-const KEY_HINT_KEYS = ['tui.select.keyHintMove', 'tui.select.keyHintSelect', 'tui.select.keyHintAction'];
+const KEY_HINT_KEYS = ['tui.hint.picker'];
 const KEY_HINTS = KEY_HINT_KEYS.map(() => '');
 KEY_HINT_KEYS.forEach((key, index) => {
   Object.defineProperty(KEY_HINTS, index, { get: () => t(KEY_HINT_KEYS[index]), enumerable: true });
 });
 
 /**
- * Hint lines shown while the search box is open.
- * 搜索输入状态下的按键提示行。
+ * Hint line while the search box is open (typing wins over everything else).
+ * 搜索输入状态下的一行提示（输入态优先于其它状态）。
  */
-const SEARCH_HINT_KEYS = ['tui.select.searchHintTyping', 'tui.select.searchHintKeys'];
+const SEARCH_HINT_KEYS = ['tui.hint.pickerSearch'];
 const SEARCH_HINTS = SEARCH_HINT_KEYS.map(() => '');
 SEARCH_HINT_KEYS.forEach((key, index) => {
   Object.defineProperty(SEARCH_HINTS, index, { get: () => t(SEARCH_HINT_KEYS[index]), enumerable: true });
 });
 
 /**
- * Hint lines shown while the help overlay (`?`) is open.
- * 帮助浮层（`?`）打开时的按键提示行。
+ * Hint line while the help overlay (`?`) is open.
+ * 帮助浮层（`?`）打开时的一行提示。
  */
-const HELP_HINT_KEYS = ['tui.select.helpClose', 'tui.select.helpPage', 'tui.select.helpCancel'];
+const HELP_HINT_KEYS = ['tui.hint.pickerHelp'];
 const HELP_HINTS = HELP_HINT_KEYS.map(() => '');
 HELP_HINT_KEYS.forEach((key, index) => {
   Object.defineProperty(HELP_HINTS, index, { get: () => t(key), enumerable: true });
@@ -689,13 +688,16 @@ function buildHeaderLines(opts = {}) {
     const pageCount = Math.max(1, Number(opts.pageCount) || 1);
     filters.push(t('tui.select.filterPage', { page: page + 1, pageCount }));
   }
-  const summary = t('tui.select.summary', {
-    selected: Number(opts.selectedCount) || 0,
-    total: Number(opts.itemCount) || 0,
-    visible: Number(opts.visibleCount) || 0,
-    selectedSize: fmt(Number(opts.selectedBytes) || 0),
-    visibleSize: fmt(Number(opts.visibleBytes) || 0),
-  });
+  const summary =
+    opts.summaryText === undefined || opts.summaryText === null
+      ? t('tui.select.summary', {
+          selected: Number(opts.selectedCount) || 0,
+          total: Number(opts.itemCount) || 0,
+          visible: Number(opts.visibleCount) || 0,
+          selectedSize: fmt(Number(opts.selectedBytes) || 0),
+          visibleSize: fmt(Number(opts.visibleBytes) || 0),
+        })
+      : String(opts.summaryText);
   return [str(opts.title) || t('tui.select.defaultTitle'), filters.join(view.separator()), summary];
 }
 
@@ -716,7 +718,7 @@ function withNotice(lines, columns, message) {
 }
 
 /**
- * Key-hint lines of the current state: typing > help overlay > normal.
+ * Key-hint line of the current state: typing > help overlay > normal.
  *
  * Typing wins because the keys of the other states would not do anything useful while the search
  * box has focus.
@@ -726,8 +728,8 @@ function withNotice(lines, columns, message) {
  *
  * 输入态优先级最高：输入框获得焦点时，其它状态的按键都不会有预期效果。
  *
- *
- * @returns {string[]}
+ * @param {{searching?:boolean, help?:boolean}} [state]
+ * @returns {string[]} exactly one line
  */
 function hintLines(state = {}) {
   if (state.searching) return SEARCH_HINTS.map((hintText) => hintText);
@@ -865,11 +867,15 @@ async function selectItems(items, opts = {}) {
   const rowOpts = {};
   if (typeof opts.idOf === 'function') rowOpts.idOf = opts.idOf;
   if (typeof opts.label === 'function') rowOpts.label = opts.label;
+  if (typeof opts.disabledOf === 'function') rowOpts.disabledOf = opts.disabledOf;
   function rowKey(item) {
     return idOf(item, rowOpts);
   }
   function rowLabel(item) {
     return nameOf(item, rowOpts) || fallbackLabel(item, rowOpts);
+  }
+  function rowDisabled(item) {
+    return typeof rowOpts.disabledOf === 'function' ? !!rowOpts.disabledOf(item) : false;
   }
 
   /**
@@ -892,7 +898,7 @@ async function selectItems(items, opts = {}) {
    */
   const st = {
     cursor: clampCursor(opts.initialCursor, list.length),
-    windowStart: 0,
+    windowStart: Math.max(0, Math.floor(Number(opts.windowStart)) || 0),
     anchor: null,
     selected: toSet(opts.selected !== undefined ? opts.selected : opts.initialSelected),
     search: str(opts.search),
@@ -978,6 +984,23 @@ async function selectItems(items, opts = {}) {
   }
 
   /**
+   * Footer lines: typing and help states have their own hints; otherwise the page may provide one
+   * line of its own (the download plan lists version/options keys here).
+   *
+   * 页脚行：输入态与帮助浮层有自己的提示；其余情况页面可以提供自己的一行
+   * （下载计划页在这里列出选版本/选项键）。
+   */
+  function pageHintLines() {
+    if (st.searching) return hintLines({ searching: true });
+    if (st.help) return hintLines({ help: true });
+    const custom = typeof opts.hints === 'function' ? opts.hints(st) : opts.hints;
+    if (custom !== undefined && custom !== null && String(custom).trim()) {
+      return [String(custom)];
+    }
+    return hintLines({});
+  }
+
+  /**
    * Body lines of the picker, shared by both paths.
    *
    * `standalone` (the default) is the classic full-screen body: it erases the display first and ends
@@ -1002,6 +1025,8 @@ async function selectItems(items, opts = {}) {
     const header = withNotice(
       buildHeaderLines({
         title: opts.title,
+        summaryText:
+          typeof opts.summary === 'function' ? opts.summary(st, state) : opts.summary,
         search: st.search,
         type: st.type,
         baseModel: st.baseModel,
@@ -1080,7 +1105,7 @@ async function selectItems(items, opts = {}) {
     // The shell prints the same hints in its footer, so the hosted body stops before them.
     // 外壳会在页脚打印同样的提示，因此托管主体到此为止。
     if (!standalone) return lines;
-    for (const hintText of hintLines({ help: st.help, searching: st.searching })) {
+    for (const hintText of pageHintLines()) {
       lines.push(view.colors.dim(clipToWidth(hintText, dims.columns)));
     }
     return lines;
@@ -1152,13 +1177,17 @@ async function selectItems(items, opts = {}) {
   const toggleCurrent = () => {
     const item = visibleList()[st.cursor];
     if (!item) return;
+    if (rowDisabled(item)) {
+      st.message = t('tui.select.disabledRow');
+      return;
+    }
     const id = rowKey(item);
     st.selected = single ? new Set([id]) : toggleSelection(st.selected, id);
     st.message = st.selected.has(id) ? t('tui.select.toggledOn') : t('tui.select.toggledOff');
     st.anchor = null;
   };
   const toggleAll = () => {
-    const list_ = visibleList();
+    const list_ = visibleList().filter((item) => !rowDisabled(item));
     const all = list_.length > 0 && list_.every((item) => st.selected.has(rowKey(item)));
     st.selected = single
       ? new Set(list_.length && !all ? [rowKey(list_[0])] : [])
@@ -1170,7 +1199,11 @@ async function selectItems(items, opts = {}) {
       st.message = t('tui.select.singleNoInvert');
       return;
     }
-    st.selected = invertSelection(st.selected, visibleList(), rowOpts);
+    st.selected = invertSelection(
+      st.selected,
+      visibleList().filter((item) => !rowDisabled(item)),
+      rowOpts
+    );
     st.message = t('tui.select.inverted');
   };
   /**
@@ -1185,19 +1218,43 @@ async function selectItems(items, opts = {}) {
     if (st.anchor === null) st.anchor = st.cursor;
     const first = Math.min(st.anchor, st.cursor);
     const last = Math.max(st.anchor, st.cursor);
-    st.selected = rangeSelection(st.selected, visibleList(), first, last, true, rowOpts);
-    st.message = t('tui.select.rangeSelected', { count: last - first + 1 });
+    const list_ = visibleList();
+    let count = 0;
+    for (let index = first; index <= last; index++) {
+      const item = list_[index];
+      if (!item || rowDisabled(item)) continue;
+      st.selected.add(rowKey(item));
+      count++;
+    }
+    st.message = t('tui.select.rangeSelected', { count });
+  };
+  const snapshotState = () => ({
+    cursor: st.cursor,
+    windowStart: st.windowStart,
+    search: st.search,
+    type: st.type,
+    baseModel: st.baseModel,
+    sort: st.sort,
+  });
+  const finishWith = (action, selected) => {
+    const item = visibleList()[st.cursor];
+    finish({
+      selected: new Set(selected),
+      action,
+      state: snapshotState(),
+      currentId: item ? rowKey(item) : null,
+    });
   };
   const confirm = () => {
     if (st.selected.size > 0) {
-      finish({ selected: new Set(st.selected) });
+      finishWith('confirm', st.selected);
       return;
     }
     // In single mode Enter picks the row under the cursor, which is what users expect from a list.
     // 单选模式下回车直接选中光标所在行——列表里这符合直觉。
     const item = visibleList()[st.cursor];
-    if (single && item) {
-      finish({ selected: new Set([rowKey(item)]) });
+    if (single && item && !rowDisabled(item)) {
+      finishWith('confirm', [rowKey(item)]);
       return;
     }
     st.message = t('tui.select.needSelection');
@@ -1229,6 +1286,22 @@ async function selectItems(items, opts = {}) {
     // Any non-shifted key ends a Shift+↑/↓ range selection.
     // 任何不带 Shift 的按键都会结束「Shift+↑/↓ 连续勾选」。
     if (!shift && (key.name !== undefined || text)) st.anchor = null;
+    // A page may reserve a few single keys for its own actions (version picker, options page, ...).
+    // The picker closes and returns the action plus its full state, so the caller can reopen it
+    // exactly where the user left it.
+    //
+    // 页面可以预留几个单键做自己的动作（选版本、选项页……）。选择器会关闭并返回动作与完整状态，
+    // 调用方据此回到用户离开时的位置。
+    if (
+      text &&
+      !key.ctrl &&
+      !shift &&
+      opts.actions &&
+      Object.prototype.hasOwnProperty.call(opts.actions, text)
+    ) {
+      finishWith(opts.actions[text], st.selected);
+      return;
+    }
     switch (key.name) {
       case 'up':
       case 'k':
@@ -1282,6 +1355,10 @@ async function selectItems(items, opts = {}) {
       const index = quickIndex(text);
       const item = visibleList()[index];
       if (item) {
+        if (rowDisabled(item)) {
+          st.message = t('tui.select.disabledRow');
+          return;
+        }
         const id = rowKey(item);
         st.selected = single ? new Set([id]) : toggleSelection(st.selected, id);
         st.message = st.selected.has(id) ? t('tui.select.toggledOn') : t('tui.select.toggledOff');
@@ -1399,7 +1476,7 @@ async function selectItems(items, opts = {}) {
       // 列表自身会把标题作为表头再画一次，因此不再重复进面包屑：
       // 面包屑保留流程阶段（「主菜单 › 下载」）。
       crumb: false,
-      hints: () => hintLines({ help: st.help, searching: st.searching }),
+      hints: () => pageHintLines(),
       render(promptState, ctx) {
         // The shell hands over exactly the room that is left for the body, so the geometry comes from
         // there and not from the terminal: header, info panel, log pane and hints are already gone.

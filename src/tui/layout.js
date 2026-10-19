@@ -72,6 +72,7 @@ const GLYPHS_UNICODE = {
   boxTeeR: '┤',
   bullet: '·',
   arrow: '›',
+  notice: '✔',
 };
 
 /**
@@ -96,6 +97,7 @@ const GLYPHS_ASCII = {
   boxTeeR: '+',
   bullet: '*',
   arrow: '>',
+  notice: '+',
 };
 
 /**

@@ -735,10 +735,10 @@ test('tui/models: 菜单取消不抛错；模型列表与单个模型的页面',
   const cancelled = await runFlow(() => tuiModels.modelsFlow(config), {});
   assert.equal(cancelled, '');
 
-  // Empty library: the browser explains it instead of opening an empty list.
-  // 模型库为空：浏览入口直接说明，而不是打开一张空列表。
+  // Empty library: the browser opens an explanatory page instead of an empty list.
+  // 模型库为空：浏览入口打开一页说明，而不是一张空列表。
   const empty = await runFlow(() => tuiModels.modelsFlow(config), { action: 'browse' });
-  assert.match(empty, /模型库暂无记录/);
+  assert.match(empty, /本地模型库还没有记录/);
 
   seed(config, 900, { versionId: 5, versionName: 'v5', fileName: 'a.bin', content: 'aaaa', dirName: 'A' });
   // Local model management is: the list, then the page of one model (update / verify / pin / open /

@@ -70,6 +70,27 @@ function resolveEntry(entries, dir, fileName) {
 }
 
 /**
+ * Add the final destinations of one item to the progress map (directories and names come from the
+ * job, which knows the layout and version-suffix renames).
+ *
+ * 把一个条目的最终落盘位置加入进度表（目录与文件名来自 job，它知道布局与版本后缀改名）。
+ */
+function addItemEntries(entries, item, dir, names) {
+  const files = Array.isArray(item.files) ? item.files : [];
+  for (let index = 0; index < files.length; index++) {
+    const file = files[index];
+    const named = names && names[index] ? names[index].diskName : null;
+    const target = path.join(dir, named || diskFileName(dir, file.name));
+    if (entries.has(target)) continue;
+    entries.set(target, {
+      target,
+      part: `${target}.part`,
+      expected: Number(file.bytes) || 0,
+    });
+  }
+}
+
+/**
  * Overall progress line: counts, bar, bytes, speed, ETA, elapsed.
  * 总体进度行：计数、进度条、字节、速度、剩余时间、已用时。
  *
@@ -218,7 +239,12 @@ function installKeyHandler(handlers) {
  */
 async function runWithProgress(config, opts) {
   const { plan, outDir, totalBytes } = opts;
-  const entries = buildFileEntries(outDir, plan);
+  // Entries are added when the job tells us the final directory and disk names (`onItemFiles`):
+  // the layout and version-suffix renames make `outDir/<model>` a wrong guess.
+  //
+  // entry 在 job 给出最终目录与落盘文件名时才加入（`onItemFiles`）：
+  // 布局与版本后缀改名会让 `outDir/<模型>` 这个猜测不成立。
+  const entries = new Map();
   const itemTotal = plan.filter((p) => !p.error && !p.skipped).length;
   // Human label of the run: the collection (or model) name the flows pass in, then the collection id,
   // then an empty label. The flows start passing `name` later, so the option stays optional.
@@ -398,9 +424,15 @@ async function runWithProgress(config, opts) {
           attemptInfo = null;
           currentItem = item ? { modelId: item.modelId, name: item.name || String(item.modelId) } : null;
         },
+        onItemFiles: (item, dir, names) => {
+          addItemEntries(entries, item, dir, names);
+          // Existing files are counted immediately; do not report that jump as download speed.
+          // 已存在的文件会立刻计入；不要把这次跳变当成下载速度。
+          lastSample = { t: Date.now(), bytes: sumBytes() };
+        },
         onFileStart: (item, f, dir) => {
           currentItem = item ? { modelId: item.modelId, name: item.name || String(item.modelId) } : currentItem;
-          current = { name: f.name, entry: resolveEntry(entries, dir, f.name) };
+          current = { name: f.diskName || f.name, entry: resolveEntry(entries, dir, f.diskName || f.name) };
           attemptInfo = null;
         },
         onAttempt: (info) => {
@@ -461,6 +493,7 @@ module.exports = {
   runWithProgress,
   buildFileEntries,
   fileSize,
+  resolveEntry,
   installKeyHandler,
   buildPanel,
   buildSummaryLine,

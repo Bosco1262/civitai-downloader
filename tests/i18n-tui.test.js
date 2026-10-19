@@ -69,6 +69,7 @@ const TUI_FILES = [
   'select.js',
   'run.js',
   'download.js',
+  'downloadTask.js',
   'models.js',
   'check.js',
   'login.js',
@@ -88,6 +89,7 @@ const TUI_KEYS = Object.keys(zh).filter((key) => key.startsWith('tui.'));
 const TUI_MODULES = new Set([
   'app',
   'screen',
+  'hint',
   'view',
   'select',
   'run',
@@ -215,22 +217,21 @@ test('i18n-tui: select.js 排序标签与键位提示逐字一致', () => {
   assert.equal(select.SORT_LABELS.name, '按名称');
   assert.equal(select.SORT_LABELS.size, '按大小↓');
   assert.equal(select.SORT_LABELS['size-asc'], '按大小↑');
-  assert.equal(select.KEY_HINTS.length, 3);
-  assert.deepEqual(Array.from(select.KEY_HINTS), [
-    '↑/↓·k/j 移动｜Home/End 首尾｜PgUp/PgDn·[ ] 翻页',
-    '空格 勾选｜a 全选/全不选｜i 反选｜/ 搜索',
-    't 类型｜b 模型｜s 排序｜1-9 跳行｜回车 确认｜? 帮助｜Esc/q/Ctrl+C 取消',
-  ]);
+  // One line for the whole picker: every key it lists works there.
+  // 整个选择器只有一行：列出的每个键在这里都有效。
+  assert.equal(select.KEY_HINTS.length, 1);
+  assert.equal(select.KEY_HINTS[0], '↑↓ 选择 · 空格 勾选 · / 搜索 · t/b/s 筛选 · Enter 确认 · Esc 返回 · ? 帮助');
+  assert.equal(select.hintLines({}).length, 1);
 });
 
 test('i18n-tui: select.js 按键提示随状态切换（输入中 / 帮助浮层）', () => {
   assert.deepEqual(select.hintLines({}), select.KEY_HINTS);
   const typing = select.hintLines({ searching: true });
-  assert.equal(typing.length, 2);
-  assert.ok(typing.join(' ').includes('回退键'));
+  assert.equal(typing.length, 1);
+  assert.ok(typing[0].includes('Enter 结束输入'), typing[0]);
   const help = select.hintLines({ help: true });
-  assert.equal(help.length, 3);
-  assert.ok(help[0].includes('任意键返回'));
+  assert.equal(help.length, 1);
+  assert.ok(help[0].includes('任意键返回'), help[0]);
   // The help overlay itself carries a readable key reference in both languages
   // 帮助浮层本身在两种语言下都给出可读的按键速查
   assert.equal(select.HELP_ITEMS.length, 10);
@@ -339,7 +340,7 @@ test('i18n-tui: 滚动视窗 / 单选模式 / 快捷跳行等新增纯逻辑可�
 
 test('i18n-tui: 主菜单 / 固定页眉文案逐字一致且 app.js 已接线', () => {
   assert.equal(tr('tui.app.bannerTitle'), 'civitai-downloader');
-  assert.equal(tr('tui.screen.headerHint'), '↑↓ 选择 · 回车选中/确认 · Tab切换任务视图 · Esc 取消/退出 · Ctrl+C 退出程序');
+  assert.equal(tr('tui.hint.main'), '↑↓ 选择 · Enter 进入 · Tab 任务视图 · Ctrl+C 退出');
   assert.equal(tr('tui.app.menuTitle'), '主菜单');
   const menu = [
     ['tui.app.menuDownload', '下载'],
@@ -385,15 +386,18 @@ test('i18n-tui: 主菜单 / 固定页眉文案逐字一致且 app.js 已接线',
   );
 });
 
-test('i18n-tui: 仪表盘 / 任务视图 / 日志区文案逐字一致', () => {
+test('i18n-tui: 仪表盘 / 任务视图 / 页脚文案逐字一致', () => {
   assert.equal(tr('tui.screen.infoTitle'), '仪表盘');
   assert.equal(tr('tui.screen.infoSettings'), '当前配置');
-  assert.equal(tr('tui.screen.infoTasks'), '当前任务');
+  assert.equal(tr('tui.screen.infoTasks'), '任务总览');
   assert.equal(tr('tui.screen.infoIdle'), '空闲 · 没有进行中的任务');
-  assert.equal(
-    tr('tui.screen.headerHint'),
-    '↑↓ 选择 · 回车选中/确认 · Tab切换任务视图 · Esc 取消/退出 · Ctrl+C 退出程序'
-  );
+  // One line per page, listing only that page's keys.
+  // 每页一行，且只列这一页能用的键。
+  assert.equal(tr('tui.hint.main'), '↑↓ 选择 · Enter 进入 · Tab 任务视图 · Ctrl+C 退出');
+  assert.equal(tr('tui.hint.menu'), '↑↓ 选择 · Enter 确认 · Esc 返回 · Tab 任务视图 · Ctrl+C 退出');
+  assert.equal(tr('tui.hint.settings'), '↑↓ 选择 · Enter 修改 / 执行 · Esc 返回 · Tab 任务视图 · Ctrl+C 退出');
+  assert.equal(tr('tui.hint.message'), 'Esc 返回 · Tab 任务视图 · Ctrl+C 退出');
+  assert.equal(tr('tui.hint.taskView'), '↑↓ 选择 · Tab / Esc 返回 · Ctrl+C 退出');
   assert.equal(tr('tui.screen.taskTitle'), '任务视图');
   assert.equal(tr('tui.screen.taskCounts', { done: 2, skipped: 1, failed: 0, total: 9 }), '完成 2 · 跳过 1 · 失败 0 / 共 9 项');
   assert.equal(tr('tui.screen.taskElapsed', { elapsed: '00:03' }), '已用 00:03');
@@ -409,7 +413,8 @@ test('i18n-tui: 仪表盘 / 任务视图 / 日志区文案逐字一致', () => {
   // 外壳与其它 TUI 文件一样接入了文案表
   const source = readTui('screen.js');
   for (const key of [
-    'tui.screen.headerHint',
+    'tui.hint.taskView',
+    'tui.hint.compact',
     'tui.screen.infoTitle',
     'tui.screen.infoSettings',
     'tui.screen.infoTasks',
@@ -467,22 +472,27 @@ test('i18n-tui: 下载进度面板文案逐字一致', () => {
 });
 
 test('i18n-tui: 公共交互基元（按键提示 / 信息块 / 状态栏 / 帮助页）', () => {
-  // Every prompt ends with the same two-line key hint
-  // The plain (non-shell) path appends the same global key hint to every prompt
-  //
-  // 简易（无外壳）路径给每个提问追加同一行全局按键提示
+  // The plain (non-shell) path appends the menu hint to every prompt
+  // 简易（无外壳）路径给每个提问追加菜单那一行按键提示
   const hints = pages.hintLines();
   assert.equal(hints.length, 1);
-  assert.equal(hints[0], '↑↓ 选择 · 回车选中/确认 · Tab切换任务视图 · Esc 取消/退出 · Ctrl+C 退出程序');
+  assert.equal(hints[0], '↑↓ 选择 · Enter 确认 · Esc 返回 · Tab 任务视图 · Ctrl+C 退出');
   assert.ok(pages.hint().includes('Esc'));
 
-  // The shell renders prompts inside the frame, so each prompt type has its own footer hint
-  // 外壳把提问渲染在框架内，因此每种提问都有自己的页脚提示
-  assert.equal(tr('tui.pages.hintMenu'), '↑↓ 选择 · 回车确认 · Esc 返回');
-  assert.equal(tr('tui.pages.hintConfirm'), '←→ 选择 · y / n 快捷 · 回车确认 · Esc 返回');
-  assert.equal(tr('tui.pages.hintText'), '直接输入 · 回车确认 · Esc 取消');
+  // Inside the frame each page owns its single line: the keys it lists are the keys that work there.
+  // 框架里每一页都拥有自己那一行：列出来的键就是这一页能用的键。
+  assert.equal(tr('tui.hint.confirm'), '←→ 选择 · y/n 快捷 · Enter 确认 · Esc 返回 · Tab 任务视图 · Ctrl+C 退出');
+  assert.equal(tr('tui.hint.text'), 'Enter 提交 · Esc 放弃 · Tab 任务视图 · Ctrl+C 退出');
+  assert.equal(tr('tui.hint.textPick'), 'Enter 提交 · Esc 放弃 · Ctrl+O 选择目录 · Tab 任务视图 · Ctrl+C 退出');
+  assert.equal(tr('tui.pages.pickUnavailable'), '当前环境无法打开目录选择框，请直接输入路径');
   assert.equal(tr('tui.pages.listPosition', { index: 3, total: 12 }), '第 3 / 12 项');
-  assert.equal(tr('tui.app.menuHint'), '回车进入 · Tab 任务视图 · Esc 退出');
+  // Saving has no shortcut any more: it is a row of the page.
+  // 保存不再有快捷键：它就是页面里的一行。
+  assert.ok(!tr('tui.hint.settings').includes('s 保存'), tr('tui.hint.settings'));
+  // The main menu owns a line too, and it does not advertise Esc (which does nothing there).
+  // 主菜单也有自己那一行，且不再宣传 Esc（它在那里无效）。
+  assert.ok(!tr('tui.hint.main').includes('Esc'), tr('tui.hint.main'));
+  assert.equal(tr('tui.app.menuHint'), 'tui.app.menuHint');
 
   // Fact blocks align their label column and skip empty values
   // 信息块的标签列对齐，空值不输出
@@ -559,7 +569,13 @@ test('i18n-tui: manage / login / settings 文案逐字一致', () => {
   assert.equal(tr('tui.settings.outDir', { root: 'C:\\repo' }), '下载目录（相对路径相对项目根：C:\\repo）');
   assert.equal(tr('tui.settings.chromePath'), 'Chrome/Edge 路径（留空自动检测）');
   assert.equal(tr('tui.settings.dedupHardlink'), '硬链接（同盘零占用，注意：删一处不影响另一处，但改内容会同步）');
-  assert.equal(tr('tui.settings.saved'), '设置已保存到 config.json');
+  // Every field is written the moment it is confirmed: the feedback names the field and its new value.
+  // 每个字段确认即写盘：反馈里带上字段名与新值。
+  assert.equal(
+    tr('tui.settings.savedItem', { label: '界面语言', value: 'English' }),
+    '已保存：界面语言 = English'
+  );
+  assert.equal(tr('tui.settings.unchanged', { label: '并发' }), '并发 未修改');
   assert.equal(
     tr('tui.settings.siteChanged'),
     '站点已变更：Chrome profile 会切换到新站点的独立目录，请重新登录（主菜单 → 登录 / 更新登录）'
@@ -593,7 +609,7 @@ test('i18n-tui: 切到 en 后 TUI 文案为英文、非空且与 zh 不同', () 
     assert.ok(i18n.t('tui.settings.languageAuto').includes('CIVITAI_LANG'));
     // Cancelling is Esc's job in the redesigned TUI, and the header says so.
     // 新版 TUI 里取消由 Esc 负责，页眉也是这么写的。
-    assert.ok(i18n.t('tui.screen.headerHint').includes('Esc'));
+    assert.ok(i18n.t('tui.hint.menu').includes('Esc'));
     assert.ok(i18n.t('tui.run.cancelNotice').length > 0);
     // The program name is a brand: it stays the same in both languages.
     // 程序名是品牌名：中英文都保持同一写法。
@@ -601,8 +617,8 @@ test('i18n-tui: 切到 en 后 TUI 文案为英文、非空且与 zh 不同', () 
     assert.ok(i18n.t('tui.download.collectionIdPrompt').includes('URL'));
     // Key names inside the key hints must stay readable in English
     // 键位提示里的按键名在英文下要能看懂
-    assert.ok(i18n.t('tui.select.keyHintSelect').includes('Space'));
-    assert.ok(i18n.t('tui.select.keyHintAction').includes('Enter'));
+    assert.ok(i18n.t('tui.hint.picker').includes('Space'));
+    assert.ok(i18n.t('tui.hint.picker').includes('Enter'));
   });
   // Still Chinese after the language is restored
   // 恢复后仍是中文
@@ -702,9 +718,9 @@ test('i18n-tui: select.js 导出常量/纯函数在两种语言下都可用且�
       }
       for (const hint of select.KEY_HINTS) {
         assert.ok(hint.trim().length > 0);
-        assertNoPlaceholder(lang, 'tui.select.keyHint*', hint);
+        assertNoPlaceholder(lang, 'tui.hint.picker', hint);
       }
-      assert.equal(select.KEY_HINTS.length, 3);
+      assert.equal(select.KEY_HINTS.length, 1);
       assert.notEqual(select.describeStatus(items[0], { 1: { versionId: 1 } }), '');
       const lines = select.buildHeaderLines({
         search: 'x',
@@ -749,10 +765,10 @@ test('i18n-tui: select.js 导出常量/纯函数在两种语言下都可用且�
   // 语言切换是实时的（模块级常量不能在加载时把文案定死）
   withLanguage('en', () => {
     assert.notEqual(select.SORT_LABELS.size, zhLabels.size);
-    assert.notEqual(select.KEY_HINTS[2], zhHints[2]);
+    assert.notEqual(select.KEY_HINTS[0], zhHints[0]);
   });
   assert.equal(select.SORT_LABELS.size, zhLabels.size);
-  assert.equal(select.KEY_HINTS[2], zhHints[2]);
+  assert.equal(select.KEY_HINTS[0], zhHints[0]);
 });
 
 // ---------------------------------------------------------------------------

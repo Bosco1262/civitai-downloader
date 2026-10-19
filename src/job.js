@@ -652,6 +652,13 @@ async function runDownloadJob(config, opts, hooks = {}) {
         }
       }
       const names = planned.names;
+      // The destination directory and the final on-disk names are only known here (layout, recorded
+      // directories and version-suffix renames all participate). The progress panels need exactly
+      // these values to measure the right files instead of guessing a directory from the model name.
+      //
+      // 目标目录与最终落盘文件名只有在这里才完全确定（布局、已记录目录、版本后缀改名都会参与）。
+      // 进度面板必须拿到这些值，才能测量正确的文件，而不是按模型名猜一个目录。
+      if (hooks.onItemFiles) hooks.onItemFiles(item, dir, names);
       if (planned.suffixMode) {
         logFn(t('job.versionSuffix', { name: item.name, version: layout.versionLabel(item.versionName, item.versionId) }));
       }
@@ -686,7 +693,7 @@ async function runDownloadJob(config, opts, hooks = {}) {
               size: formatBytes(f.bytes),
             })
           );
-          if (hooks.onFileStart) hooks.onFileStart(item, f, dir);
+          if (hooks.onFileStart) hooks.onFileStart(item, { ...f, diskName }, dir);
 
           const targetPath = path.join(dir, diskName);
           let status;
@@ -788,6 +795,11 @@ async function runDownloadJob(config, opts, hooks = {}) {
           }
           itemOk = false;
           logFn(t('job.fileFailed', { file: f.name, message: e.message }));
+          // The UI needs the reason, not just the fact that this file failed: the task view's result
+          // and the retry decision both depend on it.
+          //
+          // UI 需要失败原因而不只是「失败了」：任务视图的结果与「是否重试」都依赖它。
+          if (hooks.onFileError) hooks.onFileError(item, f, e);
           if (hooks.onFileDone) hooks.onFileDone(item, f, 'failed');
           break;
         }

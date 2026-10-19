@@ -39,6 +39,8 @@ const { refToTarget } = require('../commands/download');
 const { t } = require('../i18n');
 const view = require('./view');
 const pages = require('./pages');
+const screen = require('./screen');
+const layout = require('./layout');
 const { runWithProgress } = require('./run');
 
 /**
@@ -232,21 +234,128 @@ function describeVersion(row) {
 }
 
 /**
- * Choose the version to download for one model: the full-screen picker when several versions
- * exist, otherwise the single version is used directly.
+ * One model, one page: its facts on top, its versions underneath, one Enter to pick one.
  *
- * `wanted` is the version requested on the command line (or the pinned one); the picker opens on it.
+ * The generic multi-select picker is right for collection items (search, filters, hundreds of rows),
+ * but wrong for "you just pasted one model": there the user wants to see what the model *is* and
+ * which versions exist, in the same window, without losing the frame.
  *
  *
- * 为一个模型选择要下载的版本：多版本时用全屏选择器，单版本直接用。
+ * 一个模型一页：上面是模型信息，下面是它的版本，回车选一个。
  *
- * `wanted` 是命令行指定（或已固定）的版本，选择器默认停在该行。
+ * 通用多选选择器适合收藏集条目（搜索、筛选、几百行），但不适合「你刚粘了一个模型」：
+ * 这时用户想看的是这个模型**是什么**、有哪些版本，而且要在同一个窗口里，不丢框架。
+ *
+ * @param {object} detail site model object
+ * @param {Array<object>} rows rows from `versionRows`
+ * @param {number} initialCursor
+ * @returns {Promise<string|null>} chosen version id, or null
+ */
+async function modelVersionPage(detail, rows, initialCursor) {
+  const state = { cursor: initialCursor, windowStart: 0 };
+  const name = String(detail.name || detail.id || '');
+  const baseModels = [...new Set(rows.map((row) => row.baseModel).filter(Boolean))];
+  const facts = [];
+  if (detail.type) facts.push(String(detail.type));
+  if (baseModels.length) facts.push(baseModels.join(' / '));
+  const author = detail.creator && detail.creator.username ? String(detail.creator.username) : '';
+  if (author) facts.push(t('tui.models.pageAuthor', { author }));
+  const downloads = detail.stats && Number(detail.stats.downloadCount);
+  if (Number.isFinite(downloads) && downloads > 0) {
+    facts.push(t('tui.models.pageDownloads', { count: String(downloads) }));
+  }
+  const downloaded = rows.filter((row) => row.downloaded).length;
+  if (downloaded) facts.push(t('tui.models.pageDownloaded', { count: downloaded }));
+
+  const nameWidth = Math.min(
+    30,
+    rows.reduce((max, row) => Math.max(max, view.displayWidth(row.name)), 0)
+  );
+
+  return screen.prompt({
+    title: t('tui.app.menuDownload'),
+    crumb: true,
+    hints: () => [t('tui.hint.modelVersion')],
+    render(_state, ctx) {
+      const width = Math.max(20, Math.floor(ctx.width) || 80);
+      const room = Math.max(3, Math.floor(ctx.rows) || 3);
+      const lines = [view.colors.bold(view.truncateTo(name, width))];
+      if (facts.length) {
+        lines.push(view.colors.dim(view.truncateTo(facts.join(` ${layout.glyphs().bullet} `), width)));
+      }
+      lines.push('');
+      lines.push(view.colors.dim(t('tui.models.pageVersions', { count: rows.length })));
+
+      // Name + facts + blank + "versions" heading + status line stay put; the rest scrolls.
+      // 名称 + 信息 + 空行 + 「版本」小标题 + 状态行固定，其余滚动。
+      const listRoom = Math.max(1, room - lines.length - 1);
+      const win = pages.windowOf(rows.length, state.cursor, listRoom, state.windowStart);
+      state.windowStart = win.start;
+      for (let index = win.start; index < win.end; index++) {
+        const row = rows[index];
+        const active = index === state.cursor;
+        const marker = active ? view.colors.cyan(layout.glyphs().cursor) : ' ';
+        const label = view.padTo(row.name, nameWidth);
+        const rest = view.truncateTo(describeVersion(row), Math.max(8, width - nameWidth - 4));
+        lines.push(`${marker} ${active ? view.colors.bold(label) : label}  ${view.colors.dim(rest)}`);
+      }
+      if (rows.length > win.end - win.start) {
+        lines.push(
+          view.colors.dim(t('tui.pages.listPosition', { index: state.cursor + 1, total: rows.length }))
+        );
+      }
+      return lines;
+    },
+    onKey(text, key, entry) {
+      const name_ = key && key.name;
+      const typed = String(text === undefined || text === null ? '' : text);
+      const step = (delta) => {
+        const next = state.cursor + delta;
+        state.cursor = Math.max(0, Math.min(rows.length - 1, next));
+      };
+      if (name_ === 'up' || typed === 'k') step(-1);
+      else if (name_ === 'down' || typed === 'j') step(1);
+      else if (name_ === 'pageup') step(-8);
+      else if (name_ === 'pagedown') step(8);
+      else if (name_ === 'home') state.cursor = 0;
+      else if (name_ === 'end') state.cursor = rows.length - 1;
+      else if (name_ === 'return') entry.settle(rows[state.cursor] && rows[state.cursor].modelId);
+      else return;
+      // Keep the window still until the cursor would leave it.
+      // 光标离开视窗之前，视窗保持不动。
+    },
+    onEscape(entry) {
+      entry.settle(null);
+      return true;
+    },
+  });
+}
+
+/**
+ * Choose the version to download for one model: its own page inside the shell, the picker or the
+ * single version otherwise.
+ *
+ * `wanted` is the version requested on the command line (or the pinned one); the page opens on it.
+ *
+ *
+ * 为一个模型选择要下载的版本：外壳里是它自己的一页，其它情况用选择器或直接取唯一版本。
+ *
+ * `wanted` 是命令行指定（或已固定）的版本，页面默认停在该行。
  */
 async function chooseVersion(config, detail, wanted, opts = {}) {
   const rows = versionRows(config, detail);
   if (!rows.length) return null;
   const initialId = String(wanted || (rows[0] && rows[0].modelId) || '');
   const initialCursor = Math.max(0, rows.findIndex((r) => r.modelId === initialId));
+
+  // Inside the shell the model gets a page of its own: facts + versions, no separate window.
+  // 外壳里模型有自己的页面：信息 + 版本，不再另开一个窗口。
+  if (screen.isActive()) {
+    const pickedId = await modelVersionPage(detail, rows, initialCursor);
+    if (!pickedId) return null;
+    return detail.modelVersions.find((v) => String(v.id) === String(pickedId)) || null;
+  }
+
   if (rows.length === 1 && opts.alwaysAsk !== true) {
     return detail.modelVersions.find((v) => String(v.id) === rows[0].modelId) || detail.modelVersions[0];
   }
@@ -431,6 +540,7 @@ async function runItems(config, items, outDir, force) {
  * @param {{refs?:string[]}} [opts] preset references (used by a model's own page)
  */
 async function downloadFlow(config, opts = {}) {
+  if (screen.isActive()) return downloadModelsShell(config, opts);
   const refs = Array.isArray(opts.refs) && opts.refs.length ? opts.refs : await askRefs(config);
   if (!refs) return;
 
@@ -449,14 +559,22 @@ async function downloadFlow(config, opts = {}) {
     const choice = await pages.promptMenu(
       t('tui.download.startConfirm', { count: items.length, size: formatBytes(totalBytes), dir: outDir }),
       [
-        { title: t('tui.download.startNow'), value: 'go', description: t('tui.download.startNowDesc') },
+        {
+          title: t('tui.download.startNow'),
+          value: 'go',
+          description: t('tui.download.startNowDesc', { count: items.length }),
+        },
         {
           title: t('tui.download.changeDir'),
           value: 'dir',
-          description: t('tui.download.changeDirDesc', { root: config.root }),
+          description: t('tui.download.changeDirDesc', { root: config.root, dir: outDir }),
         },
-        { title: t('tui.manage.back'), value: 'back' },
-      ]
+        {
+          title: t('tui.manage.back'),
+          value: 'back',
+        },
+      ],
+      { stage: t('tui.app.menuDownload') }
     );
     if (choice === null || choice === 'back') {
       view.log(t('tui.manage.cancelled'));
@@ -485,6 +603,102 @@ async function downloadFlow(config, opts = {}) {
 
   const openIt = await pages.promptConfirm(t('tui.download.openDirConfirm'), { initial: false });
   if (openIt && view.openDir(outDir)) view.log(t('tui.download.opened', { dir: outDir }));
+}
+
+// ---------------------------------------------------------------------------
+// Shell flow: model references → shared plan pages
+// 外壳流程：模型引用 → 共享计划页面
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the plan for a set of pasted references without asking for a version one by one: the plan
+ * page owns the per-item version picker, so the whole selection stays visible and reversible.
+ *
+ * 为一组粘贴的引用生成计划，不再逐个追问版本：版本选择归计划页，
+ * 因此整个选择过程可见、可回退。
+ */
+async function buildModelPlanShell(config, raws) {
+  const picks = await resolveRefs(config, raws);
+  if (!picks.length) {
+    view.log(t('tui.models.noRefs'));
+    return null;
+  }
+  const items = [];
+  for (const ref of picks) {
+    view.log(t('tui.models.fetchingModel', { modelId: ref.modelId }));
+    let detail = null;
+    try {
+      detail = await fetchModelDetail(config.site, ref.modelId, config.userAgent);
+    } catch (e) {
+      view.log(view.colors.red(t('tui.models.fetchFailed', { name: ref.modelId, error: e.message })));
+      continue;
+    }
+    const versions = Array.isArray(detail.modelVersions) ? detail.modelVersions : [];
+    if (!versions.length) {
+      view.log(t('tui.models.noVersionsOnline', { name: detail.name }));
+      continue;
+    }
+    const entry = readEntry(config, ref.modelId);
+    const pinned = entry && entry.pinnedVersionId ? String(entry.pinnedVersionId) : null;
+    const wanted = ref.versionId || pinned || String(versions[0].id);
+    const version = versions.find((item) => String(item.id) === String(wanted)) || versions[0];
+    const built = versionToItem(config.site, version, {
+      fileTypes: config.fileTypes,
+      primaryOnly: config.primaryOnly,
+    });
+    if (!built.files.length) {
+      view.log(t('tui.models.noFiles', { name: detail.name, version: version.name || version.id }));
+      continue;
+    }
+    items.push({
+      ...built,
+      modelId: detail.id,
+      name: detail.name,
+      type: detail.type,
+      baseModel: version.baseModel,
+      modelMeta: detail,
+      versionId: version.id,
+      versionName: version.name,
+      baseVersionId: String(version.id),
+      manual: false,
+    });
+  }
+  return items.length ? items : null;
+}
+
+/**
+ * Shell entry of "download models": references → shared plan → confirm → receipt.
+ * 「下载模型」的外壳入口：引用 → 共享计划 → 确认 → 回执。
+ */
+async function downloadModelsShell(config, opts = {}) {
+  const refs =
+    Array.isArray(opts.refs) && opts.refs.length ? opts.refs : await askRefs(config);
+  if (!refs) return;
+  const items = await pages.withSpinner(t('tui.download.fetchVersions'), () =>
+    buildModelPlanShell(config, refs)
+  );
+  if (!items || !items.length) {
+    view.notice(t('tui.download.noDownloadable'), view.colors.yellow);
+    return;
+  }
+  const collectionId =
+    items.length === 1 ? `model-${items[0].modelId}` : `refs-${Date.now()}`;
+  const name =
+    items.length === 1
+      ? items[0].name
+      : t('tui.download.modelsName', { count: items.length });
+  const totalBytes = items.reduce((sum, item) => sum + (Number(item.totalBytes) || 0), 0);
+  return require('./download').runDownloadPlan(config, {
+    plan: items,
+    collectionId,
+    name,
+    sourceLine: t('tui.download.planSourceModels', {
+      count: items.length,
+      size: formatBytes(totalBytes),
+    }),
+    outDir: resolveOutDir(config, config.outDir),
+    jobs: config.jobs,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -687,7 +901,9 @@ async function browseFlow(config, opts = {}) {
 async function browseRows(config, collectionIds) {
   const rows = libraryRows(config, collectionIds);
   if (!rows.length) {
-    view.log(t('tui.models.noRecords'));
+    // An empty library still gets a page: a log line alone looks like the key press did nothing.
+    // 模型库为空时也给一页说明：只在日志里回一行会让人以为按键没生效。
+    await pages.promptMessage(t('tui.app.menuModels'), [t('tui.models.noRecords'), '', t('tui.models.noRecordsHint')]);
     return;
   }
   view.log(t('tui.models.browseHint'));
@@ -888,7 +1104,7 @@ async function verifyFlow(config, opts = {}) {
     view.note(`    ${t('tui.manage.dirLine', { dir: b.dir })}`);
   }
   if (!result.broken.length) {
-    view.log(t('tui.manage.verifyAllOk'));
+    view.notice(t('tui.manage.verifyAllOk'), view.colors.green);
     return;
   }
 
@@ -933,7 +1149,7 @@ async function verifyFlow(config, opts = {}) {
     if (summary.failed) failed++;
   }
   view.bell();
-  if (failed) view.log(view.colors.red(t('tui.manage.repairFailed')));
+  if (failed) view.notice(t('tui.manage.repairFailed'), view.colors.red);
 }
 
 // ---------------------------------------------------------------------------
@@ -960,7 +1176,7 @@ async function togglePin(config, modelId) {
     });
     if (!unpin) return;
     updater.setPin(config, modelId, null);
-    view.log(t('pin.unpinned', { name: entry.name || modelId }));
+    view.notice(t('pin.unpinned', { name: entry.name || modelId }), view.colors.green);
     return;
   }
 
@@ -991,11 +1207,12 @@ async function togglePin(config, modelId) {
 
   const rec = getVersion(entry, chosen.versionId);
   updater.setPin(config, modelId, chosen.versionId);
-  view.log(
+  view.notice(
     t('pin.pinned', {
       name: entry.name || modelId,
       version: (rec && rec.versionName) || chosen.versionId,
-    })
+    }),
+    view.colors.green
   );
 }
 
@@ -1091,6 +1308,9 @@ async function modelsFlow(config) {
 module.exports = {
   modelsFlow,
   libraryFlow,
+  // The "download models" entry of the download submenu calls this one through a lazy require.
+  // 「下载」子菜单里的「下载模型」通过惰性 require 调用它。
+  downloadFlow,
   modelActions,
   browseFlow,
   parseRefs,

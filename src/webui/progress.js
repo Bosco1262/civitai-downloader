@@ -90,7 +90,7 @@ function createTracker(opts = {}) {
      */
     fileStarted(item, file, dir) {
       if (!item || !file) return;
-      const name = file.name || file.remoteName || 'unnamed';
+      const name = file.diskName || file.name || file.remoteName || 'unnamed';
       const target = path.join(dir, diskFileName(dir, name));
       active.set(String(item.modelId), {
         modelId: String(item.modelId),

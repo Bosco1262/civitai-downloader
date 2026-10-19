@@ -477,17 +477,20 @@ test('rangeSelection: 连续区间勾选/取消（不修改入参）', () => {
   assert.deepEqual([...select.rangeSelection(new Set(), items, -5, 99)].sort(), ['1', '2', '3', '4', '5']);
 });
 
-test('hintLines: 普通 / 输入中 / 帮助浮层三种提示', () => {
+test('hintLines: 普通 / 输入中 / 帮助浮层各给一行提示', () => {
+  // One line per state: the footer never shows two key hints at once.
+  // 每个状态只给一行：页脚不会同时显示两份按键说明。
   assert.deepEqual(select.hintLines({}), select.KEY_HINTS);
+  assert.equal(select.hintLines({}).length, 1);
   assert.deepEqual(select.hintLines({ searching: true }), select.SEARCH_HINTS);
-  assert.equal(select.hintLines({ searching: true }).length, 2);
-  assert.equal(select.hintLines({ help: true }).length, 3);
+  assert.equal(select.hintLines({ searching: true }).length, 1);
+  assert.equal(select.hintLines({ help: true }).length, 1);
   // Search hints win over the help state while typing, so the user is not told to press a key that
   // would enter the search box again
   //
   // 输入态优先于帮助浮层，避免提示用户按一个又会进入搜索的键
   assert.deepEqual(select.hintLines({ help: true, searching: true }), select.SEARCH_HINTS);
-  for (const line of [...select.KEY_HINTS, ...select.SEARCH_HINTS]) {
+  for (const line of [...select.KEY_HINTS, ...select.SEARCH_HINTS, ...select.HELP_HINTS]) {
     assert.ok(String(line).trim().length > 0);
   }
 });

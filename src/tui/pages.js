@@ -32,6 +32,7 @@ const layout = require('./layout');
 const view = require('./view');
 const screen = require('./screen');
 const { isTextInput, installRawKeys } = require('./keys');
+const { pickDirectory, pickerCommand } = require('./fspicker');
 const { selectItems, isInteractive } = require('./select');
 
 const { colors, displayWidth, truncateTo, padTo } = layout;
@@ -54,11 +55,11 @@ function promptLib() {
 }
 
 /**
- * Global key hint of the plain (non-shell) path; the shell prints it in the header instead.
- * 简易（无外壳）路径的全局按键提示；启用外壳时由页眉显示。
+ * Global key hint of the plain (non-shell) path; the shell prints the page's own line at the bottom.
+ * 简易（无外壳）路径的按键提示；启用外壳时由页脚显示当前页自己那一行。
  */
 function hintLines() {
-  return [t('tui.screen.headerHint')];
+  return [t('tui.hint.menu')];
 }
 
 /**
@@ -102,16 +103,35 @@ function heading(text, width) {
 
 /**
  * Scroll window of a list: which slice to draw and where the cursor sits inside it.
+ *
+ * The window only moves when the cursor would leave it: stepping through the visible rows keeps the
+ * text still, and the "page" scrolls one row at a time at the top and bottom edges.
+ *
+ *
  * 列表的滚动视窗：画哪一段，以及光标在段内的位置。
  *
+ * 只有光标将要离开视窗时视窗才移动：在可见范围内上下移动时文字不动，
+ * 到顶/到底后再走一格，内容才会一行一行地滚。
+ *
+ * @param {number} count total rows
+ * @param {number} cursor current row
+ * @param {number} size rows that fit
+ * @param {number} [previousStart] start of the previous window (0 when there is none yet)
  * @returns {{start:number, end:number, cursor:number}}
  */
-function windowOf(count, cursor, size) {
+function windowOf(count, cursor, size, previousStart = 0) {
   const total = Math.max(0, count);
   const room = Math.max(1, Math.floor(size));
-  const clamped = Math.max(0, Math.min(total - 1, Number(cursor) || 0));
-  let start = 0;
-  if (clamped >= room) start = Math.min(clamped - room + 1, Math.max(0, total - room));
+  const clamped = Math.max(0, Math.min(Math.max(0, total - 1), Number(cursor) || 0));
+  const maxStart = Math.max(0, total - room);
+  // Stay where we were (as long as that is still a valid window)…
+  // 尽量待在原来的位置（只要它还是合法视窗）……
+  let start = Math.max(0, Math.min(Math.floor(Number(previousStart)) || 0, maxStart));
+  // …and only scroll when the cursor would fall outside it.
+  // ……只有光标要跑出去时才滚动。
+  if (clamped < start) start = clamped;
+  else if (clamped >= start + room) start = clamped - room + 1;
+  start = Math.max(0, Math.min(start, maxStart));
   return { start, end: Math.min(total, start + room), cursor: clamped };
 }
 
@@ -152,13 +172,17 @@ function shellMenu(message, choices, options) {
   return screen.prompt({
     title: options.stage || '',
     crumb: !!options.stage,
-    initialState: { cursor: initial },
-    hints: () => [t('tui.pages.hintMenu')],
+    initialState: { cursor: initial, windowStart: 0 },
+    // No footer of its own: this list only uses the keys the page's line already names.
+    // 不设自己的页脚：这个列表只用页脚那一行已经写出的键。
+    hints: () => [t('tui.hint.menu')],
     render(state, ctx) {
       const lines = heading(message, ctx.width);
       lines.push('');
       const room = Math.max(1, ctx.rows - lines.length);
-      const win = windowOf(items.length, state.cursor, room);
+      const win = windowOf(items.length, state.cursor, room, state.windowStart);
+      state.windowStart = win.start;
+      state.cursor = win.cursor;
       items.slice(win.start, win.end).forEach((item, index) => {
         lines.push(
           rowLine(item.label, item.description, {
@@ -175,8 +199,10 @@ function shellMenu(message, choices, options) {
     },
     onKey(text, key, entry) {
       const state = entry.state;
-      if (key.name === 'up' || text === 'k') state.cursor = Math.max(0, state.cursor - 1);
-      else if (key.name === 'down' || text === 'j') state.cursor = Math.min(items.length - 1, state.cursor + 1);
+      // The cursor wraps around at both ends: pressing ↑ on the first entry jumps to the last one.
+      // 光标在两端循环：在第一项按 ↑ 会跳到末项。
+      if (key.name === 'up' || text === 'k') state.cursor = state.cursor <= 0 ? items.length - 1 : state.cursor - 1;
+      else if (key.name === 'down' || text === 'j') state.cursor = state.cursor >= items.length - 1 ? 0 : state.cursor + 1;
       else if (key.name === 'home') state.cursor = 0;
       else if (key.name === 'end') state.cursor = items.length - 1;
       else if (key.name === 'pageup') state.cursor = Math.max(0, state.cursor - 10);
@@ -203,7 +229,9 @@ function shellConfirm(message, options) {
     title: options.stage || '',
     crumb: !!options.stage,
     initialState: { cursor: initial ? 0 : 1 },
-    hints: () => [t('tui.pages.hintConfirm')],
+    // Only the keys that work here: ←→ and y/n answer directly, plus the shared ones.
+    // 只列这里能用的键：←→ 与 y / n 直接作答，外加共用的那几个。
+    hints: () => [t('tui.hint.confirm')],
     render(state, ctx) {
       const lines = heading(options.danger ? colors.yellow(message) : message, ctx.width);
       lines.push('');
@@ -216,7 +244,9 @@ function shellConfirm(message, options) {
       const state = entry.state;
       if (key.name === 'left' || key.name === 'right' || text === 'h' || text === 'l') {
         state.cursor = state.cursor === 0 ? 1 : 0;
-      } else if (text === 'y' || text === 'Y') entry.settle(true);
+      } else if (key.name === 'up') state.cursor = 0;
+      else if (key.name === 'down') state.cursor = 1;
+      else if (text === 'y' || text === 'Y') entry.settle(true);
       else if (text === 'n' || text === 'N') entry.settle(false);
       else if (key.name === 'return') entry.settle(state.cursor === 0);
       else return;
@@ -231,12 +261,27 @@ function shellConfirm(message, options) {
  */
 function shellText(message, options) {
   const initial = options.initial === undefined || options.initial === null ? '' : String(options.initial);
+  // Ctrl+R restores the caller's default for this field (settings passes the config default), and the
+  // hint line only mentions the keys the field actually supports.
+  //
+  // Ctrl+R 恢复调用方给这个字段的默认值（设置页传的是配置默认值）；
+  // 提示行只列出这个字段真正支持的键。
+  const hasReset = options.resetValue !== undefined && options.resetValue !== null;
+  const hintKey = options.pick
+    ? hasReset
+      ? 'tui.hint.textPickReset'
+      : 'tui.hint.textPick'
+    : hasReset
+      ? 'tui.hint.textReset'
+      : 'tui.hint.text';
   return screen.prompt({
     title: options.stage || '',
     crumb: !!options.stage,
     acceptsText: true,
     initialState: { value: initial, cursor: initial.length, error: '' },
-    hints: () => [t('tui.pages.hintText')],
+    // Enter submits this one field rather than moving on, so the line says "submit".
+    // 这里的 Enter 是「提交这一个字段」而不是进入下一屏，所以写成「提交」。
+    hints: () => [t(hintKey)],
     render(state, ctx) {
       const lines = heading(message, ctx.width);
       lines.push('');
@@ -266,6 +311,25 @@ function shellText(message, options) {
     onKey(text, key, entry) {
       const state = entry.state;
       const value = state.value;
+      // Ctrl+O opens the platform's folder picker when the field allows it; the picked path is put
+      // into the field (never submitted directly), so a device where the dialog cannot open still
+      // works by typing.
+      //
+      // 字段允许时 Ctrl+O 打开系统的目录选择框；选中的路径只写回输入框（不会直接提交），
+      // 因此弹不出对话框的设备仍然可以手打。
+      if (key.ctrl && key.name === 'o' && options.pick === 'directory') {
+        fillFromDirectoryPicker(state, entry);
+        return;
+      }
+      // Ctrl+R fills the field with its default value (still editable, still needs Enter to submit).
+      // Ctrl+R 把默认值填进输入框（仍可继续编辑，仍需 Enter 提交）。
+      if (key.ctrl && key.name === 'r' && hasReset) {
+        state.value = String(options.resetValue);
+        state.cursor = state.value.length;
+        state.error = '';
+        entry.state = state;
+        return;
+      }
       if (key.name === 'return') {
         const answer = options.trim === false ? value : value.trim();
         if (typeof options.validate === 'function') {
@@ -303,6 +367,103 @@ function shellText(message, options) {
       entry.state = state;
     },
   });
+}
+
+/**
+ * Open the platform folder dialog and write the chosen path into the field.
+ *
+ * The value is only placed in the input line — the user still edits and submits it with Enter. Cancel
+ * leaves the field untouched; a platform without any dialog gets a short notice instead of silence.
+ *
+ *
+ * 打开系统目录选择框，并把选中的路径写进输入框。
+ *
+ * 选中的值只是填进输入行——用户仍可修改后再按 Enter 提交。取消时输入框保持原样；
+ * 平台没有可用对话框时给一句提示，而不是毫无反应。
+ */
+async function fillFromDirectoryPicker(state, entry) {
+  if (!pickerCommand(process.platform, '')) {
+    screen.notice(t('tui.pages.pickUnavailable'), colors.dim);
+    return;
+  }
+  const picked = await pickDirectory(state.value || '');
+  if (!picked) return;
+  state.value = picked;
+  state.cursor = picked.length;
+  state.error = '';
+  entry.state = state;
+  screen.refresh();
+}
+
+/**
+ * Information page: a screen with a message and nothing to choose.
+ *
+ * Section entries use it when there is nothing to list yet (no collection snapshot, empty library).
+ * Returning to the menu with only a log line looks like the key press did nothing; a page makes the
+ * answer visible where the user is looking.
+ *
+ * Nothing happens on Enter: there is nothing to open here, and Esc (the global "back") is the only
+ * way out, so the key cannot be mistaken for "go on".
+ *
+ *
+ * 信息页：只有一段说明、没有可选项的界面。
+ *
+ * 分区入口在没有可列出的内容时（还没有收藏集快照、模型库为空）用它。
+ * 只在日志里留一行会让人以为按键没生效；用一页把答案显示在用户正看着的地方。
+ *
+ * Enter 在这里不做任何事：没有可进入的东西，唯一的出口是 Esc（全局的「返回」），
+ * 这样按键不会被误解成「继续」。
+ *
+ * @param {string} title breadcrumb segment
+ * @param {string[]} lines message lines (already translated)
+ */
+async function promptMessage(title, lines) {
+  const body = (Array.isArray(lines) ? lines : [lines]).map((line) => String(line));
+  if (!screen.isActive()) {
+    for (const line of body) view.note(line);
+    return null;
+  }
+  return screen.prompt({
+    title,
+    // Only Esc works here: there is nothing to choose, so the line says exactly that.
+    // 这里只有 Esc 有效：没有可选项，因此也只写这一句。
+    hints: () => [t('tui.hint.message')],
+    render(_state, ctx) {
+      const width = Math.max(20, Math.floor(ctx.width) || 80);
+      const out = [''];
+      for (const line of body) out.push(...wrapText(line, width));
+      return out;
+    },
+  });
+}
+
+/**
+ * Hard-wrap text to a display width (CJK characters count as two columns), so long explanatory lines
+ * stay readable instead of being cut off with an ellipsis.
+ *
+ * 按显示宽度硬换行（CJK 字符算两列），较长的说明文字因此能读完，而不是被省略号截断。
+ *
+ * @returns {string[]}
+ */
+function wrapText(text, width) {
+  const limit = Math.max(4, Math.floor(Number(width)) || 4);
+  const value = String(text === undefined || text === null ? '' : text);
+  if (!value) return [''];
+  const lines = [];
+  let line = '';
+  let used = 0;
+  for (const ch of value) {
+    const w = displayWidth(ch);
+    if (used + w > limit) {
+      lines.push(line);
+      line = '';
+      used = 0;
+    }
+    line += ch;
+    used += w;
+  }
+  if (line) lines.push(line);
+  return lines;
 }
 
 // ---------------------------------------------------------------------------
@@ -471,15 +632,14 @@ function canPick() {
  * Run a slow task while telling the user it is still running.
  *
  * Launcher or network phases can take tens of seconds with nothing to print, which looks exactly
- * like a frozen TUI. This prints the phase once, then a "still waiting (Ns)" line every interval so
- * the screen keeps moving and the user knows Esc is the way out.
+ * like a frozen TUI. Inside the shell the phase is written to the breadcrumb ("what is happening
+ * now") and refreshed every interval; without a shell a line is printed instead.
  *
  *
  * 执行耗时任务时告诉用户「还在动」。
  *
  * 启动浏览器、等网络这类阶段可能几十秒没有任何输出，看起来就像界面卡死。
- * 这里先打印一次阶段说明，之后每隔一段时间补一行「仍在等待（Ns）」，
- * 让屏幕保持有变化，也提示用户按 Esc 可以退出。
+ * 外壳接管时把阶段写进面包屑（「现在正在做什么」）并按间隔刷新；没有外壳时照旧打印一行。
  *
  * @param {string} message already translated phase description
  * @param {() => Promise<any>} fn
@@ -488,6 +648,27 @@ function canPick() {
 async function withSpinner(message, fn, opts = {}) {
   const started = Date.now();
   const intervalMs = Math.max(1000, Number(opts.intervalMs) || 15000);
+
+  if (screen.isActive()) {
+    const previous = screen.getStage();
+    screen.setStage(message);
+    const timer = setInterval(() => {
+      try {
+        screen.setStage(`${message} · ${elapsedSeconds(started)}s`);
+      } catch (e) {
+        // A broken progress hint must never break the task itself.
+        // 进度提示出错不能影响任务本身。
+      }
+    }, intervalMs);
+    if (typeof timer.unref === 'function') timer.unref();
+    try {
+      return await fn();
+    } finally {
+      clearInterval(timer);
+      screen.setStage(previous);
+    }
+  }
+
   const tick =
     typeof opts.onTick === 'function'
       ? opts.onTick
@@ -712,6 +893,7 @@ const HELP_SECTIONS = [
       ['Enter', 'tui.help.generalConfirm'],
       ['Esc', 'tui.help.generalBack'],
       ['Tab', 'tui.help.generalTasks'],
+      ['L', 'tui.help.generalLog'],
       ['Ctrl+C', 'tui.help.generalQuit'],
       ['?', 'tui.help.generalHelp'],
     ],
@@ -875,6 +1057,8 @@ module.exports = {
   promptMenu,
   promptConfirm,
   promptText,
+  promptMessage,
+  wrapText,
   promptOutDir,
   pickOne,
   pickMany,
