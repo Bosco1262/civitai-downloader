@@ -65,7 +65,7 @@ function stepLine(flow, width) {
     if (position > index) return color.muted(step.label);
     return color.accent(step.label);
   });
-  return `[${parts.join(layout.glyphs().separator)}]`;
+  return `[ ${parts.join(layout.glyphs().separator)} ]`;
 }
 
 module.exports = {

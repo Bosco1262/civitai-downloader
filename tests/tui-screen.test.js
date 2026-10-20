@@ -25,6 +25,7 @@ const i18n = require('../src/i18n');
 const layout = require('../src/tui/layout');
 const tasks = require('../src/tui/tasks');
 const screen = require('../src/tui/screen');
+const steps = require('../src/tui/ui/steps');
 const pages = require('../src/tui/pages');
 const settings = require('../src/tui/settings');
 const download = require('../src/tui/download');
@@ -370,6 +371,35 @@ test('screen: 菜单提问渲染在框架内，回车确认、Esc 取消', async
     await settle();
     key('escape');
     assert.equal(await cancelled, null);
+  });
+});
+
+test('screen: 面包屑可一次显示多级路径与步骤条', async () => {
+  await withFakeTerminal(async ({ frame, key, settle }) => {
+    assert.equal(screen.start({ onQuit: () => {} }), true);
+    screen.setBase({ title: '主菜单', render: () => ['▸ 主菜单项'], hints: () => [] });
+    const flow = steps.createSteps(
+      [
+        { key: 'select', label: '选择' },
+        { key: 'confirm', label: '确认' },
+        { key: 'receipt', label: '回执' },
+      ],
+      1
+    );
+    const answer = screen.prompt({
+      title: '下载确认',
+      crumbPath: ['下载', '下载模型'],
+      steps: flow,
+      render: () => ['确认内容'],
+      hints: () => ['提示'],
+    });
+    await settle();
+    screen.render();
+    const crumb = frame().find((line) => line.includes('主菜单'));
+    assert.ok(crumb.includes('下载') && crumb.includes('下载模型'), crumb);
+    assert.ok(crumb.includes('[ 选择 | 确认 | 回执 ]'), crumb);
+    key('escape');
+    assert.equal(await answer, null);
   });
 });
 

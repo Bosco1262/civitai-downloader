@@ -31,6 +31,7 @@ const view = require('./view');
 const pages = require('./pages');
 const reportPage = require('./report');
 const screen = require('./screen');
+const { present } = require('./present');
 const { runWithProgress } = require('./run');
 const { color, format } = require('./tokens');
 
@@ -437,7 +438,6 @@ async function downloadReportChanges(config, reports) {
   }
 
   const plan = parts.flatMap((part) => part.plan);
-  const totalBytes = plan.reduce((sum, item) => sum + (Number(item.totalBytes) || 0), 0);
   const single = parts.length === 1 ? parts[0].report : null;
   const collectionId = single
     ? single.kind === 'model'
@@ -446,14 +446,10 @@ async function downloadReportChanges(config, reports) {
     : `check-${Date.now()}`;
   const name = single ? targetLabel(single) : t('tui.check.report.allTargets', { count: parts.length });
 
-  return require('./download').runDownloadPlan(config, {
+  return require('./download').runDownloadWorkspace(config, {
     plan,
     collectionId,
     name,
-    sourceLine: t('tui.check.report.planSource', {
-      count: plan.length,
-      size: formatBytes(totalBytes),
-    }),
     outDir: config.outDir,
     jobs: config.jobs,
   });
@@ -525,84 +521,84 @@ async function checkCollectionsFlow(config, ids) {
   );
   if (mode === null) return;
 
-  // Inside the shell the report is a page: statistics and buckets are visible without pressing `L`,
-  // and "download changes" goes through the shared plan/confirm flow.
-  //
-  // 外壳接管时报告是一页：统计与明细不必按 `L` 就能看到，
-  // 「下载变化项」走共享的计划/确认流程。
-  if (screen.isActive()) {
-    for (;;) {
-      const reports = await pages.withSpinner(t('tui.check.checking'), () =>
-        collectCollectionReports(config, targets, mode)
-      );
-      const outcome = await showCheckReports(config, reports);
-      if (outcome !== 'recheck') return;
-    }
-  }
+  // Inside the shell the report is a page; without it the report is printed line by line.
+  // 外壳接管时报告是一页；没有外壳时逐行打印。
+  return present({
+    shell: async () => {
+      for (;;) {
+        const reports = await pages.withSpinner(t('tui.check.checking'), () =>
+          collectCollectionReports(config, targets, mode)
+        );
+        const outcome = await showCheckReports(config, reports);
+        if (outcome !== 'recheck') return;
+      }
+    },
+    plain: async () => {
+      const reports = [];
+      for (const id of targets) {
+        if (targets.length > 1) view.log(t('tui.check.collectionHeader', { id }));
+        const { report } = await checkUpdates(
+          config,
+          id,
+          { verifyFiles: mode === 'deep', withPlan: true },
+          { log: view.log }
+        );
+        report.stats = summarize(report);
+        reports.push(report);
+        for (const line of reportLines(report)) view.log(line);
+      }
 
-  const reports = [];
-  for (const id of targets) {
-    if (targets.length > 1) view.log(t('tui.check.collectionHeader', { id }));
-    const { report } = await checkUpdates(
-      config,
-      id,
-      { verifyFiles: mode === 'deep', withPlan: true },
-      { log: view.log }
-    );
-    report.stats = summarize(report);
-    reports.push(report);
-    for (const line of reportLines(report)) view.log(line);
-  }
+      const allChanges = reports.flatMap((r) => changedItems(r));
+      if (!allChanges.length) {
+        view.bell();
+        return;
+      }
 
-  const allChanges = reports.flatMap((r) => changedItems(r));
-  if (!allChanges.length) {
-    view.bell();
-    return;
-  }
+      const go = await pages.promptConfirm(t('tui.check.downloadConfirm', { count: allChanges.length }));
+      if (!go) return;
 
-  const go = await pages.promptConfirm(t('tui.check.downloadConfirm', { count: allChanges.length }));
-  if (!go) return;
+      let failed = 0;
+      for (const report of reports) {
+        const items = changedItems(report);
+        if (!items.length) continue;
+        // Reset only the problematic version; the other versions of the same model keep their records.
+        // 只重置「有问题的那个版本」，保留同一模型的其它版本记录
+        const redownloadItems = [...report.fileChanged, ...report.missing].map((r) => ({
+          modelId: String(r.item.modelId),
+          versionId: r.item.versionId,
+        }));
+        const n = markForRedownload(config, redownloadItems);
+        if (n) view.log(t('tui.check.stateReset', { count: n }));
 
-  let failed = 0;
-  for (const report of reports) {
-    const items = changedItems(report);
-    if (!items.length) continue;
-    // Reset only the problematic version; the other versions of the same model keep their records.
-    // 只重置「有问题的那个版本」，保留同一模型的其它版本记录
-    const redownloadItems = [...report.fileChanged, ...report.missing].map((r) => ({
-      modelId: String(r.item.modelId),
-      versionId: r.item.versionId,
-    }));
-    const n = markForRedownload(config, redownloadItems);
-    if (n) view.log(t('tui.check.stateReset', { count: n }));
-
-    const totalBytes = items.reduce((sum, p) => sum + (p.totalBytes || 0), 0);
-    view.log(
-      t('tui.check.startUpdate', {
-        collectionId: report.collectionId,
-        count: items.length,
-        size: formatBytes(totalBytes),
-      })
-    );
-    const summary = await runWithProgress(config, {
-      collectionId: report.collectionId,
-      name: t('tui.check.collectionLabel', { id: report.collectionId }),
-      plan: items,
-      outDir: config.outDir,
-      force: false,
-      totalBytes,
-      jobs: config.jobs,
-      attempts: config.downloadAttempts,
-    });
-    if (summary.failed) failed++;
-    const stats = { done: summary.done, skipped: summary.skipped, failed: summary.failed };
-    view.notice(
-      summary.cancelled ? t('tui.check.summaryCancelled', stats) : t('tui.check.summaryDone', stats),
-      summary.cancelled || summary.failed ? color.warning : color.success
-    );
-  }
-  view.bell();
-  if (failed) view.notice(t('tui.check.failedNotice'), color.danger);
+        const totalBytes = items.reduce((sum, p) => sum + (p.totalBytes || 0), 0);
+        view.log(
+          t('tui.check.startUpdate', {
+            collectionId: report.collectionId,
+            count: items.length,
+            size: formatBytes(totalBytes),
+          })
+        );
+        const summary = await runWithProgress(config, {
+          collectionId: report.collectionId,
+          name: t('tui.check.collectionLabel', { id: report.collectionId }),
+          plan: items,
+          outDir: config.outDir,
+          force: false,
+          totalBytes,
+          jobs: config.jobs,
+          attempts: config.downloadAttempts,
+        });
+        if (summary.failed) failed++;
+        const stats = { done: summary.done, skipped: summary.skipped, failed: summary.failed };
+        view.notice(
+          summary.cancelled ? t('tui.check.summaryCancelled', stats) : t('tui.check.summaryDone', stats),
+          summary.cancelled || summary.failed ? color.warning : color.success
+        );
+      }
+      view.bell();
+      if (failed) view.notice(t('tui.check.failedNotice'), color.danger);
+    },
+  });
 }
 
 /**

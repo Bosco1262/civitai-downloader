@@ -36,13 +36,16 @@ const { resolveOutDir } = require('../config');
 const { forgetModels } = require('../commands/models');
 const { verifyModels } = require('../commands/verify');
 const { refToTarget } = require('../commands/download');
+const { parseModelRef } = require('../urls');
 const { t } = require('../i18n');
 const view = require('./view');
 const pages = require('./pages');
 const screen = require('./screen');
 const layout = require('./layout');
+const list = require('./ui/list');
 const reportPage = require('./report');
 const { runWithProgress } = require('./run');
+const { present } = require('./present');
 const { color, glyph, format } = require('./tokens');
 
 /**
@@ -254,83 +257,7 @@ function describeVersion(row) {
  * @returns {Promise<string|null>} chosen version id, or null
  */
 async function modelVersionPage(detail, rows, initialCursor) {
-  const state = { cursor: initialCursor, windowStart: 0 };
-  const name = String(detail.name || detail.id || '');
-  const baseModels = [...new Set(rows.map((row) => row.baseModel).filter(Boolean))];
-  const facts = [];
-  if (detail.type) facts.push(String(detail.type));
-  if (baseModels.length) facts.push(baseModels.join(' / '));
-  const author = detail.creator && detail.creator.username ? String(detail.creator.username) : '';
-  if (author) facts.push(t('tui.models.pageAuthor', { author }));
-  const downloads = detail.stats && Number(detail.stats.downloadCount);
-  if (Number.isFinite(downloads) && downloads > 0) {
-    facts.push(t('tui.models.pageDownloads', { count: String(downloads) }));
-  }
-  const downloaded = rows.filter((row) => row.downloaded).length;
-  if (downloaded) facts.push(t('tui.models.pageDownloaded', { count: downloaded }));
-
-  const nameWidth = Math.min(
-    30,
-    rows.reduce((max, row) => Math.max(max, view.displayWidth(row.name)), 0)
-  );
-
-  return screen.prompt({
-    title: t('tui.app.menuDownload'),
-    crumb: true,
-    hints: () => [t('tui.hint.modelVersion')],
-    render(_state, ctx) {
-      const width = Math.max(20, Math.floor(ctx.width) || 80);
-      const room = Math.max(3, Math.floor(ctx.rows) || 3);
-      const lines = [color.emphasis(view.truncateTo(name, width))];
-      if (facts.length) {
-        lines.push(color.muted(view.truncateTo(facts.join(` ${layout.glyphs().bullet} `), width)));
-      }
-      lines.push('');
-      lines.push(color.muted(t('tui.models.pageVersions', { count: rows.length })));
-
-      // Name + facts + blank + "versions" heading + status line stay put; the rest scrolls.
-      // 名称 + 信息 + 空行 + 「版本」小标题 + 状态行固定，其余滚动。
-      const listRoom = Math.max(1, room - lines.length - 1);
-      const win = pages.windowOf(rows.length, state.cursor, listRoom, state.windowStart);
-      state.windowStart = win.start;
-      for (let index = win.start; index < win.end; index++) {
-        const row = rows[index];
-        const active = index === state.cursor;
-        const marker = active ? color.cursor(layout.glyphs().cursor) : ' ';
-        const label = view.padTo(row.name, nameWidth);
-        const rest = view.truncateTo(describeVersion(row), Math.max(8, width - nameWidth - 4));
-        lines.push(`${marker} ${active ? color.emphasis(label) : label}  ${color.muted(rest)}`);
-      }
-      if (rows.length > win.end - win.start) {
-        lines.push(
-          color.muted(t('tui.pages.listPosition', { index: state.cursor + 1, total: rows.length }))
-        );
-      }
-      return lines;
-    },
-    onKey(text, key, entry) {
-      const name_ = key && key.name;
-      const typed = String(text === undefined || text === null ? '' : text);
-      const step = (delta) => {
-        const next = state.cursor + delta;
-        state.cursor = Math.max(0, Math.min(rows.length - 1, next));
-      };
-      if (name_ === 'up') step(-1);
-      else if (name_ === 'down') step(1);
-      else if (name_ === 'pageup') step(-8);
-      else if (name_ === 'pagedown') step(8);
-      else if (name_ === 'home') state.cursor = 0;
-      else if (name_ === 'end') state.cursor = rows.length - 1;
-      else if (name_ === 'return') entry.settle(rows[state.cursor] && rows[state.cursor].modelId);
-      else return;
-      // Keep the window still until the cursor would leave it.
-      // 光标离开视窗之前，视窗保持不动。
-    },
-    onEscape(entry) {
-      entry.settle(null);
-      return true;
-    },
-  });
+  return require('./ui/versionPage').showVersionPage(detail, rows, initialCursor, describeVersion);
 }
 
 /**
@@ -542,7 +469,13 @@ async function runItems(config, items, outDir, force) {
  * @param {{refs?:string[]}} [opts] preset references (used by a model's own page)
  */
 async function downloadFlow(config, opts = {}) {
-  if (screen.isActive()) return downloadModelsShell(config, opts);
+  return present({
+    shell: () => downloadModelsShell(config, opts),
+    plain: () => downloadPlainFlow(config, opts),
+  });
+}
+
+async function downloadPlainFlow(config, opts = {}) {
   const refs = Array.isArray(opts.refs) && opts.refs.length ? opts.refs : await askRefs(config);
   if (!refs) return;
 
@@ -674,16 +607,28 @@ async function buildModelPlanShell(config, raws) {
  */
 async function downloadModelsShell(config, opts = {}) {
   const resolveInput = async (raw) => {
+    if (!parseModelRef(raw)) throw new Error(t('tui.workspace.invalidInput'));
     const items = await buildModelPlanShell(config, [raw]);
-    return (items || []).map((item) => ({ ...item, detail: item.versionName || item.versionId }));
+    return (items || [])
+      .filter((item) => !item.error)
+      .map((item) => ({ ...item, detail: item.versionName || item.versionId }));
   };
   const presetRefs = Array.isArray(opts.refs) && opts.refs.length ? opts.refs : null;
-  const rows = presetRefs ? await resolveInput(presetRefs.join('\n')) : [];
+  const rows = presetRefs
+    ? (await buildModelPlanShell(config, presetRefs))
+        .filter((item) => !item.error)
+        .map((item) => ({
+          ...item,
+          detail: item.versionName || item.versionId,
+        }))
+    : [];
   return require('./download').runDownloadWorkspace(config, {
     plan: rows,
     collectionId: `refs-${Date.now()}`,
-    name: t('tui.download.modelsName', { count: Math.max(1, rows.length) }),
-    inputLabel: t('tui.download.collectionIdPrompt'),
+    name: t('tui.app.downloadModel'),
+    crumbPath: [t('tui.app.menuDownload'), t('tui.app.downloadModel')],
+    inputLabel: t('tui.workspace.modelInputLabel'),
+    emptyText: t('tui.workspace.modelEmpty'),
     resolveInput,
     outDir: resolveOutDir(config, config.outDir),
     jobs: config.jobs,
@@ -1030,13 +975,13 @@ function printModelDetail(config, modelId) {
  * 因此这里的每个动作都围绕这个模型——更新、校验文件、固定版本、打开目录、删除记录。
  */
 async function modelActions(config, modelId) {
-  // Inside the shell the model gets a page of its own: facts, versions and actions are all visible
-  // without opening the log. The printed block below stays for non-shell callers.
-  //
-  // 外壳接管时模型有自己的页面：事实、版本与操作都在同一页，不必打开日志。
-  // 下面的打印版本保留给没有外壳的调用方。
-  if (screen.isActive()) return modelDetailPage(config, modelId);
+  return present({
+    shell: () => modelDetailPage(config, modelId),
+    plain: () => modelActionsPlain(config, modelId),
+  });
+}
 
+async function modelActionsPlain(config, modelId) {
   // The detail page is printed once; re-printing it after every action used to push the page up by
   // a full screen each time. The menu title carries the model name so the context is never lost.
   //
@@ -1207,83 +1152,83 @@ async function checkFlow(config, opts = {}) {
   ]);
   if (mode === null) return;
 
-  // Inside the shell the report is a page: statistics and buckets are visible without opening `L`,
-  // and "download changes" goes through the shared plan/confirm flow.
-  //
-  // 外壳接管时报告是一页：统计与明细不必按 `L` 就能看到，
-  // 「下载变化项」走共享的计划/确认流程。
-  if (screen.isActive()) {
-    const check = require('./check');
-    for (;;) {
-      const reports = await pages.withSpinner(t('tui.check.checking'), () =>
-        check.collectModelReports(config, targets, mode)
-      );
-      const outcome = await check.showCheckReports(config, reports);
-      if (outcome !== 'recheck') return;
-    }
-  }
+  // Inside the shell the report is a page; without it the report is printed line by line.
+  // 外壳接管时报告是一页；没有外壳时逐行打印。
+  return present({
+    shell: async () => {
+      const check = require('./check');
+      for (;;) {
+        const reports = await pages.withSpinner(t('tui.check.checking'), () =>
+          check.collectModelReports(config, targets, mode)
+        );
+        const outcome = await check.showCheckReports(config, reports);
+        if (outcome !== 'recheck') return;
+      }
+    },
+    plain: async () => {
+      const reports = [];
+      for (const modelId of targets) {
+        // Deep checks hash the local files: name the model being checked so a slow one is not "frozen".
+        // 深度检查会计算本地文件哈希：把正在检查的模型报出来，慢的时候才不像卡死。
+        view.log(t('tui.models.checkingModel', { label: view.truncateTo(modelLabel(config, modelId), 48) }));
+        const { report } = await updater.checkModelUpdates(
+          config,
+          modelId,
+          { verifyFiles: mode === 'deep' },
+          { log: view.log }
+        );
+        report.stats = updater.summarize(report);
+        reports.push(report);
+        for (const line of updater.reportLines(report)) view.log(line);
+      }
 
-  const reports = [];
-  for (const modelId of targets) {
-    // Deep checks hash the local files: name the model being checked so a slow one is not "frozen".
-    // 深度检查会计算本地文件哈希：把正在检查的模型报出来，慢的时候才不像卡死。
-    view.log(t('tui.models.checkingModel', { label: view.truncateTo(modelLabel(config, modelId), 48) }));
-    const { report } = await updater.checkModelUpdates(
-      config,
-      modelId,
-      { verifyFiles: mode === 'deep' },
-      { log: view.log }
-    );
-    report.stats = updater.summarize(report);
-    reports.push(report);
-    for (const line of updater.reportLines(report)) view.log(line);
-  }
+      const changes = reports.flatMap((report) => updater.changedItems(report));
+      if (!changes.length) {
+        view.bell();
+        return;
+      }
 
-  const changes = reports.flatMap((report) => updater.changedItems(report));
-  if (!changes.length) {
-    view.bell();
-    return;
-  }
+      const go = await pages.promptConfirm(t('tui.check.downloadConfirm', { count: changes.length }));
+      if (!go) return;
 
-  const go = await pages.promptConfirm(t('tui.check.downloadConfirm', { count: changes.length }));
-  if (!go) return;
+      let failed = 0;
+      for (const report of reports) {
+        const plan = updater.changedItems(report);
+        if (!plan.length) continue;
+        const redownload = [...report.fileChanged, ...report.missing].map((r) => ({
+          modelId: String(r.item.modelId),
+          versionId:
+            r.item.versionId === undefined || r.item.versionId === null ? null : String(r.item.versionId),
+        }));
+        const n = updater.markForRedownload(config, redownload);
+        if (n) view.log(t('tui.check.stateReset', { count: n }));
 
-  let failed = 0;
-  for (const report of reports) {
-    const plan = updater.changedItems(report);
-    if (!plan.length) continue;
-    const redownload = [...report.fileChanged, ...report.missing].map((r) => ({
-      modelId: String(r.item.modelId),
-      versionId:
-        r.item.versionId === undefined || r.item.versionId === null ? null : String(r.item.versionId),
-    }));
-    const n = updater.markForRedownload(config, redownload);
-    if (n) view.log(t('tui.check.stateReset', { count: n }));
-
-    const totalBytes = plan.reduce((sum, item) => sum + (item.totalBytes || 0), 0);
-    view.log(
-      t('tui.models.startUpdate', {
-        label: modelLabel(config, report.modelId),
-        count: plan.length,
-        size: formatBytes(totalBytes),
-      })
-    );
-    const summary = await runWithProgress(config, {
-      collectionId: `model-${report.modelId}`,
-      name: modelLabel(config, report.modelId),
-      plan,
-      outDir: config.outDir,
-      force: false,
-      totalBytes,
-      jobs: config.jobs,
-      attempts: config.downloadAttempts,
-    });
-    if (summary.failed) failed++;
-    const stats = { done: summary.done, skipped: summary.skipped, failed: summary.failed };
-    view.log(summary.cancelled ? t('tui.check.summaryCancelled', stats) : t('tui.check.summaryDone', stats));
-  }
-  view.bell();
-  if (failed) view.log(color.danger(t('tui.check.failedNotice')));
+        const totalBytes = plan.reduce((sum, item) => sum + (item.totalBytes || 0), 0);
+        view.log(
+          t('tui.models.startUpdate', {
+            label: modelLabel(config, report.modelId),
+            count: plan.length,
+            size: formatBytes(totalBytes),
+          })
+        );
+        const summary = await runWithProgress(config, {
+          collectionId: `model-${report.modelId}`,
+          name: modelLabel(config, report.modelId),
+          plan,
+          outDir: config.outDir,
+          force: false,
+          totalBytes,
+          jobs: config.jobs,
+          attempts: config.downloadAttempts,
+        });
+        if (summary.failed) failed++;
+        const stats = { done: summary.done, skipped: summary.skipped, failed: summary.failed };
+        view.log(summary.cancelled ? t('tui.check.summaryCancelled', stats) : t('tui.check.summaryDone', stats));
+      }
+      view.bell();
+      if (failed) view.log(color.danger(t('tui.check.failedNotice')));
+    },
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1483,40 +1428,42 @@ async function verifyFlow(config, opts = {}) {
   const deep = await pages.promptConfirm(t('tui.manage.hashConfirm'));
   if (deep === null) return;
 
-  // Inside the shell the result is a page: reasons and directories are readable before repairing.
-  // 外壳接管时结果是一页：修复之前就能读到原因与目录。
-  if (screen.isActive()) return verifyReportFlow(config, { targets, deep });
-
-  // Verification hashes every file, which can take minutes: report each model as it starts and let
-  // the heartbeat keep the screen alive in between.
-  //
-  // 校验要逐个文件算哈希，可能好几分钟：每开始一个模型就报一行，中间的沉默由心跳补上。
-  const result = await runVerification(config, targets, deep);
-  view.note('');
-  view.note(
-    t('tui.manage.verifySummary', {
-      label: result.label,
-      total: result.total,
-      size: formatBytes(result.totalBytes),
-    })
-  );
-  if (result.corrupt) view.note(`  ! ${result.corrupt}`);
-  view.note(`  ${t('tui.manage.verifyCounts', { ok: result.ok.length, broken: result.broken.length })}`);
-  for (const b of result.broken) {
-    view.note(
-      `  ! ${t('tui.manage.brokenLine', {
-        name: b.name,
-        reasons: b.reasons.join(t('tui.manage.reasonSeparator')),
-      })}`
-    );
-    view.note(`    ${t('tui.manage.dirLine', { dir: b.dir })}`);
-  }
-  if (!result.broken.length) {
-    view.notice(t('tui.manage.verifyAllOk'), color.success);
-    return;
-  }
-
-  await repairBroken(config, result);
+  // Inside the shell the result is a page; without it the report is printed line by line.
+  // 外壳接管时结果是一页；没有外壳时逐行打印。
+  return present({
+    shell: () => verifyReportFlow(config, { targets, deep }),
+    plain: async () => {
+      // Verification hashes every file, which can take minutes: report each model as it starts and let
+      // the heartbeat keep the screen alive in between.
+      //
+      // 校验要逐个文件算哈希，可能好几分钟：每开始一个模型就报一行，中间的沉默由心跳补上。
+      const result = await runVerification(config, targets, deep);
+      view.note('');
+      view.note(
+        t('tui.manage.verifySummary', {
+          label: result.label,
+          total: result.total,
+          size: formatBytes(result.totalBytes),
+        })
+      );
+      if (result.corrupt) view.note(`  ! ${result.corrupt}`);
+      view.note(`  ${t('tui.manage.verifyCounts', { ok: result.ok.length, broken: result.broken.length })}`);
+      for (const b of result.broken) {
+        view.note(
+          `  ! ${t('tui.manage.brokenLine', {
+            name: b.name,
+            reasons: b.reasons.join(t('tui.manage.reasonSeparator')),
+          })}`
+        );
+        view.note(`    ${t('tui.manage.dirLine', { dir: b.dir })}`);
+      }
+      if (!result.broken.length) {
+        view.notice(t('tui.manage.verifyAllOk'), color.success);
+        return;
+      }
+      await repairBroken(config, result);
+    },
+  });
 }
 
 // ---------------------------------------------------------------------------

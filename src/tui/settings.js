@@ -30,6 +30,8 @@ const view = require('./view');
 const pages = require('./pages');
 const screen = require('./screen');
 const reportPage = require('./report');
+const list = require('./ui/list');
+const { present } = require('./present');
 const { color } = require('./tokens');
 
 const { displayWidth, truncateTo } = layout;
@@ -469,13 +471,15 @@ async function settingsPage(config) {
   const selectable = rows.map((row, index) => (row.kind === 'section' ? -1 : index)).filter((index) => index >= 0);
   const state = { cursor: selectable[0], written: false, windowStart: 0 };
 
-  // The cursor wraps around at both ends: ↑ on the first row jumps to the last one.
-  // 光标在两端循环：在第一行按 ↑ 会跳到最后一行。
+  // The cursor follows the shared form policy: wrap at both ends, page by ten rows.
+  // 光标遵循共享表单策略：两端循环，每页十行。
   const step = (delta) => {
     const position = selectable.indexOf(state.cursor);
-    const count = selectable.length;
-    const next = (((position + delta) % count) + count) % count;
-    state.cursor = selectable[next];
+    state.cursor = selectable[list.moveCursor(position, delta, selectable.length, 'form')];
+  };
+  const page = (direction) => {
+    const position = selectable.indexOf(state.cursor);
+    state.cursor = selectable[list.pageCursor(position, direction, selectable.length, 10, 'form')];
   };
 
   const labelWidth = rows.reduce((max, row) => (row.kind === 'section' ? max : Math.max(max, displayWidth(row.label))), 0);
@@ -546,7 +550,7 @@ async function settingsPage(config) {
       const body = Math.max(1, room - 2);
       const cursorLine = lineOfRow.get(state.cursor) === undefined ? 0 : lineOfRow.get(state.cursor);
       const win = scrollToSection(
-        pages.windowOf(lines.length, cursorLine, body, state.windowStart),
+        list.windowOf(lines.length, cursorLine, body, state.windowStart),
         lines,
         body,
         cursorLine,
@@ -574,10 +578,10 @@ async function settingsPage(config) {
     async onKey(text, key, entry) {
       if (key.name === 'up') step(-1);
       else if (key.name === 'down') step(1);
-      else if (key.name === 'pageup') step(-8);
-      else if (key.name === 'pagedown') step(8);
-      else if (key.name === 'home') state.cursor = selectable[0];
-      else if (key.name === 'end') state.cursor = selectable[selectable.length - 1];
+      else if (key.name === 'pageup') page(-1);
+      else if (key.name === 'pagedown') page(1);
+      else if (key.name === 'home') state.cursor = selectable[list.homeCursor()];
+      else if (key.name === 'end') state.cursor = selectable[list.endCursor(selectable.length)];
       else if (key.name === 'return') await activate();
       else return;
     },
@@ -740,8 +744,10 @@ async function resetEverything(config) {
  * 设置入口：有外壳时是列表页，没有外壳时是分组问答链。
  */
 async function settingsFlow(config) {
-  if (screen.isActive()) return settingsPage(config);
-  return plainSettingsFlow(config);
+  return present({
+    shell: () => settingsPage(config),
+    plain: () => plainSettingsFlow(config),
+  });
 }
 
 module.exports = {

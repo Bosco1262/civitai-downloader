@@ -19,9 +19,7 @@ const tokens = require('../tokens');
 const view = require('../view');
 const screen = require('../screen');
 const list = require('./list');
-const steps = require('./steps');
 const { isTextInput } = require('../keys');
-const { stepLine } = steps;
 
 const { color, glyph } = tokens;
 const { truncateTo, displayWidth } = layout;
@@ -40,9 +38,8 @@ function inputLine(state) {
  * One selected-row line.
  * 一行已选行。
  */
-function rowLine(row, cursor, width) {
-  const key = String(cursor);
-  const mark = color.cursor(layout.glyphs().cursor);
+function rowLine(row, cursor, focused, width) {
+  const mark = focused && cursor ? color.cursor(layout.glyphs().cursor) : ' ';
   const box = view.checkbox(!!row.selected);
   const label = truncateTo(String(row.name || row.modelId || ''), Math.max(12, Math.floor(width / 3)));
   const detail = row.detail ? color.muted(truncateTo(String(row.detail), Math.max(8, width - displayWidth(label) - 12))) : '';
@@ -57,11 +54,6 @@ function rowLine(row, cursor, width) {
  * @returns {Promise<any>}
  */
 async function showPlanWorkspace(opts = {}) {
-  const flow = steps.createSteps(opts.steps || [
-    { key: 'select', label: t('tui.workspace.stepSelect') },
-    { key: 'confirm', label: t('tui.workspace.stepConfirm') },
-    { key: 'receipt', label: t('tui.workspace.stepReceipt') },
-  ]);
   const state = {
     region: 'input',
     input: '',
@@ -75,6 +67,8 @@ async function showPlanWorkspace(opts = {}) {
 
   return screen.prompt({
     title: opts.title || '',
+    crumbPath: opts.crumbPath,
+    steps: opts.steps,
     handlesHelp: true,
     hints: () => [t('tui.hint.workspace')],
     render(_promptState, ctx) {
@@ -93,7 +87,7 @@ async function showPlanWorkspace(opts = {}) {
         for (let index = win.start; index < win.end; index++) {
           const row = state.rows[index];
           const decorated = { ...row, selected: state.selected.has(String(opts.idOf(row))) };
-          lines.push(rowLine(decorated, index === state.cursor, ctx.width));
+          lines.push(rowLine(decorated, index === state.cursor, state.region === 'selected', ctx.width));
         }
         if (win.end - win.start < state.rows.length) {
           lines.push(color.muted(t('tui.pages.listPosition', { index: state.cursor + 1, total: state.rows.length })));
@@ -107,7 +101,6 @@ async function showPlanWorkspace(opts = {}) {
           ? color.accent(`▸ ${opts.nextLabel || t('tui.workspace.next')}`)
           : color.muted(`  ${opts.nextLabel || t('tui.workspace.next')}`)
       );
-      lines.push(color.muted(flow === null ? '' : ` ${stepLine(flow, ctx.width)}`));
       return lines.slice(0, room);
     },
     async onKey(text, key, entry) {
@@ -124,6 +117,10 @@ async function showPlanWorkspace(opts = {}) {
         const index = regions.indexOf(state.region);
         state.region = regions[(index + 1 + regions.length) % regions.length] || regions[0];
         entry.state = state;
+        return;
+      }
+      if (typed === '?' && state.region !== 'input') {
+        require('../pages').showHelp({});
         return;
       }
       if (name === 'up' && state.region === 'selected') {
@@ -171,17 +168,24 @@ async function showPlanWorkspace(opts = {}) {
         entry.state = state;
         screen.refresh();
         try {
-          const rows = await opts.resolveInput(state.input);
-          if (!rows || !rows.length) {
+          const rows = (await opts.resolveInput(state.input)) || [];
+          const usable = rows.filter((row) => row && !row.error);
+          if (!usable.length) {
             state.result = t('tui.workspace.noResult');
           } else {
-            for (const row of rows) {
+            for (const row of usable) {
               const id = String(opts.idOf(row));
               if (!state.rows.some((existing) => String(opts.idOf(existing)) === id)) state.rows.push(row);
               state.selected.add(id);
             }
-            state.cursor = Math.max(0, state.rows.length - 1);
-            state.result = rows.map((row) => row.name || row.modelId).join(glyph.separator);
+            /*
+             * Adding results must not leave the cursor on the last row: when focus moves to the
+             * list, the first selectable row is the predictable starting point.
+             *
+             * 添加结果后不能把光标留在最后一行：焦点切到列表时，第一行才是可预期的起点。
+             */
+            state.cursor = 0;
+            state.result = usable.map((row) => row.name || row.modelId).join(glyph.separator);
             state.input = '';
             state.error = '';
           }

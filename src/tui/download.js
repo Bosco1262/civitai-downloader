@@ -27,7 +27,7 @@ const { buildPlan, fetchModelDetail, extractFiles, versionToItem } = require('..
 const { resolveOutDir } = require('../config');
 const { parseCollectionId } = require('../urls');
 const { createSiteLimiter } = require('../runtime');
-const { setPin, applyPinsToItems } = require('../updater');
+const { setPin, applyPinsToItems, markForRedownload } = require('../updater');
 const { freeSpaceBytes } = require('../job');
 const { t } = require('../i18n');
 const view = require('./view');
@@ -37,7 +37,9 @@ const tasks = require('./tasks');
 const { selectItems, isInteractive } = require('./select');
 const { startDownloadTask, queuedDownloads } = require('./downloadTask');
 const { runWithProgress } = require('./run');
+const { present } = require('./present');
 const { showPlanWorkspace } = require('./ui/planWorkspace');
+const steps = require('./ui/steps');
 const list = require('./ui/list');
 const { color, glyph, format } = require('./tokens');
 
@@ -432,7 +434,13 @@ async function askOptions(config, selectedPlan, state) {
  *   download is started from a collection's own page)
  */
 async function downloadFlow(config, opts = {}) {
-  if (screen.isActive()) return downloadCollectionShell(config, opts);
+  return present({
+    shell: () => downloadCollectionShell(config, opts),
+    plain: () => downloadPlainFlow(config, opts),
+  });
+}
+
+async function downloadPlainFlow(config, opts = {}) {
   let collectionId = opts.collectionId === undefined || opts.collectionId === null ? '' : String(opts.collectionId);
   if (collectionId) collectionId = parseCollectionId(collectionId) || collectionId;
   if (!collectionId) {
@@ -620,7 +628,7 @@ function pinOf(entries, item) {
  * 真正可下载的计划项（元数据成功且有文件清单）。
  */
 function selectablePlan(plan) {
-  return plan.filter((item) => !item.error && Array.isArray(item.files) && item.files.length > 0);
+  return plan.filter((item) => item && !item.error && Array.isArray(item.files) && item.files.length > 0);
 }
 
 /**
@@ -714,23 +722,6 @@ function planSummaryText(config, plan, selected, entries, outDir) {
     updates,
     failed,
     free: free === null ? t('tui.download.freeUnknown') : formatBytes(free),
-  });
-}
-
-/**
- * Source/totals line of the plan page.
- * 计划页的来源/合计行。
- */
-function collectionSourceLine(collectionId, count, size, snapshot) {
-  const time =
-    snapshot && snapshot.fetchedAt
-      ? format.dateTime(snapshot.fetchedAt)
-      : t('tui.download.unknownDate');
-  return t('tui.download.planSourceCollection', {
-    id: collectionId,
-    count,
-    size,
-    time,
   });
 }
 
@@ -1307,9 +1298,11 @@ async function confirmPage(config, data) {
  * Receipt page: the task was submitted; progress and result live in the task view.
  * 回执页：任务已提交；进度和结果都在任务视图。
  */
-async function receiptPage(taskId) {
-  await screen.prompt({
+async function receiptPage(taskId, opts = {}) {
+  return screen.prompt({
     title: t('tui.download.receiptTitle'),
+    crumbPath: opts.crumbPath,
+    steps: downloadStepFlow(2),
     hints: () => [t('tui.hint.receipt')],
     render(_state, ctx) {
       const task = tasks.getTask(taskId);
@@ -1358,37 +1351,34 @@ async function receiptPage(taskId) {
       lines.push(color.muted(t('tui.download.receiptHint')));
       return lines;
     },
+    onKey(text, key, entry) {
+      if (key && key.name === 'return') entry.settle('download');
+    },
+    onEscape(entry) {
+      // Esc must leave the download submenu; it never cancels the background task.
+      // Esc 返回主菜单；它不会取消后台任务。
+      entry.settle('main');
+      return true;
+    },
   });
 }
 
 /**
- * Shell flow for one collection: enumerate → write snapshot → plan → shared plan pages.
- * 单个收藏集的外壳流程：枚举 → 写快照 → 计划 → 共享计划页面。
+ * Resolve one collection into a download plan, writing its membership snapshot on the way.
+ * 把一个收藏集解析成下载计划，并写入成员快照。
+ *
+ * @param {object} config
+ * @param {string} collectionId
+ * @returns {Promise<Array|null>}
  */
-async function downloadCollectionShell(config, opts = {}) {
-  let collectionId =
-    opts.collectionId === undefined || opts.collectionId === null ? '' : String(opts.collectionId);
-  if (collectionId) collectionId = parseCollectionId(collectionId) || collectionId;
-  if (!collectionId) {
-    const rawId = await pages.promptText(t('tui.download.collectionIdPrompt'), {
-      stage: t('tui.app.menuDownload'),
-      validate: (value) => (parseCollectionId(value) ? true : t('tui.download.invalidCollectionId')),
-    });
-    if (rawId === null) return;
-    collectionId = parseCollectionId(rawId);
-    if (!collectionId) {
-      view.notice(t('tui.download.invalidCollectionId'), color.danger);
-      return;
-    }
-  }
-
+async function resolveCollectionPlan(config, collectionId) {
   const items = await pages.withSpinner(t('tui.download.enumerating', { collectionId }), () =>
     fetchItems(config, collectionId)
   );
   if (!items.length) {
     view.notice(t('tui.download.collectionEmpty'), color.warning);
     view.notice(t('tui.download.collectionEmptyHint'), color.muted);
-    return;
+    return null;
   }
 
   // A plan is also a membership snapshot: record it now (the old shell flow only wrote it when the
@@ -1396,9 +1386,8 @@ async function downloadCollectionShell(config, opts = {}) {
   //
   // 计划同时也是成员快照：现在就记下来（旧外壳流程只在核心任务自己枚举时才写，
   // 而 TUI 总是把现成计划传进去，因此从未写过收藏集快照）。
-  let snapshot = null;
   try {
-    snapshot = writeCollection(config, collectionId, { items });
+    writeCollection(config, collectionId, { items });
   } catch (e) {
     view.log(t('tui.download.snapshotFailed', { error: e.message }));
   }
@@ -1429,11 +1418,49 @@ async function downloadCollectionShell(config, opts = {}) {
   } catch (e) {
     view.log(t('tui.download.planWriteFailed', { error: e.message }));
   }
+  return plan;
+}
 
+/**
+ * Shell flow for one collection: enumerate → write snapshot → plan → shared plan pages.
+ * 单个收藏集的外壳流程：枚举 → 写快照 → 计划 → 共享计划页面。
+ */
+async function downloadCollectionShell(config, opts = {}) {
+  let collectionId =
+    opts.collectionId === undefined || opts.collectionId === null ? '' : String(opts.collectionId);
+  if (collectionId) {
+    const parsed = parseCollectionId(collectionId);
+    if (!parsed) {
+      view.notice(t('tui.download.invalidCollectionId'), color.danger);
+      return;
+    }
+    collectionId = parsed;
+  }
+  if (!collectionId) {
+    return runDownloadWorkspace(config, {
+      plan: [],
+      collectionId: `collection-${Date.now()}`,
+      name: t('tui.app.downloadCollection'),
+      crumbPath: [t('tui.app.menuDownload'), t('tui.app.downloadCollection')],
+      inputLabel: t('tui.download.collectionIdPrompt'),
+      emptyText: t('tui.workspace.collectionEmptyPrompt'),
+      resolveInput: async (raw) => {
+        const id = parseCollectionId(raw);
+        if (!id) throw new Error(t('tui.download.invalidCollectionId'));
+        return (await resolveCollectionPlan(config, id)) || [];
+      },
+      outDir: resolveOutDir(config, config.outDir),
+      jobs: config.jobs,
+    });
+  }
+
+  const plan = await resolveCollectionPlan(config, collectionId);
+  if (!plan) return;
   return runDownloadWorkspace(config, {
     plan,
     collectionId,
     name: t('tui.check.collectionLabel', { id: collectionId }),
+    crumbPath: [t('tui.app.menuDownload'), t('tui.app.downloadCollection')],
     outDir: resolveOutDir(config, config.outDir),
     jobs: config.jobs,
   });
@@ -1454,24 +1481,69 @@ function workspaceRowLabel(item) {
  */
 function deletePlanVersions(config, rows) {
   const { entries } = readLibrary(config, { allowCorrupt: true });
+  const targets = rows.map((row) => ({
+    modelId: String(row.modelId),
+    versionId: String(row.versionId),
+  }));
+  const targetKeys = new Set(targets.map((row) => `${row.modelId}:${row.versionId}`));
+  const retainedFiles = new Set();
+
+  // A file still referenced by a retained version must survive: deleting it would break a version
+  // the user explicitly kept.
+  //
+  // 仍被保留版本引用的文件不能删除，否则会破坏用户明确保留的版本。
+  for (const [modelId, entry] of Object.entries(entries)) {
+    if (!entry || !entry.versions) continue;
+    for (const [versionId, version] of Object.entries(entry.versions)) {
+      if (targetKeys.has(`${modelId}:${versionId}`)) continue;
+      const dir = path.join(version.outDir || config.outDir, version.dirName || '');
+      for (const file of version.files || []) retainedFiles.add(path.resolve(dir, file.name));
+    }
+  }
+
   let count = 0;
-  for (const row of rows) {
-    const entry = entries[String(row.modelId)];
-    const version = getVersion(entry, row.versionId);
+  for (const target of targets) {
+    const entry = entries[target.modelId];
+    const version = getVersion(entry, target.versionId);
     if (!version) continue;
+    // Pinned versions are protected; the confirmation page only promises deletable versions.
+    // 固定版本受保护；确认页只承诺可删除的版本。
+    if (entry && entry.pinnedVersionId !== undefined && entry.pinnedVersionId !== null) {
+      if (String(entry.pinnedVersionId) === target.versionId) continue;
+    }
     const dir = path.join(version.outDir || config.outDir, version.dirName || '');
     for (const file of version.files || []) {
+      const absolute = path.resolve(dir, file.name);
+      if (retainedFiles.has(absolute)) continue;
       try {
-        fs.rmSync(path.join(dir, file.name), { force: true });
+        fs.rmSync(absolute, { force: true });
       } catch (e) {
         // A missing file must not block the record cleanup.
         // 缺失文件不阻塞记录清理。
       }
     }
-    markForRedownload(config, [{ modelId: row.modelId, versionId: row.versionId }]);
+    markForRedownload(config, [{ modelId: target.modelId, versionId: target.versionId }]);
     count++;
   }
   return count;
+}
+
+/**
+ * Step flow used by the three download pages.
+ * 下载三个页面共用的步骤流。
+ *
+ * @param {number} index
+ * @returns {object}
+ */
+function downloadStepFlow(index) {
+  return steps.createSteps(
+    [
+      { key: 'select', label: t('tui.workspace.stepSelect') },
+      { key: 'confirm', label: t('tui.workspace.stepConfirm') },
+      { key: 'receipt', label: t('tui.workspace.stepReceipt') },
+    ],
+    index
+  );
 }
 
 /**
@@ -1487,7 +1559,8 @@ async function workspaceConfirmPage(config, data) {
 
   return screen.prompt({
     title: t('tui.download.confirmTitle'),
-    handlesHelp: true,
+    crumbPath: data.crumbPath,
+    steps: downloadStepFlow(1),
     hints: () => [t('tui.hint.workspaceConfirm')],
     render(_state, ctx) {
       const lines = [];
@@ -1515,7 +1588,7 @@ async function workspaceConfirmPage(config, data) {
         );
       }
       lines.push('');
-      const listRoom = Math.max(1, Math.floor(ctx.rows) || 3 - lines.length - 2);
+      const listRoom = Math.max(1, Math.floor(ctx.rows) - lines.length - 2);
       const win = list.windowOf(rows.length, cursor, listRoom, data.windowStart || 0);
       for (let index = win.start; index < win.end; index++) {
         const row = rows[index];
@@ -1566,51 +1639,59 @@ async function workspaceConfirmPage(config, data) {
  */
 async function runDownloadWorkspace(config, opts = {}) {
   const plan = Array.isArray(opts.plan) ? opts.plan : [];
+  // Failed collection entries stay visible in the source report but must never enter a plan.
+  // 收藏集里失败的条目可以留在来源报告里，但绝不能进入下载计划。
+  const workspacePlan = selectablePlan(plan);
   const entries = opts.entries || readLibrary(config, { allowCorrupt: true }).entries;
-  const selected = opts.selected instanceof Set ? opts.selected : new Set(plan.map(planRowKey));
+  const selected = opts.selected instanceof Set ? opts.selected : new Set(workspacePlan.map(planRowKey));
 
   const workspace = await showPlanWorkspace({
-    title: opts.name || t('tui.download.planTitle', { count: plan.length, size: formatBytes(plan.reduce((sum, item) => sum + (item.totalBytes || 0), 0)) }),
+    title: opts.name || t('tui.download.planTitle', { count: workspacePlan.length, size: formatBytes(workspacePlan.reduce((sum, item) => sum + (item.totalBytes || 0), 0)) }),
+    crumbPath: opts.crumbPath,
+    steps: downloadStepFlow(0),
     inputLabel: opts.inputLabel,
     emptyText: opts.emptyText,
     nextLabel: t('tui.workspace.next'),
-    rows: plan,
+    rows: workspacePlan,
     selected,
     idOf: planRowKey,
     resolveInput: typeof opts.resolveInput === 'function' ? opts.resolveInput : undefined,
     openRow: async (row) => {
       const detail = await fetchModelDetail(config.site, row.modelId, config.userAgent);
-      const versions = Array.isArray(detail.modelVersions) ? detail.modelVersions : [];
-      const rows = versions
-        .map((version) => {
-          const files = extractFiles(version, config.site, {
-            fileTypes: config.fileTypes,
-            primaryOnly: config.primaryOnly,
-          });
-          return { version, files };
-        })
-        .filter((entry) => entry.files.length)
-        .map((entry) => ({
-          ...versionToItem(config.site, entry.version, {
-            fileTypes: config.fileTypes,
-            primaryOnly: config.primaryOnly,
-          }),
-          modelId: row.modelId,
-          name: row.name,
-          type: row.type,
-          baseModel: entry.version.baseModel,
-          modelMeta: detail,
-        }));
-      return rows.map((next) => ({ ...next, detail: workspaceRowLabel(next) }));
+      const version = await require('./models').chooseVersion(config, detail, row.versionId);
+      if (!version) return null;
+      const item = versionToItem(config.site, version, {
+        fileTypes: config.fileTypes,
+        primaryOnly: config.primaryOnly,
+      });
+      const next = {
+        ...item,
+        modelId: row.modelId,
+        name: row.name || (detail && detail.name),
+        type: row.type || (detail && detail.type),
+        baseModel: version.baseModel,
+        modelMeta: detail,
+      };
+      return [{ ...next, detail: workspaceRowLabel(next) }];
     },
   });
   if (!workspace) return false;
 
   const chosen = workspace.rows;
-  const deletions = plan.filter((row) => !workspace.selected.has(planRowKey(row)) && recordedOf(entries, row));
+  const deletions = workspacePlan.filter((row) => {
+    if (workspace.selected.has(planRowKey(row)) || !recordedOf(entries, row)) return false;
+    const entry = entries[String(row.modelId)];
+    return !(
+      entry &&
+      entry.pinnedVersionId !== undefined &&
+      entry.pinnedVersionId !== null &&
+      String(entry.pinnedVersionId) === String(row.versionId)
+    );
+  });
   const confirmed = await workspaceConfirmPage(config, {
     chosen,
     deletions,
+    crumbPath: opts.crumbPath,
     outDir: opts.outDir || resolveOutDir(config, config.outDir),
     jobs: opts.jobs || config.jobs,
   });
@@ -1622,17 +1703,21 @@ async function runDownloadWorkspace(config, opts = {}) {
     plan: chosen,
     outDir: opts.outDir || resolveOutDir(config, config.outDir),
     force: false,
+    verifyExisting: true,
     totalBytes: chosen.reduce((sum, item) => sum + (Number(item.totalBytes) || 0), 0),
     jobs: opts.jobs || config.jobs,
     attempts: config.downloadAttempts,
-    onComplete: async () => {
+    onComplete: async (summary) => {
       if (!deletions.length) return;
+      // Never delete a kept version when the replacement task failed or was cancelled.
+      // 替换任务失败或取消时，绝不删除用户保留的旧版本。
+      if (summary && (summary.cancelled || summary.error || Number(summary.failed) > 0)) return;
       const count = deletePlanVersions(config, deletions);
       if (count) view.notice(t('tui.workspace.deleteDone', { count }), color.success);
     },
   });
-  await receiptPage(started.taskId);
-  return true;
+  const receipt = await receiptPage(started.taskId, { crumbPath: opts.crumbPath });
+  return receipt === 'main' ? 'main' : true;
 }
 
 module.exports = {
@@ -1647,5 +1732,8 @@ module.exports = {
   replacePlanRows,
   versionPlanItem,
   versionChoiceRows,
+  selectablePlan,
+  deletePlanVersions,
+  receiptPage,
 };
 

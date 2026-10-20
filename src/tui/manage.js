@@ -22,6 +22,7 @@ const { t } = require('../i18n');
 const view = require('./view');
 const pages = require('./pages');
 const screen = require('./screen');
+const { present } = require('./present');
 const reportPage = require('./report');
 const { color } = require('./tokens');
 
@@ -357,12 +358,13 @@ async function collectionSnapshotPage(config, collectionId) {
  * 单个收藏集的页面：针对它能做的一切。
  */
 async function collectionActions(config, collectionId) {
-  // Inside the shell the snapshot is a page: time, member count and change details are visible
-  // without opening the log. The printed block below stays for non-shell callers.
-  //
-  // 外壳接管时快照是一页：时间、成员数与变化明细不必打开日志就能看到。
-  // 下面的打印版本保留给没有外壳的调用方。
-  if (screen.isActive()) return collectionSnapshotPage(config, collectionId);
+  return present({
+    shell: () => collectionSnapshotPage(config, collectionId),
+    plain: () => collectionActionsPlain(config, collectionId),
+  });
+}
+
+async function collectionActionsPlain(config, collectionId) {
   const { snapshot } = readCollection(config, collectionId, { allowCorrupt: true });
   view.note('');
   view.note(color.emphasis(`  ${t('tui.manage.collectionLabel', { id: collectionId })}`));

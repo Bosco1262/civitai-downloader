@@ -31,6 +31,7 @@ const { t } = require('../i18n');
 const layout = require('./layout');
 const view = require('./view');
 const screen = require('./screen');
+const list = require('./ui/list');
 const { isTextInput, installRawKeys } = require('./keys');
 const { pickDirectory, pickerCommand } = require('./fspicker');
 const { selectItems, isInteractive } = require('./select');
@@ -249,14 +250,14 @@ function shellMenu(message, choices, options) {
     },
     onKey(text, key, entry) {
       const state = entry.state;
-      // The cursor wraps around at both ends: pressing ↑ on the first entry jumps to the last one.
-      // 光标在两端循环：在第一项按 ↑ 会跳到末项。
-      if (key.name === 'up') state.cursor = state.cursor <= 0 ? items.length - 1 : state.cursor - 1;
-      else if (key.name === 'down') state.cursor = state.cursor >= items.length - 1 ? 0 : state.cursor + 1;
-      else if (key.name === 'home') state.cursor = 0;
-      else if (key.name === 'end') state.cursor = items.length - 1;
-      else if (key.name === 'pageup') state.cursor = Math.max(0, state.cursor - 10);
-      else if (key.name === 'pagedown') state.cursor = Math.min(items.length - 1, state.cursor + 10);
+      // The cursor follows the shared menu policy: wrap at both ends, page by ten rows.
+      // 光标遵循共享菜单策略：两端循环，每页十行。
+      if (key.name === 'up') state.cursor = list.moveCursor(state.cursor, -1, items.length, 'menu');
+      else if (key.name === 'down') state.cursor = list.moveCursor(state.cursor, 1, items.length, 'menu');
+      else if (key.name === 'home') state.cursor = list.homeCursor();
+      else if (key.name === 'end') state.cursor = list.endCursor(items.length);
+      else if (key.name === 'pageup') state.cursor = list.pageCursor(state.cursor, -1, items.length, 10, 'menu');
+      else if (key.name === 'pagedown') state.cursor = list.pageCursor(state.cursor, 1, items.length, 10, 'menu');
       else if (key.name === 'return') entry.settle(items[state.cursor] ? items[state.cursor].value : null);
       else if (/^[1-9]$/.test(text) && Number(text) <= items.length) entry.settle(items[Number(text) - 1].value);
       else return;

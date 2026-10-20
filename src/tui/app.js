@@ -15,7 +15,7 @@
  * Interaction rules (the same everywhere in the TUI):
  *  - the arrow keys move, Enter selects/confirms and always moves on to the next screen;
  *  - Esc goes back one level without saving, and quits from the main menu;
- *  - Tab switches to the task view (and back) from anywhere;
+ *  - Ctrl+M switches to the task view (and back) from anywhere;
  *  - Ctrl+C quits the program from anywhere.
  *
  *
@@ -31,7 +31,7 @@
  * 交互约定（整个 TUI 一致）：
  *  - ↑/↓ 移动，回车选中/确认，并且一定进入下一个界面；
  *  - Esc 返回上一级且不保存，在主菜单里表示退出；
- *  - 任意位置按 Tab 切换任务视图（再按一次返回）；
+ *  - 任意位置按 Ctrl+M 切换任务视图（再按一次返回）；
  *  - 任意位置按 Ctrl+C 退出程序。
  */
 
@@ -44,6 +44,7 @@ const { t } = require('../i18n');
 const layout = require('./layout');
 const view = require('./view');
 const pages = require('./pages');
+const list = require('./ui/list');
 const screen = require('./screen');
 const tasks = require('./tasks');
 const { settingsFlow } = require('./settings');
@@ -284,12 +285,12 @@ function mainScreen() {
       if (state.busy) return true;
       // ↑ on the first entry jumps to the last one and vice versa, like every other list here.
       // 在第一项按 ↑ 跳到末项，反之亦然：与其它列表保持一致。
-      if (key.name === 'up') {
-        cursor.index = cursor.index <= 0 ? MAIN_MENU.length - 1 : cursor.index - 1;
-      } else if (key.name === 'down') {
-        cursor.index = cursor.index >= MAIN_MENU.length - 1 ? 0 : cursor.index + 1;
-      } else if (key.name === 'home') cursor.index = 0;
-      else if (key.name === 'end') cursor.index = MAIN_MENU.length - 1;
+      if (key.name === 'up') cursor.index = list.moveCursor(cursor.index, -1, MAIN_MENU.length, 'menu');
+      else if (key.name === 'down') cursor.index = list.moveCursor(cursor.index, 1, MAIN_MENU.length, 'menu');
+      else if (key.name === 'home') cursor.index = list.homeCursor();
+      else if (key.name === 'end') cursor.index = list.endCursor(MAIN_MENU.length);
+      else if (key.name === 'pageup') cursor.index = list.pageCursor(cursor.index, -1, MAIN_MENU.length, 5, 'menu');
+      else if (key.name === 'pagedown') cursor.index = list.pageCursor(cursor.index, 1, MAIN_MENU.length, 5, 'menu');
       else if (/^[1-9]$/.test(text) && Number(text) <= MAIN_MENU.length) {
         cursor.index = Number(text) - 1;
         runAction(MAIN_MENU[cursor.index].key);
@@ -379,15 +380,13 @@ async function dispatch(action) {
 /**
  * Download submenu: models and collections share one entry point.
  *
- * The menu stays open after a flow returns, so Esc on the plan / receipt page comes back here (the
- * page the user entered the download from) instead of jumping all the way to the main menu. Leaving
- * the submenu with Esc is still what returns to the main menu.
+ * The menu stays open after a flow returns. The plan/confirmation pages use Esc to go back here;
+ * the receipt page uses Enter for this menu and Esc for the main menu.
  *
  *
  * 「下载」子菜单：模型与收藏集共用一个入口。
  *
- * 流程返回后菜单保持打开，因此计划页/回执页按 Esc 会回到这里（用户进入下载前的页面），
- * 而不是一路跳回主菜单；在子菜单再按 Esc 才回主菜单。
+ * 流程返回后菜单保持打开。计划/确认页的 Esc 回到这里；回执页用 Enter 回到这里，用 Esc 回主菜单。
  */
 async function downloadMenu(config) {
   for (;;) {
@@ -404,8 +403,13 @@ async function downloadMenu(config) {
       { stage: t('tui.app.menuDownload') }
     );
     if (kind === null) return;
-    if (kind === 'model') await require('./models').downloadFlow(config);
-    else await downloadFlow(config);
+    const result =
+      kind === 'model' ? await require('./models').downloadFlow(config) : await downloadFlow(config);
+    // The receipt page uses Esc to mean "back to the main menu", while Enter keeps the download
+    // submenu open.
+    //
+    // 回执页的 Esc 表示返回主菜单；Enter 则留在下载子菜单。
+    if (result === 'main') return;
   }
 }
 

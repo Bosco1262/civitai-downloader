@@ -23,6 +23,7 @@
 
 const { t } = require('../i18n');
 const { buildPageLayout, normalizeReport } = require('./ui/page');
+const list = require('./ui/list');
 const layout = require('./layout');
 const view = require('./view');
 const pages = require('./pages');
@@ -134,7 +135,7 @@ async function showReportPage(config, model) {
         state.cursor = Math.max(0, Math.min(data.entries.length - 1, state.cursor));
         const entry = data.entries[state.cursor];
         const win = pages.scrollToSection(
-          pages.windowOf(data.lines.length, entry.line, room, state.windowStart),
+          list.windowOf(data.lines.length, entry.line, room, state.windowStart),
           data.lines,
           room,
           entry.line,
@@ -156,17 +157,17 @@ async function showReportPage(config, model) {
         const count = data.entries.length;
         if (!count) return;
         if (key.name === 'up') {
-          state.cursor = state.cursor <= 0 ? count - 1 : state.cursor - 1;
+          state.cursor = list.moveCursor(state.cursor, -1, count, 'form');
         } else if (key.name === 'down') {
-          state.cursor = state.cursor >= count - 1 ? 0 : state.cursor + 1;
+          state.cursor = list.moveCursor(state.cursor, 1, count, 'form');
         } else if (key.name === 'home') {
-          state.cursor = 0;
+          state.cursor = list.homeCursor();
         } else if (key.name === 'end') {
-          state.cursor = count - 1;
+          state.cursor = list.endCursor(count);
         } else if (key.name === 'pageup') {
-          state.cursor = Math.max(0, state.cursor - 10);
+          state.cursor = list.pageCursor(state.cursor, -1, count, 10, 'form');
         } else if (key.name === 'pagedown') {
-          state.cursor = Math.min(count - 1, state.cursor + 10);
+          state.cursor = list.pageCursor(state.cursor, 1, count, 10, 'form');
         } else if (key.name === 'return') {
           entry.settle(data.entries[state.cursor]);
         } else {

@@ -80,6 +80,7 @@ const TUI_FILES = [
   'ui/page.js',
   'ui/planWorkspace.js',
   'ui/taskView.js',
+  'ui/versionPage.js',
 ];
 /**
  * Keys added by this change.

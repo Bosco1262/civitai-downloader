@@ -16,7 +16,7 @@
 // Key model (identical on every screen):
 //   - up/down move, Home/End and PgUp/PgDn jump, Enter confirms;
 //   - Esc cancels the current prompt or leaves the current screen without saving;
-//   - Tab switches to the task view and back;
+//   - Ctrl+M switches to the task view and back;
 //   - Ctrl+C is the only way to leave the program from anywhere.
 //
 //
@@ -35,7 +35,7 @@
 // 按键模型（所有界面一致）：
 //   - ↑/↓ 移动，Home/End 与 PgUp/PgDn 跳转，回车确认；
 //   - Esc 取消当前提问或直接离开当前界面且不保存；
-//   - Tab 切到任务视图，再按一次返回；
+//   - Ctrl+M 切到任务视图，再按一次返回；
 //   - Ctrl+C 是唯一可以从任何位置退出程序的方式。
 
 const layout = require('./layout');
@@ -589,6 +589,14 @@ function setInfo(fn) {
 function prompt(spec) {
   return new Promise((resolve) => {
     let settled = false;
+    const crumbPath =
+      spec.crumb === false
+        ? []
+        : Array.isArray(spec.crumbPath)
+          ? spec.crumbPath.map((part) => String(part || '')).filter(Boolean)
+          : spec.title
+            ? [String(spec.title)]
+            : [];
     const entry = {
       spec,
       state: spec.initialState ? { ...spec.initialState } : {},
@@ -597,7 +605,7 @@ function prompt(spec) {
         settled = true;
         const index = modalStack.indexOf(entry);
         if (index >= 0) modalStack.splice(index, 1);
-        if (spec.crumb !== false) crumbs.pop();
+        if (crumbPath.length) crumbs.splice(Math.max(0, crumbs.length - crumbPath.length), crumbPath.length);
         resolve(value === undefined ? null : value);
         refresh();
       },
@@ -625,7 +633,7 @@ function prompt(spec) {
         return typeof spec.hints === 'function' ? spec.hints(entry.state) : [];
       },
     };
-    if (spec.crumb !== false && spec.title) crumbs.push(String(spec.title));
+    if (crumbPath.length) crumbs.push(...crumbPath);
     modalStack.push(entry);
     refresh();
   });
@@ -687,8 +695,8 @@ function logCount() {
 }
 
 // ---------------------------------------------------------------------------
-// System views: tasks (Tab) and the log page (L)
-// 系统视图：任务（Tab）与日志页（L）
+// System views: tasks (Ctrl+M) and the log page (Ctrl+L)
+// 系统视图：任务（Ctrl+M）与日志页（Ctrl+L）
 // ---------------------------------------------------------------------------
 
 /**
@@ -1134,12 +1142,18 @@ function renderCrumbs() {
   const parts = crumbs.filter(Boolean);
   const stageText = modalStack.length ? '' : stage;
   const tail = stageText ? ` ${colors.dim(layout.glyphs().bullet)} ${colors.cyan(stageText)}` : '';
-  if (!parts.length) return tail.trim();
+  const top = modalStack[modalStack.length - 1];
+  const flow = top && top.spec.steps ? top.spec.steps : baseScreen && baseScreen.steps;
+  const stepText = flow
+    ? require('./ui/steps').stepLine(flow, Math.max(20, bodyWidth()))
+    : '';
+  const steps = stepText ? `  ${stepText}` : '';
+  if (!parts.length) return `${steps}${tail}`.trim();
   const sep = ` ${colors.dim(layout.glyphs().arrow)} `;
   return (
     parts
       .map((part, index) => (index === parts.length - 1 ? colors.bold(part) : colors.dim(part)))
-      .join(sep) + tail
+      .join(sep) + steps + tail
   );
 }
 

@@ -247,6 +247,7 @@ async function runJob(job) {
         plan: job.plan,
         outDir: job.outDir,
         force: job.force,
+        verifyExisting: job.verifyExisting,
         totalBytes: job.totalBytes,
         jobs: job.jobs,
         attempts: job.maxAttempts,
@@ -495,7 +496,7 @@ function announceResult(job, result) {
  * @param {object} config
  * @param {{
  *   collectionId:string|number, name?:string, plan:Array, outDir:string, force?:boolean,
- *   totalBytes?:number, jobs?:number, attempts?:number, onComplete?:Function
+ *   verifyExisting?:boolean, totalBytes?:number, jobs?:number, attempts?:number, onComplete?:Function
  * }} opts
  * @returns {{taskId:string, queued:boolean, position:number}}
  */
@@ -530,6 +531,7 @@ function startDownloadTask(config, opts) {
     plan,
     outDir,
     force: !!opts.force,
+    verifyExisting: !!opts.verifyExisting,
     totalBytes,
     jobs,
     maxAttempts: opts.attempts,

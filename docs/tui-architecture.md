@@ -141,7 +141,7 @@ status 贴底。页面不再自己计算列宽。
 - 模型管理与收藏集管理复用同一套“期望状态”版本选择逻辑。
 - 建议抽出 `ui/versionSelection.js`：输入“已安装版本 + 目标版本”，输出 `keep / download / delete / skip` 差异，供下载计划、模型详情与收藏集成员共用。
 - 回执页 `Enter` 返回“主菜单 › 下载”子菜单，`Esc` 返回主菜单；任务继续运行，两者都不表示取消任务。
-- 流程步骤固定为 `[选择 | 确认 | 回执]`；窄屏显示 `步骤 2/3 确认`。
+- 流程步骤固定为 `[ 选择 | 确认 | 回执 ]`；窄屏显示 `步骤 2/3 确认`。
 
 ### 4.7 全局覆盖层与日志
 
@@ -182,31 +182,38 @@ status 贴底。页面不再自己计算列宽。
 
 ## 7. 当前已知例外
 
-Phase 1 已完成：
+Phase 1 与 Phase 1.5 已完成：
 
 - 新增 `src/tui/tokens.js`，提供 `color`、`status`、`glyph`、`format`、`space`、`breakpoint`。
 - 6 个流程文件不再直接使用 `colors.*`，统一改为语义角色。
 - 8 处日期截断改为 `format.date/dateTime/dateTimeFull`，输出与此前一致。
 - 2 处硬编码 `'·'` 改为 `glyph.bullet`，ASCII 控制台会随字符集降级为 `*`。
-- `scripts/check-tui-contracts.js` 的 allowlist 已收缩为只有 `task-schema`。
+- TUI 分隔符统一为 ` | `；CLI/Web 文案不改。
 
-仍保留的唯一例外：
-
-- `task-schema`：`screen.js`，计划在 Phase 4 移除。
-
-每个 Phase 完成时删除对应白名单项；脚本会对“已不再需要的白名单项”给出 `[NOTE]`。
+契约脚本的 `ALLOWLIST` 已为空。`task-schema` 仍是一个缩小范围的检查：它只禁止
+`metaFailed / logFile / attempts / failures` 直接出现在外壳，`task.outDir` 仍由外壳的
+“打开目录”动作使用。
 
 ## 8. 实施状态
 
-以下阶段已完成：
+### 已完成
 
-- Phase 1.5：TUI 分隔符统一为 ` | `，CLI/Web 不变。
-- Phase 2：新增 `ui/page.js`，报告页改为薄封装；页面正文不再重复短横线。
-- Phase 3：`Ctrl+M`/`Ctrl+L` 全局覆盖层；`Tab` 交给页面区域焦点；移除 `j/k` 与旧 `L/l`。
-- Phase 4：任务视图行构建器迁入 `ui/taskView.js`；移除单任务日志；日志页独立标题为 `日志`。
-- Phase 5：`ui/steps.js` 步骤条；页脚只列本页动作键；`?` 全页面帮助。
-- Phase 6a：下载工作台 `ui/planWorkspace.js` 与只读确认页，模型/收藏集流程接入。
-- Phase 6b：`ui/versionSelection.js` 期望状态差异与下载工作台删除逻辑；模型详情/收藏集成员页可复用该组件，页面级切换留待后续打磨。
-- Phase 7：`check-tui-contracts.js` 白名单清零；无用导入清理；新增列表/步骤/版本差异测试。
+- Phase 1 / 1.5：语义令牌、日期格式、TUI 分隔符统一。
+- Phase 2（部分）：新增 `ui/page.js`；报告页改为薄封装；模型版本页抽到 `ui/versionPage.js`；正文重复短横线已去掉。
+- Phase 3（部分）：`Ctrl+M`/`Ctrl+L` 全局覆盖层；`Tab` 用于页面区域焦点；移除 `j/k` 与旧 `L/l`；主菜单、菜单、设置页、模型版本页、报告页、下载确认页已接入 `ui/list.js`。
+- Phase 4（部分）：任务视图行构建器迁入 `ui/taskView.js`；移除单任务日志；日志页独立标题为 `日志`。
+- Phase 5（部分）：`ui/steps.js` 步骤条；页脚只列本页动作键；`?` 全页面帮助；确认页和回执页显示步骤。
+- Phase 6a：下载工作台 `ui/planWorkspace.js`、只读确认页、回执页接入模型/收藏集下载；收藏集 ID 输入已并入工作台。
+- Phase 6b（部分）：`ui/versionSelection.js` 期望状态差异；下载工作台删除逻辑；pinned/共享文件保护。
+- Phase 6c：`present.js` 适配层已用于设置、下载、模型下载、模型动作、收藏集动作、校验与检查流程；流程文件中不再直接判断 `screen.isActive()`。
+- Phase 7（部分）：契约脚本白名单清零；无用导入清理；新增列表/步骤/版本差异/回执/删除保护测试。
 
-契约脚本当前输出：`0 failure(s), 0 allowlisted violation(s)`。
+### 尚未完成
+
+- 设置页、确认页仍未迁移到 `ui/page.js`；Phase 2 的“页面统一走 page.js”未达成。
+- `select.js` 仍保留表格专用滚动；旧版 `runDownloadPlan` 的确认页仍保留自定义列表，但新下载流程已不使用它。
+- 目录仍是扁平 `src/tui/`，没有 `shell/ui/flows/runtime` 物理分层；Phase 7 的目录目标未达成。
+- 模型管理、收藏集管理页面尚未接入 `ui/versionSelection.js`。
+- `screen.js` 约 1400 行、`pages.js` 约 1127 行、`select.js` 约 1627 行，仍高于目标。
+
+契约脚本当前输出是 `0 failure(s), 0 allowlisted violation(s)`，但这只代表当前规则通过，不代表上述架构目标已完成。

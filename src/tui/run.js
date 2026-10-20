@@ -225,13 +225,13 @@ function installKeyHandler(handlers) {
  *
  * Progress goes to two places at once: the legacy three-line status block of the plain path (CI,
  * redirected runs) and the task registry of the app shell, which renders it in the info panel and in
- * the task view behind Tab.
+ * the task view behind Ctrl+M.
  *
  *
  * 观察下载任务的运行，并把进度汇报到 TUI 所有能显示它的地方。
  *
  * 进度同时送往两处：简易路径的传统三行状态块（CI、重定向运行），以及应用外壳的任务表——
- * 后者把它渲染在信息面板与 Tab 打开的任务视图里。
+ * 后者把它渲染在信息面板与 Ctrl+M 打开的任务视图里。
  *
  * @param {object} config
  * @param {{plan:Array, outDir:string, totalBytes:number, name?:string, collectionId?:string}} opts

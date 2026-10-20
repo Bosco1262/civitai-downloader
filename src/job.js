@@ -105,6 +105,27 @@ function clearQueue(config, collectionId) {
 }
 
 /**
+ * Whether a recorded version can be skipped without touching the downloader.
+ * `verifyExisting` deliberately disables the early skip so the downloader verifies the files once.
+ *
+ * 已记录版本是否可以直接跳过。`verifyExisting` 会关闭提前跳过，让下载器校验一次文件。
+ *
+ * @param {{force?:boolean,refreshMeta?:boolean,verifyExisting?:boolean,dryRun?:boolean}} opts
+ * @param {object|null} recorded
+ * @returns {boolean}
+ */
+function shouldSkipRecorded(opts, recorded) {
+  return (
+    !opts.force &&
+    !opts.refreshMeta &&
+    !opts.verifyExisting &&
+    !opts.dryRun &&
+    !!recorded &&
+    recorded.files.length > 0
+  );
+}
+
+/**
  * Run one download job.
  * 执行一次下载任务。
  * @param {object} config
@@ -132,6 +153,11 @@ async function runDownloadJob(config, opts, hooks = {}) {
   };
   const collectionId = String(opts.collectionId);
   const force = !!opts.force;
+  // TUI workspace: recorded rows are passed to the downloader so existing files are verified once
+  // instead of being skipped blindly.
+  //
+  // TUI 工作台：已记录行交给下载器校验一次，而不是直接跳过。
+  const verifyExisting = !!opts.verifyExisting;
   const dryRun = !!opts.dryRun;
   const refreshMeta = !!opts.refreshMeta;
   const jobs = Math.max(1, Math.min(Number(opts.jobs) || Number(config.jobs) || 1, 8));
@@ -285,7 +311,7 @@ async function runDownloadJob(config, opts, hooks = {}) {
       // Completion is judged per version; other versions of the same model are unaffected
       // 按「版本」判断是否已完成；同一模型的其它版本不受影响
       const recorded = getVersion(prev, effectiveVersionId);
-      const upToDate = !force && !refreshMeta && !dryRun && !!recorded && recorded.files.length > 0;
+      const upToDate = shouldSkipRecorded({ force, refreshMeta, verifyExisting, dryRun }, recorded);
 
       if (upToDate) {
         skippedItems.push({ index, item: { ...item, skipped: true, files: [], totalBytes: 0 } });
@@ -995,4 +1021,4 @@ async function runDownloadJob(config, opts, hooks = {}) {
   }
 }
 
-module.exports = { runDownloadJob, freeSpaceBytes, readQueue, clearQueue };
+module.exports = { runDownloadJob, freeSpaceBytes, readQueue, clearQueue, shouldSkipRecorded };
