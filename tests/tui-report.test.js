@@ -518,6 +518,7 @@ test('check flow: 单目标直接进报告页，多目标列表可逐项进入',
     screen.render();
     const text = frame().join('\n');
     assert.ok(text.includes(i18n.t('tui.check.report.titleModel', { name: 'Model X' })), text);
+    assert.ok(text.includes(i18n.t('tui.app.menuModels')), text);
     assert.ok(text.includes(i18n.t('tui.check.report.factTotal')), text);
     assert.ok(text.includes(i18n.t('tui.check.report.sectionUpdated')), text);
     assert.ok(text.includes('v1 → v2'), text);
@@ -532,6 +533,7 @@ test('check flow: 单目标直接进报告页，多目标列表可逐项进入',
     screen.render();
     const list = frame().join('\n');
     assert.ok(list.includes(i18n.t('tui.check.report.listTitle')), list);
+    assert.ok(list.includes(i18n.t('tui.app.menuCollections')), list);
     assert.ok(list.includes(i18n.t('tui.check.report.factTargets')), list);
     assert.ok(list.includes('100') && list.includes('200'), list);
 
@@ -541,6 +543,7 @@ test('check flow: 单目标直接进报告页，多目标列表可逐项进入',
     for (let index = 0; index < 6; index++) await settle();
     screen.render();
     assert.ok(frame().join('\n').includes(i18n.t('tui.check.report.titleCollection', { id: '100' })), frame().join('\n'));
+    assert.ok(frame().join('\n').includes(i18n.t('tui.app.menuCollections')), frame().join('\n'));
     key('escape');
     await settle();
     key('escape');
@@ -660,6 +663,7 @@ test('verify flow: 校验结束后直接进入报告页（不按 L）', async ()
 
       const text = frame().join('\n');
       assert.ok(text.includes(i18n.t('tui.verify.report.title')), text);
+      assert.ok(text.includes(i18n.t('tui.app.menuModels')), text);
       assert.ok(text.includes(i18n.t('tui.verify.report.sectionBroken')), text);
       assert.ok(text.includes('Model X'), text);
       assert.ok(text.includes(path.join(config.outDir, 'Model-X')), text);
@@ -680,7 +684,9 @@ test('doctor report: OK/WARN/FAIL 与 hint 可见', () => {
     { name: 'login', status: 'warn', detail: 'not logged in', hint: 'run the login flow' },
     { name: 'curl', status: 'fail', detail: 'missing', hint: 'install curl' },
   ];
-  const text = report.reportLines(settings.doctorReportModel(items, false), 100, 40).join('\n');
+  const doctor = settings.doctorReportModel(items, false);
+  assert.deepEqual(doctor.crumbPath, [i18n.t('tui.app.menuSettings'), i18n.t('tui.doctor.report.title')]);
+  const text = report.reportLines(doctor, 100, 40).join('\n');
   assert.ok(text.includes(i18n.t('doctor.tagOk')), text);
   assert.ok(text.includes(i18n.t('doctor.tagWarn')), text);
   assert.ok(text.includes(i18n.t('doctor.tagFail')), text);
@@ -712,4 +718,27 @@ test('report: 非外壳模式打印完整报告（事实/分区/操作）', asyn
   assert.ok(text.includes('打印报告'), text);
   assert.ok(text.includes('LORA'), text);
   assert.ok(text.includes('版本') && text.includes('v2'), text);
+});
+
+test('report: 面包屑保留上级路径', async () => {
+  await withFakeTerminal(async ({ frame, key, settle }) => {
+    assert.equal(screen.start({ onQuit: () => {} }), true);
+    const pending = report.showReportPage(
+      { site: 'https://example.invalid', outDir: '/tmp', jobs: 1 },
+      {
+        title: '收藏集 161131',
+        crumbPath: ['本地收藏集管理', '收藏集 161131'],
+        summary: [],
+        sections: [],
+        actions: [],
+        rebuild: null,
+      }
+    );
+    await settle();
+    screen.render();
+    const crumb = frame().find((line) => line.includes('收藏集 161131'));
+    assert.ok(crumb.includes('本地收藏集管理'), crumb);
+    key('escape');
+    await pending;
+  });
 });

@@ -63,24 +63,25 @@ const LANGUAGE_AT_LOAD = i18n.getLanguage();
  * keys.js / layout.js 是纯按键处理与布局助手，不含文案表条目。
  */
 const TUI_FILES = [
-  'app.js',
-  'screen.js',
-  'view.js',
-  'select.js',
-  'run.js',
-  'download.js',
-  'downloadTask.js',
-  'models.js',
-  'check.js',
-  'login.js',
-  'manage.js',
-  'settings.js',
-  'pages.js',
-  'report.js',
+  'flows/app.js',
+  'shell/screen.js',
+  'adapters/view.js',
+  'ui/select.js',
+  'runtime/run.js',
+  'flows/download.js',
+  'runtime/downloadTask.js',
+  'flows/models.js',
+  'flows/check.js',
+  'flows/login.js',
+  'flows/manage.js',
+  'flows/settings.js',
+  'ui/pages.js',
+  'ui/report.js',
   'ui/page.js',
   'ui/planWorkspace.js',
   'ui/taskView.js',
   'ui/versionPage.js',
+  'ui/versionSelectionPage.js',
 ];
 /**
  * Keys added by this change.
@@ -110,6 +111,7 @@ const TUI_MODULES = new Set([
   'verify',
   'doctor',
   'workspace',
+  'versionSelection',
 ]);
 /**
  * Keys whose English and Chinese text is identical (pure format strings / proper nouns / language endonyms);
@@ -376,7 +378,7 @@ test('i18n-tui: 主菜单 / 固定页眉文案逐字一致且 app.js 已接线',
 
   // Source wiring: menu entries really go through t() instead of keeping hard-coded text
   // 源码接线：菜单项确实通过 t() 取词，而不是残留硬编码
-  const source = readTui('app.js');
+  const source = readTui('flows/app.js');
   for (const key of [
     'tui.app.menuTitle',
     'tui.app.menuDownload',
@@ -423,7 +425,7 @@ test('i18n-tui: 仪表盘 / 任务视图 / 页脚文案逐字一致', () => {
 
   // The shell is wired to the catalog like every other TUI file
   // 外壳与其它 TUI 文件一样接入了文案表
-  const source = readTui('screen.js');
+  const source = readTui('shell/screen.js');
   for (const key of [
     'tui.hint.taskView',
     'tui.hint.compact',

@@ -735,14 +735,16 @@ test('screen: 设置页的分组标题与它的行绑定出现', async () => {
         for (let i = 0; i < 24; i++) {
           const area = listArea();
           const last = area[area.length - 1] || '';
-          assert.ok(!titles.includes(last.trim()), `${rows} 行：标题被单独留在最后一行：${last}`);
+          assert.ok(!titles.some((title) => last.includes(title)), `${rows} 行：标题被单独留在最后一行：${last}`);
           const frameLines = frame();
           assert.ok(
             frameLines[frameLines.length - 2].includes('第 '),
             `${rows} 行：状态行与页脚之间不应有空行：${frameLines.slice(-3).join(' | ')}`
           );
           const cursorIndex = area.findIndex((line) => line.includes('▸'));
-          if (cursorIndex > 0 && titles.includes((area[cursorIndex - 1] || '').trim())) firstRowSeen = true;
+          if (cursorIndex > 0 && titles.some((title) => (area[cursorIndex - 1] || '').includes(title))) {
+            firstRowSeen = true;
+          }
           key('down');
           await settle();
           screen.render();

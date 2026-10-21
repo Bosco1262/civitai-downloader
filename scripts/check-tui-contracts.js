@@ -21,15 +21,6 @@ const ROOT = path.resolve(__dirname, '..');
 const TUI_ROOT = path.join(ROOT, 'src', 'tui');
 
 /**
- * Files that own business flows until they move to `src/tui/flows`.
- * `app.js` is excluded because it is also the plain-mode entry point and prints directly there.
- *
- * 在迁入 `src/tui/flows` 之前承载业务流程的文件。
- * `app.js` 被排除，因为它同时是简易模式入口，会在那里直接打印。
- */
-const FLOW_FILES = ['settings.js', 'models.js', 'download.js', 'check.js', 'manage.js', 'login.js'];
-
-/**
  * Known violations that a later phase removes. Keys are rule ids; values are repo-relative paths.
  * 后续阶段要清除的已知违规。键是规则 id，值是仓库相对路径。
  */
@@ -118,11 +109,12 @@ function walk(dir) {
  * @returns {string[]}
  */
 function filesFor(scope) {
-  if (scope === 'screen') return [path.join(TUI_ROOT, 'screen.js')];
+  if (scope === 'screen') return [path.join(TUI_ROOT, 'shell', 'screen.js')];
   if (scope === 'tui') return walk(TUI_ROOT);
   const flowsDir = path.join(TUI_ROOT, 'flows');
-  if (fs.existsSync(flowsDir)) return walk(flowsDir);
-  return FLOW_FILES.map((name) => path.join(TUI_ROOT, name));
+  // app.js owns the plain-mode entry and prints there; the remaining flows are shell-only.
+  // app.js 负责简易模式入口并直接打印；其余流程只服务外壳。
+  return walk(flowsDir).filter((file) => path.basename(file) !== 'app.js');
 }
 
 /**
@@ -265,7 +257,6 @@ function main() {
 main();
 
 module.exports = {
-  FLOW_FILES,
   ALLOWLIST,
   RULES,
   scan,

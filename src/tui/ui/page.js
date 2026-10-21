@@ -95,6 +95,7 @@ function normalizeReport(model) {
     hint: src.hint === undefined || src.hint === null ? t('tui.hint.report') : String(src.hint),
     initialSection: src.initialSection,
     status: src.status === undefined || src.status === null ? '' : String(src.status),
+    crumbPath: Array.isArray(src.crumbPath) ? src.crumbPath.map(String).filter(Boolean) : undefined,
   };
 }
 

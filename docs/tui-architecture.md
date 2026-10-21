@@ -3,7 +3,7 @@
 本文档定义 TUI 的目标分层、依赖方向与页面契约。Phase 0 只记录现状和目标，不要求代码立即符合；
 后续每个 Phase 按文末的退出条件逐步收紧。
 
-## 1. 当前分层事实
+## 1. Phase 0 分层基线（历史）
 
 | 层 | 文件 | 职责 | 现状 |
 |---|---|---|---|
@@ -14,24 +14,26 @@
 | 业务流程 | `app.js`、`settings.js`、`models.js`、`download.js`、`check.js`、`manage.js`、`login.js` | 主菜单、设置、模型、下载、检查、收藏集、登录 | 有 9 处 `screen.isActive()` 分叉 |
 | 任务运行时 | `tasks.js`、`downloadTask.js`、`run.js` | 任务登记表、后台队列、进度采样 | 只服务下载任务 |
 
-## 2. 目标分层
+## 2. 当前分层
 
 ```
-core/       ansi.js  metrics.js  keys.js  fspicker.js  format.js
-shell/      screen.js  frame.js  input.js  systemViews.js
-ui/         tokens.js  page.js  list.js  menu.js  form.js
-            report.js  picker.js  feedback.js  help.js  taskView.js
+core/       layout.js  keys.js  fspicker.js  versionDelete.js
+shell/      screen.js  present.js
+ui/         tokens.js  page.js  list.js  steps.js  pages.js  report.js
+            select.js  planWorkspace.js  taskView.js  versionPage.js
+            versionSelection.js  versionSelectionPage.js
 flows/      app.js  settings.js  models.js  download.js
             check.js  manage.js  login.js
-runtime/    tasks.js  downloadTask.js  progress.js
-adapters/   plain.js  shell.js
+runtime/    tasks.js  downloadTask.js  run.js
+adapters/   view.js
 ```
 
-第一轮不移动文件，新增模块并从旧文件 re-export；Phase 7 再做物理迁移。
+根目录保留同名 re-export shim，旧 require 路径与测试入口继续可用；实现位于上述分层目录。
 
 ## 3. 依赖方向
 
-只允许以下方向：
+目标方向如下；当前 `ui/planWorkspace.js`、`ui/versionPage.js`、`ui/versionSelectionPage.js`
+仍是屏幕感知组件，直接调用 `shell/screen`，这是尚未消除的 `ui ↔ shell` 例外。
 
 ```
 core  ←  ui  ←  shell
@@ -199,21 +201,21 @@ Phase 1 与 Phase 1.5 已完成：
 ### 已完成
 
 - Phase 1 / 1.5：语义令牌、日期格式、TUI 分隔符统一。
-- Phase 2（部分）：新增 `ui/page.js`；报告页改为薄封装；模型版本页抽到 `ui/versionPage.js`；正文重复短横线已去掉。
-- Phase 3（部分）：`Ctrl+M`/`Ctrl+L` 全局覆盖层；`Tab` 用于页面区域焦点；移除 `j/k` 与旧 `L/l`；主菜单、菜单、设置页、模型版本页、报告页、下载确认页已接入 `ui/list.js`。
-- Phase 4（部分）：任务视图行构建器迁入 `ui/taskView.js`；移除单任务日志；日志页独立标题为 `日志`。
-- Phase 5（部分）：`ui/steps.js` 步骤条；页脚只列本页动作键；`?` 全页面帮助；确认页和回执页显示步骤。
+- Phase 2：`ui/page.js` 页面骨架；报告页、设置页、模型版本页、下载确认页均使用共享布局。
+- Phase 3：`Ctrl+M`/`Ctrl+L` 全局覆盖层；`Tab` 用于页面区域焦点；移除 `j/k` 与旧 `L/l`；列表接入 `ui/list.js`。
+- Phase 4：任务视图行构建器迁入 `ui/taskView.js`；移除单任务日志；日志页独立标题为 `日志`。
+- Phase 5：`ui/steps.js` 步骤条；页脚只列本页动作键；`?` 全页面帮助；确认页和回执页显示步骤。
 - Phase 6a：下载工作台 `ui/planWorkspace.js`、只读确认页、回执页接入模型/收藏集下载；收藏集 ID 输入已并入工作台。
-- Phase 6b（部分）：`ui/versionSelection.js` 期望状态差异；下载工作台删除逻辑；pinned/共享文件保护。
-- Phase 6c：`present.js` 适配层已用于设置、下载、模型下载、模型动作、收藏集动作、校验与检查流程；流程文件中不再直接判断 `screen.isActive()`。
-- Phase 7（部分）：契约脚本白名单清零；无用导入清理；新增列表/步骤/版本差异/回执/删除保护测试。
+- Phase 6b：`ui/versionSelection.js` 期望状态差异；`ui/versionSelectionPage.js` 版本选择页；`core/versionDelete.js` 删除逻辑；模型管理新增“管理版本（保留/删除）”，收藏集通过成员页进入模型页复用同一入口；pinned/共享文件保护。
+- Phase 6c：`shell/present.js` 适配层用于设置、下载、模型下载、模型动作、收藏集动作、校验与检查流程；流程文件中不再直接判断 `screen.isActive()`。
+- Phase 7：`core/shell/ui/flows/runtime/adapters` 物理分层；根目录保留兼容 re-export；契约脚本 0 违规；新增列表/步骤/版本差异/回执/删除保护/版本选择测试。
 
-### 尚未完成
+### 已保留的例外
 
-- 设置页、确认页仍未迁移到 `ui/page.js`；Phase 2 的“页面统一走 page.js”未达成。
-- `select.js` 仍保留表格专用滚动；旧版 `runDownloadPlan` 的确认页仍保留自定义列表，但新下载流程已不使用它。
-- 目录仍是扁平 `src/tui/`，没有 `shell/ui/flows/runtime` 物理分层；Phase 7 的目录目标未达成。
-- 模型管理、收藏集管理页面尚未接入 `ui/versionSelection.js`。
-- `screen.js` 约 1400 行、`pages.js` 约 1127 行、`select.js` 约 1627 行，仍高于目标。
+- `ui/select.js` 仍保留表格专用滚动，这是有意的 table 变体，不强行改成菜单列表。
+- 旧版 `runDownloadPlan` 的确认页保留为兼容路径，新下载流程已不使用它。
+- `shell/screen.js` 约 1419 行、`ui/pages.js` 约 1128 行、`ui/select.js` 约 1627 行，仍高于早期行数目标；功能与分层优先，后续可继续拆分。
+- `task.outDir` 仍由外壳的“打开目录”动作使用；`task-schema` 检查只覆盖 `metaFailed / logFile / attempts / failures`。
+- `ui/planWorkspace.js`、`ui/versionPage.js`、`ui/versionSelectionPage.js` 仍直接依赖 `shell/screen`；物理目录已完成，但严格的无环依赖还差这一步。
 
-契约脚本当前输出是 `0 failure(s), 0 allowlisted violation(s)`，但这只代表当前规则通过，不代表上述架构目标已完成。
+契约脚本当前输出是 `0 failure(s), 0 allowlisted violation(s)`。

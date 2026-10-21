@@ -16,6 +16,7 @@
 - 自动获取每个模型的最新版本、主 Model 文件的：文件名 / 大小 / SHA256 / 下载直链
 - **版本选择与固定**：多版本模型可指定下载哪个版本——TUI 的计划页按 `v` 打开版本列表，**可勾选一个或多个版本**（同一模型的多个版本会各占一行、一起下载），也可在模型详情页点「下载 / 切换版本…」多选；CLI 用 `--version <modelId=versionId>` 覆盖；`pin` 命令可把版本**固定**下来，之后不会被站点新版覆盖
 - **同一模型多版本共存**：每个版本独立记录目录/文件清单/SHA256，首个版本在 `outDir/<模型名>/`、追加版本在 `outDir/<模型名>/<版本名>/`，切换版本不会互相覆盖
+- **必需组件**：除主 Model 外，自动带上站点标记为 `metadata.isRequired` 的组件（如 Text Encoder），以及版本通过 `vaeId` 关联的 VAE；它们不受默认 `fileTypes`/`primaryOnly` 过滤
 - **单个模型（不依赖收藏集）**：`download <模型URL | model:<id> | version:<id>>` 直接下载（支持批量粘贴 / `--models` / `--from-file`）；`models` 命令统一管理——列表与搜索排序、导出 JSON/CSV、固定版本、删除记录（可连文件一起删）；`check`/`verify` 支持 `model:<id>` 与 `--models`；TUI 主菜单第 2 项「单个模型」有同款入口
 - 下载能力（基于 curl + 登录 Cookie）：
   - 断点续传（`curl -C -`），网络中断后重跑同一命令即可续传；续传前比对 **ETag**，远端文件变了会丢弃旧分片，避免拼出必然校验失败的文件
@@ -448,14 +449,13 @@ civitai-collection-downloader/
 │  │  ├─ http.js           # JSON 请求体、静态文件、路径穿越防护、SSE 写入
 │  │  └─ public/           # index.html + styles.css + app.js（无需构建）
 │  └─ tui/                 # 终端交互界面
-│     ├─ app.js            # 横幅 / 状态行 / 主菜单 / 分发
-│     ├─ pages.js          # 公共交互：菜单、确认框、列表选择器、帮助页、分区滚动
-│     ├─ report.js         # 共享报告页：摘要 + 分区 + 操作（详情 / 快照 / 检查 / 校验 / 体检）
-│     ├─ select.js         # 全屏选择器（跟随光标的视窗、搜索/过滤/排序、帮助浮层）
-│     ├─ keys.js           # 原始键盘处理（Ctrl+C / Ctrl+Z 语义）
-│     ├─ layout.js         # 终端尺寸与字符集（ASCII 降级）
-│     ├─ view.js  run.js   # 屏幕助手与下载进度面板
-│     └─ download.js  check.js  models.js  login.js  manage.js  settings.js
+│     ├─ core/             # ANSI、尺寸、字符集、按键、目录对话框、版本删除
+│     ├─ shell/            # 备用屏外壳、帧合成、面包屑/步骤、present 适配
+│     ├─ ui/               # 语义令牌、页面骨架、列表、报告、选择器、工作台、任务视图
+│     ├─ flows/            # 主菜单、设置、模型、下载、检查、收藏集、登录
+│     ├─ runtime/          # 任务登记表、下载队列、进度采样
+│     ├─ adapters/         # 终端输出与简易模式兼容门面
+│     └─ *.js              # 兼容 re-export（旧路径保持可用）
 └─ .data/                  # 运行时数据（会话 / Cookie / 缓存 / 状态 / 日志）
 ```
 

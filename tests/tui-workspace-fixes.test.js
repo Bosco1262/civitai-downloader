@@ -117,6 +117,87 @@ test('download: 回执页 Enter 回下载子菜单，Esc 回主菜单', async ()
   });
 });
 
+test('workspace: 输入后显示模型标题，版本页返回后清空并聚焦确认', async () => {
+  await withFakeTerminal(async ({ frame, key, settle }) => {
+    assert.equal(screen.start({ onQuit: () => {} }), true);
+    screen.setBase({ title: '主菜单', render: () => ['▸ 项'], hints: () => [] });
+    const pending = showPlanWorkspace({
+      title: '下载模型',
+      inputLabel: '模型 ID 或模型页 URL',
+      resultLabel: '模型标题',
+      rows: [],
+      selected: new Set(),
+      idOf: (row) => String(row.modelId),
+      resolveInput: async () => [
+        { modelId: '1', name: 'Illustrious-XL', versionId: '0.1', versionName: 'v0.1' },
+      ],
+      openRow: async (row) => [row],
+    });
+    await settle();
+    screen.render();
+    assert.ok(frame().join('\n').includes('模型标题'), frame().join('\n'));
+    assert.ok(frame().join('\n').includes('已选 0/0 项'), frame().join('\n'));
+    key('x', 'x');
+    key('return');
+    await settle();
+    screen.render();
+    assert.ok(frame().join('\n').includes('模型标题  Illustrious-XL'), frame().join('\n'));
+    assert.ok(frame().join('\n').includes('已选 1/1 项'), frame().join('\n'));
+    key('tab');
+    key('return');
+    await settle();
+    screen.render();
+    assert.ok(frame().join('\n').includes('▸ 确认选择'), frame().join('\n'));
+    assert.ok(!frame().join('\n').includes('模型标题  Illustrious-XL'), frame().join('\n'));
+    key('escape');
+    assert.equal(await pending, null);
+  });
+});
+
+test('workspace: 同一模型的多个版本合并为一行', () => {
+  const groups = download.groupPlanRows([
+    { modelId: '1', name: 'Anima', versionId: '11', versionName: 'v1', totalBytes: 10 },
+    { modelId: '1', name: 'Anima', versionId: '12', versionName: 'v2', totalBytes: 20 },
+    { modelId: '2', name: 'Other', versionId: '21', versionName: 'v3', totalBytes: 30 },
+    { modelId: '2', name: 'Other', versionId: '21', versionName: 'v3', totalBytes: 30 },
+    { modelId: '3', name: 'Bad', versionId: '31', error: 'failed' },
+  ]);
+  assert.equal(groups.length, 2);
+  assert.equal(groups[0].versions.length, 2);
+  assert.equal(groups[0].detail, 'v1/v2');
+  assert.equal(groups[0].totalBytes, 30);
+  assert.equal(groups[1].versions.length, 1);
+});
+
+test('confirm: 列表区 Enter 无效，Tab 到按钮后确认；Esc 返回选择', async () => {
+  await withFakeTerminal(async ({ frame, key, settle }) => {
+    assert.equal(screen.start({ onQuit: () => {} }), true);
+    screen.setBase({ title: '主菜单', render: () => ['▸ 项'], hints: () => [] });
+    const data = {
+      chosen: [{ modelId: '1', versionId: '1', name: 'Alpha', versionName: 'v1' }],
+      deletions: [],
+      outDir: '/tmp',
+      jobs: 1,
+    };
+    const first = download.workspaceConfirmPage({}, data);
+    await settle();
+    screen.render();
+    assert.ok(!frame().join('\n').includes('界面渲染失败'), frame().join('\n'));
+    // Rows Enter must not move focus or start the download.
+    // 列表区 Enter 不应移动焦点，也不应开始下载。
+    key('return');
+    await settle();
+    key('tab');
+    key('return');
+    assert.equal(await first, true);
+
+    const second = download.workspaceConfirmPage({}, data);
+    await settle();
+    key('escape');
+    assert.equal(await second, 'back');
+  });
+});
+
 test('workspace: 添加多项结果后光标回到第一项', async () => {
   await withFakeTerminal(async ({ frame, key, settle }) => {
     assert.equal(screen.start({ onQuit: () => {} }), true);

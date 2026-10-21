@@ -77,10 +77,17 @@ async function showPlanWorkspace(opts = {}) {
       if (state.busy) lines.push(color.muted(t('tui.workspace.busy')));
       if (opts.inputLabel) lines.push(color.emphasis(opts.inputLabel));
       if (opts.resolveInput) lines.push(inputLine(state));
+      if (opts.resultLabel) {
+        const value = state.result ? `  ${truncateTo(state.result, Math.max(8, ctx.width - displayWidth(opts.resultLabel) - 4))}` : '';
+        lines.push(`${color.muted(opts.resultLabel)}${value}`);
+      } else if (state.result) {
+        lines.push(color.muted(`  ${truncateTo(state.result, Math.max(8, ctx.width - 4))}`));
+      }
       if (state.error) lines.push(color.danger(`  ${state.error}`));
-      if (state.result) lines.push(color.muted(`  ${truncateTo(state.result, Math.max(8, ctx.width - 4))}`));
+      const selectedCount = state.rows.filter((row) => state.selected.has(String(opts.idOf(row)))).length;
+      lines.push('');
+      lines.push(color.muted(t('tui.workspace.selected', { count: selectedCount, total: state.rows.length })));
       if (state.rows.length) {
-        lines.push(color.muted(t('tui.workspace.selected', { count: state.rows.filter((row) => state.selected.has(String(opts.idOf(row)))).length, total: state.rows.length })));
         const roomRows = Math.max(1, room - lines.length - 2);
         const win = list.windowOf(state.rows.length, state.cursor, roomRows, state.windowStart || 0);
         state.windowStart = win.start;
@@ -205,7 +212,10 @@ async function showPlanWorkspace(opts = {}) {
         entry.state = state;
         screen.refresh();
         try {
-          const rows = await opts.openRow(row, state);
+          const rows = await opts.openRow(row, state, {
+            crumbPath: opts.crumbPath,
+            steps: opts.steps,
+          });
           if (Array.isArray(rows)) {
             const id = String(opts.idOf(row));
             const index = state.rows.findIndex((existing) => String(opts.idOf(existing)) === id);
@@ -213,6 +223,15 @@ async function showPlanWorkspace(opts = {}) {
               state.rows.splice(index, 1, ...rows);
               for (const next of rows) state.selected.add(String(opts.idOf(next)));
             }
+            /*
+             * Returning from version selection clears the old input result and puts focus on the
+             * confirmation button, so Enter is the obvious next action.
+             *
+             * 从版本页返回后清掉旧的输入结果，并把焦点放到确认按钮。
+             */
+            state.result = '';
+            state.region = 'next';
+            state.cursor = 0;
           }
         } catch (e) {
           state.error = String((e && e.message) || e);

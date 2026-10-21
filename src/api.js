@@ -151,23 +151,47 @@ function rebaseUrl(url, site) {
  * 从版本元数据中挑出可下载文件。
  * @param {object} meta 版本或模型版本对象
  * @param {string} site
- * @param {{fileTypes?:string[], primaryOnly?:boolean}} [opts]
+ * @param {{fileTypes?:string[], primaryOnly?:boolean, includeRequired?:boolean}} [opts]
  */
 function extractFiles(meta, site, opts = {}) {
   const types = opts.fileTypes && opts.fileTypes.length ? opts.fileTypes.map((ft) => ft.toLowerCase()) : DEFAULT_FILE_TYPES.map((ft) => ft.toLowerCase());
   const primaryOnly = opts.primaryOnly !== false;
+  const includeRequired = opts.includeRequired !== false;
   const all = Array.isArray(meta && meta.files) ? meta.files : [];
   const matched = all.filter((f) => types.includes(String(f.type || '').toLowerCase()));
   const primary = matched.filter((f) => f.primary);
   const picked = primaryOnly && primary.length ? primary : matched;
-  return picked.map((f) => ({
-    fileId: f.id,
-    name: f.name,
-    sizeKB: f.sizeKB,
-    bytes: Math.round((Number(f.sizeKB) || 0) * 1024),
-    sha256: f.hashes && f.hashes.SHA256 ? String(f.hashes.SHA256).toUpperCase() : null,
-    downloadUrl: site ? rebaseUrl(f.downloadUrl, site) : f.downloadUrl,
-  }));
+
+  // Required components are files the model cannot run without. The site marks some as
+  // metadata.isRequired (for example a text encoder); a linked VAE is marked only through vaeId.
+  // They bypass fileTypes/primaryOnly so the default Model-only filter does not drop them.
+  //
+  // 必需组件是模型运行不可缺少的文件：站点用 metadata.isRequired 标记（例如文本编码器），
+  // 关联的 VAE 只通过 vaeId 表示。它们不受 fileTypes/primaryOnly 过滤，避免默认只下 Model 时漏掉。
+  const required = includeRequired
+    ? all.filter(
+        (f) =>
+          (f.metadata && f.metadata.isRequired === true) ||
+          (meta && meta.vaeId && String(f.type || '').toLowerCase() === 'vae')
+      )
+    : [];
+
+  const result = [];
+  const seen = new Set();
+  for (const file of [...required, ...picked]) {
+    const id = String(file.id === undefined || file.id === null ? file.name : file.id);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    result.push({
+      fileId: file.id,
+      name: file.name,
+      sizeKB: file.sizeKB,
+      bytes: Math.round((Number(file.sizeKB) || 0) * 1024),
+      sha256: file.hashes && file.hashes.SHA256 ? String(file.hashes.SHA256).toUpperCase() : null,
+      downloadUrl: site ? rebaseUrl(file.downloadUrl, site) : file.downloadUrl,
+    });
+  }
+  return result;
 }
 
 function versionToItem(site, version, opts = {}) {

@@ -69,6 +69,46 @@ test('extractFiles: 默认只取 primary 的 Model 文件', () => {
   assert.equal(all.length, 3, 'primaryOnly=false + 多类型时全部返回');
 });
 
+test('extractFiles: 必需组件与关联 VAE 不受默认类型过滤', () => {
+  const meta = {
+    vaeId: 99,
+    files: [
+      {
+        id: 1,
+        name: 'model.safetensors',
+        type: 'Model',
+        primary: true,
+        sizeKB: 10,
+        hashes: {},
+        downloadUrl: '',
+      },
+      {
+        id: 2,
+        name: 'text_encoder.safetensors',
+        type: 'Text Encoder',
+        sizeKB: 20,
+        metadata: { isRequired: true },
+        hashes: {},
+        downloadUrl: '',
+      },
+      {
+        id: 3,
+        name: 'vae.safetensors',
+        type: 'VAE',
+        sizeKB: 30,
+        hashes: {},
+        downloadUrl: '',
+      },
+    ],
+  };
+  const files = api.extractFiles(meta, null, { fileTypes: ['Model'], primaryOnly: true });
+  assert.deepEqual(files.map((file) => file.name), [
+    'text_encoder.safetensors',
+    'vae.safetensors',
+    'model.safetensors',
+  ]);
+});
+
 test('versionToItem: 汇总文件与总体积', () => {
   const item = api.versionToItem('https://civitai.red', {
     id: 7,
