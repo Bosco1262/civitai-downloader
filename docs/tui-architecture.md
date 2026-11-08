@@ -5,6 +5,8 @@
 
 ## 1. Phase 0 分层基线（历史）
 
+> 本节记录 Phase 0 当时的扁平文件名；当前文件名与目录见第 2 节。
+
 | 层 | 文件 | 职责 | 现状 |
 |---|---|---|---|
 | 终端适配 | `layout.js`、`keys.js`、`fspicker.js` | ANSI、字符集、颜色、显示宽度、raw mode、系统目录框 | 基本独立 |
@@ -17,23 +19,24 @@
 ## 2. 当前分层
 
 ```
-core/       layout.js  keys.js  fspicker.js  versionDelete.js
+core/       layout.js  keys.js  fsPicker.js  versionDelete.js
 shell/      screen.js  present.js
-ui/         tokens.js  page.js  list.js  steps.js  pages.js  report.js
+ui/         tokens.js  pageLayout.js  list.js  steps.js  prompts.js  report.js
             select.js  planWorkspace.js  taskView.js  versionPage.js
-            versionSelection.js  versionSelectionPage.js
+            versionDiff.js  versionSelectionPage.js
 flows/      app.js  settings.js  models.js  download.js
             check.js  manage.js  login.js
 runtime/    tasks.js  downloadTask.js  run.js
 adapters/   view.js
 ```
 
-根目录保留同名 re-export shim，旧 require 路径与测试入口继续可用；实现位于上述分层目录。
+根目录保留 re-export shim（文件名沿用旧路径，可能与实现名不同），旧 require 路径与测试入口继续可用；实现位于上述分层目录。
 
 ## 3. 依赖方向
 
-目标方向如下；当前 `ui/planWorkspace.js`、`ui/versionPage.js`、`ui/versionSelectionPage.js`
-仍是屏幕感知组件，直接调用 `shell/screen`，这是尚未消除的 `ui ↔ shell` 例外。
+目标方向如下；当前 `ui/planWorkspace.js`、`ui/versionPage.js`、`ui/versionSelectionPage.js`、
+`ui/prompts.js`、`ui/select.js`、`ui/report.js` 仍是屏幕感知组件，直接调用 `shell/screen`
+或 `adapters/view`，这是尚未消除的 `ui ↔ shell/adapters` 例外。
 
 ```
 core  ←  ui  ←  shell
@@ -47,9 +50,8 @@ core  ←  runtime  ←  flows
 2. `ui` 只依赖 `core` 与 `i18n`；不得依赖 `screen`、`view`、`flows`。
 3. `shell` 依赖 `core` 与 `ui`；不得依赖具体业务流程（`settings/models/download/check/manage/login`）。
 4. `flows` 依赖 `ui`、`runtime`、`core` 与 `adapters`；不得直接调用 `screen.start/stop/bodyGeometry`，不得写终端。
-5. `adapters` 是唯一允许同时接触“纯页面模型”和“具体呈现方式”的层：
-   - `adapters/shell.js` 把页面模型交给 `screen.prompt`；
-   - `adapters/plain.js` 把页面模型交给 `prompts` 库或文本打印。
+5. `adapters` 是唯一允许同时接触“纯页面模型”和“具体呈现方式”的层；当前由
+   `adapters/view.js`（日志/提示门面）与 `shell/present.js`（屏幕与简易模式二选一）承担。
 6. `runtime` 不得依赖 `shell`；任务进度通过视图模型暴露。
 7. 禁止新增循环依赖；已有 `screen ↔ view` 循环在 Phase 7 消除。
 
@@ -85,7 +87,7 @@ core  ←  runtime  ←  flows
 }
 ```
 
-`page.js` 负责：摘要列对齐、分区标题、行裁剪、光标替换、滚动视窗、actions 永远在最后、
+`pageLayout.js` 负责：摘要列对齐、分区标题、行裁剪、光标替换、滚动视窗、actions 永远在最后、
 status 贴底。页面不再自己计算列宽。
 
 ### 4.3 列表契约
@@ -114,7 +116,7 @@ status 贴底。页面不再自己计算列宽。
 ```
 
 下载任务通过 `toDownloadTaskViewModel()` 适配；未来 check/verify 任务各自提供适配器，
-`shell/taskView.js` 不需要修改。
+`ui/taskView.js` 不需要修改。
 
 ### 4.5 反馈契约
 
@@ -126,7 +128,7 @@ status 贴底。页面不再自己计算列宽。
 
 ### 4.6 下载工作台与步骤
 
-下载计划页/确认页使用独立的 workspace 契约，不强行塞进 `page.js`：
+下载计划页/确认页使用独立的 workspace 契约，不强行塞进 `pageLayout.js`：
 
 - 输入只接受模型/收藏集 ID 或完整链接；其他格式直接提示格式错误。
 - 模型：顶部输入框、下方一行结果、下方已选模型列表、最后是下一步按钮。
@@ -148,7 +150,7 @@ status 贴底。页面不再自己计算列宽。
 - 确认页固定汇总“新下载 / 校验已有 / 合计体积 / 文件类型 / 磁盘余量 / 访问权限”；付费项显示“需已有权限、不会购买或消耗 Buzz”，列表独立滚动，开始按钮固定可见。
 - 下载确认页不包含删除。删除只属于“本地版本管理”的显式期望状态操作，并在执行前列出数量、体积并要求二次确认。
 - “强制重下”只从 TUI 确认页移除；核心/CLI 的 `force` 保留给显式重试、修复与 `--force` 场景。
-- `ui/versionSelection.js` 的 `keep / download / delete / skip` 差异只用于本地版本管理，不再与下载计划共用危险语义。
+- `ui/versionDiff.js` 的 `keep / download / delete / skip` 差异只用于本地版本管理，不再与下载计划共用危险语义。
 - 回执页提供“查看任务 / 继续下载 / 返回主菜单”三个明确动作；`Esc` 只返回上一级，任务继续运行。
 - 流程步骤固定为 `[ 选择 | 确认 | 回执 ]`；窄屏显示 `步骤 2/3 确认`。
 
@@ -196,7 +198,7 @@ status 贴底。页面不再自己计算列宽。
 | 0 | 文档、测试助手、契约脚本、`npm run check:tui` 可用 |
 | 1 | 流程内日期截断与硬编码展示字符为 0；语义令牌可用 |
 | 1.5 | TUI 内容、页脚提示与 TUI 硬编码分隔符统一为 ` \| `；CLI/Web 不改；项目符号仍为 `·` |
-| 2 | 页面统一走 `ui/page.js`；报告页输出不变；页面最多一条横线 |
+| 2 | 页面统一走 `ui/pageLayout.js`；报告页输出不变；页面最多一条横线 |
 | 3 | 6 处自定义列表收敛到 `menu/form/table`；下载计划/确认页支持 Tab 区域焦点 |
 | 4 | `screen.js` 不再出现下载任务字段；任务视图接受通用视图模型；日志页合并为一层并独立标题 `日志` |
 | 5 | StepFlow 可用；页脚只列本页动作键；`?` 全页面可用；`Ctrl+T`/`Ctrl+L` 全局覆盖层；移除 `j/k` 与旧 `L`/`l` |
@@ -207,7 +209,7 @@ status 贴底。页面不再自己计算列宽。
 
 Phase 1 与 Phase 1.5 已完成：
 
-- 新增 `src/tui/tokens.js`，提供 `color`、`status`、`glyph`、`format`、`space`、`breakpoint`。
+- 新增 `src/tui/ui/tokens.js`，提供 `color`、`status`、`glyph`、`format`、`space`、`breakpoint`。
 - 6 个流程文件不再直接使用 `colors.*`，统一改为语义角色。
 - 8 处日期截断改为 `format.date/dateTime/dateTimeFull`，输出与此前一致。
 - 2 处硬编码 `'·'` 改为 `glyph.bullet`，ASCII 控制台会随字符集降级为 `*`。
@@ -222,12 +224,12 @@ Phase 1 与 Phase 1.5 已完成：
 ### 已完成
 
 - Phase 1 / 1.5：语义令牌、日期格式、TUI 分隔符统一。
-- Phase 2：`ui/page.js` 页面骨架；报告页、设置页、模型版本页、下载确认页均使用共享布局。
+- Phase 2：`ui/pageLayout.js` 页面骨架；报告页、设置页、模型版本页、下载确认页均使用共享布局。
 - Phase 3：`Ctrl+T`/`Ctrl+L` 全局覆盖层；`Tab` 用于页面区域焦点；移除 `j/k` 与旧 `L/l`；列表接入 `ui/list.js`。
 - Phase 4：任务视图行构建器迁入 `ui/taskView.js`；移除单任务日志；日志页独立标题为 `日志`。
 - Phase 5：`ui/steps.js` 步骤条；页脚只列本页动作键；`?` 全页面帮助；确认页和回执页显示步骤。
 - Phase 6a：下载工作台 `ui/planWorkspace.js`、只读确认页、回执页接入模型/收藏集下载；收藏集 ID 输入已并入工作台。
-- Phase 6b：`ui/versionSelection.js` 期望状态差异；`ui/versionSelectionPage.js` 版本选择页；`core/versionDelete.js` 删除逻辑；模型管理新增“管理版本（保留/删除）”，收藏集通过成员页进入模型页复用同一入口；pinned/共享文件保护。
+- Phase 6b：`ui/versionDiff.js` 期望状态差异；`ui/versionSelectionPage.js` 版本选择页；`core/versionDelete.js` 删除逻辑；模型管理新增“管理版本（保留/删除）”，收藏集通过成员页进入模型页复用同一入口；pinned/共享文件保护。
 - Phase 6c：`shell/present.js` 适配层用于设置、下载、模型下载、模型动作、收藏集动作、校验与检查流程；流程文件中不再直接判断 `screen.isActive()`。
 - Phase 7：`core/shell/ui/flows/runtime/adapters` 物理分层；根目录保留兼容 re-export；契约脚本 0 违规；新增列表/步骤/版本差异/回执/删除保护/版本选择测试。
 
@@ -235,8 +237,8 @@ Phase 1 与 Phase 1.5 已完成：
 
 - `ui/select.js` 仍保留表格专用滚动，这是有意的 table 变体，不强行改成菜单列表。
 - 旧版 `runDownloadPlan` 的确认页保留为兼容路径，新下载流程已不使用它。
-- `shell/screen.js` 约 1419 行、`ui/pages.js` 约 1128 行、`ui/select.js` 约 1627 行，仍高于早期行数目标；功能与分层优先，后续可继续拆分。
+- `shell/screen.js` 约 1576 行、`ui/prompts.js` 约 1106 行、`ui/select.js` 约 1641 行，仍高于早期行数目标；功能与分层优先，后续可继续拆分。
 - `task.outDir` 仍由外壳的“打开目录”动作使用；`task-schema` 检查只覆盖 `metaFailed / logFile / attempts / failures`。
-- `ui/planWorkspace.js`、`ui/versionPage.js`、`ui/versionSelectionPage.js` 仍直接依赖 `shell/screen`；物理目录已完成，但严格的无环依赖还差这一步。
+- `ui/planWorkspace.js`、`ui/versionPage.js`、`ui/versionSelectionPage.js`、`ui/prompts.js`、`ui/select.js`、`ui/report.js` 仍直接依赖 `shell/screen` 或 `adapters/view`；物理目录已完成，但严格的无环依赖还差这一步。
 
 契约脚本当前输出是 `0 failure(s), 0 allowlisted violation(s)`。

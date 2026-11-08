@@ -11,18 +11,19 @@ Download every model file in a [Civitai](https://civitai.com) collection in bulk
 ## Features
 
 - **Web UI** (`npm run webui`, or `node web.js`): a local browser interface that covers the same ground as the terminal UI — dashboard, collection enumeration with a filterable pick list, per-model version switching, live progress with logs, model library with version pinning, update checks, verification/repair, settings editor, browser login and an environment check. Dependency-free (Node's own `http` server + vanilla JavaScript, no build step) and bound to `127.0.0.1` by default
-- **Terminal UI** (`npm run tui`): menu-driven operations — login, filtering/picking collection entries to download, live progress bars and logs, completion-state management, version pinning, local verify and repair, environment check, settings editor. No commands to memorize; model details, collection snapshots, check reports, verification results and the environment check are **scrollable pages** (facts + sections + actions), so no `L` round-trip is needed to make a decision
+- **Terminal UI** (`npm run tui`): menu-driven operations — login, filtering/picking collection entries to download, live progress bars and logs, completion-state management, version pinning, local verify and repair, environment check, settings editor. No commands to memorize; model details, collection snapshots, check reports, verification results and the environment check are **scrollable pages** (facts + sections + actions), so no log round-trip is needed to make a decision
 - Enumerate collection entries in one go (automatic paging, dedup and merge, rate limiting)
 - Automatically fetch each model's latest version and its primary Model file's: file name / size / SHA256 / direct download URL
-- **Version selection and pinning**: for models with several versions you can choose which one to download — in the TUI press `v` on a plan row to open a **multi-select** version list (several versions of one model become separate rows in the same plan and download together), or use "Download / switch versions…" on the model page; the CLI overrides with `--version <modelId=versionId>`; the `pin` command **pins** a version so a newer release on the site can never overwrite it
+- **Version selection and pinning**: for models with several versions you can choose which one to download — in the TUI press `Enter` on a plan row to open a **multi-select** version list (several versions of one model become separate rows in the same plan and download together), or use "Download / switch versions…" on the model page; the CLI overrides with `--version <modelId=versionId>`; the `pin` command **pins** a version so a newer release on the site can never overwrite it
 - **Paid/restricted versions**: version-level `paidAccess` is classified as paid, timed paid, Early Access or unavailable. Collection batches skip paid rows by default and show a badge; an explicit single model may try with the current account. The tool never purchases or spends Buzz and only uses existing download access; denied items are reported as access-required, not as login/network failures
-- **Several versions of the same model side by side**: every version records its own directory / file manifest / SHA256. The first version goes to `outDir/<model name>/`, later ones to `outDir/<model name>/<version name>/`, so switching versions never overwrites anything
-- **Single models (no collection needed)**: `download <model URL | model:<id> | version:<id>>` downloads directly (batch pasting / `--models` / `--from-file` supported); the `models` command manages them in one place — list with search and sorting, export to JSON/CSV, pin versions, delete records (optionally together with their files); `check`/`verify` accept `model:<id>` and `--models`; item 2 of the TUI main menu, "Single models", offers the same entry point
+- **Several versions of the same model side by side**: every version records its own file manifest / SHA256 in the model library, while its files live in the model directory (`outDir/<type>/<base-model?>/<model name>/`); when two versions would use the same file name with different content, both sides get their own `-<version>` suffix, so switching versions never overwrites anything
+- **Required companions**: besides the primary Model file, components the site marks as `metadata.isRequired` (such as a Text Encoder) and the VAE linked through the version's `vaeId` are downloaded too; they are not filtered out by the default `fileTypes` / `primaryOnly` rules
+- **Single models (no collection needed)**: `download <model URL | model:<id> | version:<id>>` downloads directly (batch pasting / `--models` / `--from-file` supported); the `models` command manages them in one place — list with search and sorting, export to JSON/CSV, pin versions, delete records (optionally together with their files); `check`/`verify` accept `model:<id>` and `--models`; the TUI "Local model management" entry offers the same entry point
 - Download capabilities (built on curl + the login cookie):
   - Resumable transfers (`curl -C -`): after a network drop, just re-run the same command. Before resuming it compares the **ETag** and discards the old part when the remote file changed, instead of assembling a file that is bound to fail verification
   - Automatic retries on failure (up to 5 attempts per item, configurable) and slow-speed protection (disconnect and retry after 2 minutes below 50KB/s)
   - Downloads into `*.part` and only renames it to the final file once the SHA256 check passes
-  - Files that already exist and verify are skipped automatically; `state` records completed models, so repeat runs skip them in seconds
+  - Files that already exist and verify are skipped automatically; the model library records completed versions, so repeat runs skip them in seconds
   - **Lazy metadata**: completed entries no longer fetch metadata one by one (a second run makes almost no requests)
   - **Concurrent downloads** (`--jobs N`) and concurrent metadata fetching
   - A session that expires mid-download is **re-exported as cookies and retried automatically**
@@ -47,7 +48,7 @@ Download every model file in a [Civitai](https://civitai.com) collection in bulk
 - **Layered directories by type**: `layout` picks the folder preset (`a1111` (default) / `comfy` / `custom` with `typeFolders`), and `baseModelLayer` optionally inserts a base-model level named after the site's own Base Model value, e.g. `Lora/SDXL 1.0/<model>` (`unknown` when the site reports none)
 - **One directory per model**: versions that share a base model live together; when two versions would use the same file name with different content, **both sides** get their own `-<version>` suffix (`model.safetensors` → `model-v1.safetensors` / `model-v2.safetensors`). **When one model's versions span several base models** (this exists on the site: the same model with SDXL / SD 1.5 / Illustrious versions), each version goes under its own base-model folder, so an SD 1.5 LoRA never lands in an SDXL folder; `models --relayout` moves an existing library onto a new layout
 - `--dry-run` previews the plan, `--only` downloads just the given models, `--force` re-downloads regardless, `--refresh-meta` re-compares against the online manifest
-- Logs from every run are written to disk (`.data/download-<collectionId>.log`, rotated by size, with elapsed-time statistics)
+- Logs from every run are written to disk (`.data/download-<job label>.log`, rotated by size, with elapsed-time statistics)
 - Data safety: atomic library writes + automatic backups + one global lock (so two processes cannot overwrite each other); a corrupt library is backed up and reported loudly instead of silently losing records
 - The old per-target files (`state-*.json`, `items-*.json`, `plan-*.json`, `report-*.json`) are ignored by the new format: the first run moves them into `.data/legacy/`
 
@@ -70,7 +71,7 @@ Download every model file in a [Civitai](https://civitai.com) collection in bulk
 ## Quick Start
 
 ```powershell
-cd C:\Users\kongf\Downloads\loras\civitai-collection-downloader
+cd <repository folder>
 npm install
 copy config.example.json config.json    # create the config on first use
 notepad config.json                     # adjust outDir / jobs / proxy etc. as needed (see below)
@@ -152,7 +153,7 @@ The terminal UI is a full-screen app rather than a scrolling log: the screen is 
   │ Concurrency   3                                              │
   │                                                              │
   │ Task overview                                                │
-  │ Total  ███████░░░░░░░░░ 42.5% · 1/3 done · 1 running · 1 queued │
+  │ Total  ███████░░░░░░░░░ 42.5%  · Done 1/3 | Running 1 | Queued 1 │
   └──────────────────────────────────────────────────────────────┘
 
   Main menu
@@ -165,7 +166,7 @@ The terminal UI is a full-screen app rather than a scrolling log: the screen is 
     Settings                  Login, download directory, concurrency, proxy and every option
     Exit
 
-  ↑↓ Select · Enter Open · Ctrl+T Tasks · ? Help
+  ↑↓ Select | Enter Open | Ctrl+T Tasks | ? Help
 ```
 
 The full dashboard belongs to the main menu. Every other page collapses it to one line (site, session, active tasks), leaving the body enough room on a 24-row terminal.
@@ -264,7 +265,7 @@ Common optional flags:
 | `--dry-run` | Only list the plan; do not download | `npm run download -- 161131 --dry-run` |
 | `--ignore-space` | Continue even when disk space is insufficient | |
 | `--force-lock` | Ignore the "another process is already handling this" notice | |
-| `--reset-state` | Ignore corrupt records when the state file is damaged (the corrupt content is backed up automatically) | |
+| `--reset-state` | Ignore corrupt records when the model library is damaged (the corrupt content is backed up automatically) | |
 | `--engine <name>` | Download engine: `curl` (default) / `aria2` / `auto` | `npm run download -- 161131 --engine aria2` |
 | `--dedup <mode>` | Cross-collection content dedup: `off` (default) / `hardlink` / `copy` | `npm run download -- 161131 --dedup hardlink` |
 | `--notify <url>` | POST the result to this Webhook when the job finishes | `npm run download -- 161131 --notify https://example.com/hook` |
@@ -377,7 +378,7 @@ npm run pin    -- --list                         # list every pinned model
 - The library is `.data\library.json` (schema v1): `{ "schemaVersion": 1, "updatedAt", "entries": { "<modelId>": { "name", "type", "baseModel", "creator", "stats", "nsfw", "mode", "pinnedVersionId", "versions": { "<versionId>": { "versionName", "baseModel", "dirName", "outDir", "files": [...], "verifiedAt", "site": {...} } } } } }` — `site` mirrors the raw `/api/v1/model-versions/{id}` object (long texts truncated) so nothing is lost
 - Collection snapshots are `.data\collections\<collectionId>.json`: the member list plus `changes { added, removed, versionChanged }`
 - To re-download a version: use `models --forget <id> --version <versionId>`, or the TUI "Model library → delete record" / "Collection members and changes → reset a model for re-download"
-- Run logs: `.data\download-<collectionId>.log` (`download-model-<modelId>.log` for single models; rotated to `.1` once it exceeds 5MB)
+- Run logs: `.data\download-<job label>.log` (`download-<collectionId>.log` for collections, `download-model-<modelId>.log` for single models; rotated to `.1` once it exceeds 5MB)
 - The old `state-*.json` / `items-*.json` / `plan-*.json` / `report-*.json` files are ignored from v1 on: the first run moves them into `.data\legacy\` (nothing is deleted, and there is no migration)
 
 ## Configuration (config.json)
@@ -417,7 +418,7 @@ npm run pin    -- --list                         # list every pinned model
 ## Project Structure
 
 ```
-civitai-collection-downloader/
+civitai-downloader/
 ├─ web.js                   # web UI entry point (npm run webui; local server + browser UI)
 ├─ ui.js                    # terminal UI entry point (npm run tui)
 ├─ cli.js                   # command-line entry point (login / list / download / check / verify / pin / doctor)
@@ -428,7 +429,7 @@ civitai-collection-downloader/
 ├─ src/
 │  ├─ config.js            # config loading, validation and path resolution
 │  ├─ util.js              # logging / hashing (worker thread) / file name sanitizing / long paths / argument parsing / concurrency pool / retries
-│  ├─ errors.js            # typed errors (auth / cancel / rate limit / corrupt state / CAPTCHA …)
+│  ├─ errors.js            # typed errors (auth / cancel / rate limit / corrupt library / CAPTCHA …)
 │  ├─ runtime.js           # runtime wiring (proxy, API context, error presentation)
 │  ├─ urls.js              # input parsing (collection ID/URL, model URL)
 │  ├─ storage.js           # .data paths / model library + collection snapshots / global lock / legacy cleanup / log rotation
@@ -440,10 +441,9 @@ civitai-collection-downloader/
 │  ├─ manifest.js          # two-way file manifest comparison (content changes / renames / additions and removals)
 │  ├─ dedup.js             # cross-collection content dedup index (SHA256 → path, hardlink/copy)
 │  ├─ notify.js            # job-finished notifications (bell / system notification / Webhook)
-│  ├─ i18n.js              # message engine (t / placeholders / language fallback)
-│  ├─ i18n/                # message tables (zh-CN.js / en.js; CLI + core module + TUI strings)
+│  ├─ i18n/                # message engine (index.js) + tables (zh-CN.js / en.js; CLI + core module + TUI strings)
 │  │  └─ web/              # web UI strings (zh-CN.json / en.json; served through /api/i18n)
-│  ├─ ratelimit.js         # steady-rate limiter
+│  ├─ rateLimit.js         # steady-rate limiter
 │  ├─ hashWorker.js        # SHA256 worker thread
 │  ├─ downloader.js        # curl / aria2c downloads (resume / ETag check / retries / cancellation)
 │  ├─ job.js               # main download loop (shared by the CLI and both UIs)
@@ -461,15 +461,14 @@ civitai-collection-downloader/
 │  │  ├─ http.js           # JSON bodies, static files, path-traversal guard, SSE writer
 │  │  └─ public/           # index.html + styles.css + app.js (no build step)
 │  └─ tui/                 # terminal UI
-│     ├─ app.js            # banner / status line / main menu / dispatch
-│     ├─ pages.js          # shared interaction: menus, confirmations, list pickers, help page, section scrolling
-│     ├─ report.js         # shared report page: facts + sections + actions (detail / snapshot / check / verify / doctor)
-│     ├─ select.js         # full-screen picker (scrolling window, search/filter/sort, help overlay)
-│     ├─ keys.js           # raw keyboard handling (Ctrl+C / Ctrl+Z semantics)
-│     ├─ layout.js         # terminal metrics and glyph set (ASCII fallback)
-│     ├─ view.js  run.js   # screen helpers and the download progress panel
-│     └─ download.js  check.js  models.js  login.js  manage.js  settings.js
-└─ .data/                  # runtime data (session / cookies / cache / state / logs)
+│     ├─ core/             # ANSI, size, glyphs, keys, folder dialog, version deletion
+│     ├─ shell/            # alternate-screen shell, frame composition, breadcrumbs/steps, present adapter
+│     ├─ ui/               # tokens, page layout, lists, reports, pickers, workspace, task view
+│     ├─ flows/            # main menu, settings, models, download, check, collections, login
+│     ├─ runtime/          # task registry, download queue, progress sampling
+│     ├─ adapters/         # terminal output and plain-mode compatibility facade
+│     └─ *.js              # compatibility re-exports (old paths keep working)
+└─ .data/                  # runtime data (session / cookies / model library / snapshots / logs)
 ```
 
 ### Code Comments
@@ -483,13 +482,13 @@ All code comments are **bilingual (English + Chinese)** and are validated automa
 ## Tests
 
 ```powershell
-npm test           # node --test tests/ (the standard way)
+npm test           # node --test (auto-discovers tests/*.test.js)
 npm run test:seq   # run sequentially in one process (for restricted environments where node --test child-process pipes are rejected)
 ```
 
-Coverage: argument parsing, atomic writes and corrupt-state handling, manifest comparison (including renames/additions/removals), download resume (complete parts, 416, changed ETag, hash mismatch, cancellation, exhausted retries), config validation and site isolation, API retries/rate limiting/timeouts, aria2 arguments and engine selection, content dedup, notification payloads, the three message layers (CLI / core modules / TUI) with their Chinese-English switching, the pure functions of the TUI layer (selector filtering/sorting/scrolling-window/rendering, menu and help-page building, progress-panel lines, key semantics, terminal metrics), the web UI (job manager, progress arithmetic, path-traversal guard, HTTP API and request guards, static layer and SPA fallback, `web.*` i18n contract), and one end-to-end integration path (enumerate → metadata → download → state → check for updates → repair → resume from a checkpoint).
+Coverage: argument parsing, atomic writes and corrupt-state handling, manifest comparison (including renames/additions/removals), download resume (complete parts, 416, changed ETag, hash mismatch, cancellation, exhausted retries), config validation and site isolation, API retries/rate limiting/timeouts, aria2 arguments and engine selection, content dedup, notification payloads, the three message layers (CLI / core modules / TUI) with their Chinese-English switching, the pure functions of the TUI layer (selector filtering/sorting/scrolling-window/rendering, menu and help-page building, progress-panel lines, key semantics, terminal metrics), the web UI (job manager, progress arithmetic, path-traversal guard, HTTP API and request guards, static layer and SPA fallback, `web.*` i18n contract), and one end-to-end integration path (enumerate → metadata → download → model library → check for updates → repair → resume from a checkpoint).
 
-Test files: `tests/{util,storage,config,manifest,api,downloader,commands,platform,i18n,i18n-cli,i18n-core,i18n-tui,select,models,models-cli,tui-report,integration}.test.js`.
+Test files: `tests/*.test.js` — one file per core module plus contract suites (`tui-*.test.js`, `webui*.test.js`, `i18n-*.test.js`) and one end-to-end integration test.
 
 ## FAQ
 
@@ -520,7 +519,7 @@ Run `npm run login` again; `npm run login -- --check` quickly confirms the sessi
 
 **9. What happens when the library is corrupt?** The tool backs it up as `library.json.corrupt-<timestamp>` and stops; it never silently clears the records. Once you have checked it, delete the original file to start over (already downloaded files are unaffected).
 
-**9b. I want to keep both v1 and v2 of the same model?** In the TUI this is one step: press `v` on the model's plan row (or use "Download / switch versions…" on the model page) and check both versions; they become separate rows of the same plan and download in one task. From the CLI, download them separately (for example `download model:<id>` for v1, then `download model:<id> --version <id>=<v2>`). Both live in the same layout folder, each with its own record. When they share a file name with different content, both sides are renamed with their version (`model-v1.safetensors` / `model-v2.safetensors`) so a file name always maps to a version. Use `models` or the TUI "Model library → list records" to see every version.
+**9b. I want to keep both v1 and v2 of the same model?** In the TUI this is one step: press `Enter` on the model's plan row (or use "Download / switch versions…" on the model page) and check both versions; they become separate rows of the same plan and download in one task. From the CLI, download them separately (for example `download model:<id>` for v1, then `download model:<id> --version <id>=<v2>`). Both live in the same layout folder, each with its own record. When they share a file name with different content, both sides are renamed with their version (`model-v1.safetensors` / `model-v2.safetensors`) so a file name always maps to a version. Use `models` or the TUI "Model library → list records" to see every version.
 
 **9c. Do I get two records when the same model is in two collections?** No. The model library `.data/library.json` holds exactly one record per model; a collection is only a membership snapshot under `.data/collections/`. `check <collectionId>` reports against that snapshot, `check --models` / `verify --models` cover the whole library, and `models --relayout` moves an existing library onto a new `layout` setting (add `--dry-run` to see the plan first).
 

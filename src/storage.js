@@ -112,8 +112,8 @@ function legacyDir(config) {
  * Job-scoped files that stay keyed by a job label (collection ID, or model-<id> for a single model).
  * 仍按「任务标签」（收藏集 ID，单模型为 model-<id>）区分的任务级文件。
  */
-function dataPaths(config, collectionId) {
-  const id = String(collectionId);
+function dataPaths(config, jobKey) {
+  const id = String(jobKey);
   const base = config.dataDir;
   return {
     targetId: id,

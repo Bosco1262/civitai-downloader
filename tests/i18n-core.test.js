@@ -422,7 +422,7 @@ test('i18n-core: zh-CN 回归 —— 本地校验原因与检查报告逐字一�
   };
 
   await withLanguageAsync('zh-CN', async () => {
-    const local = await updater.checkLocalFiles(cfg, prev, {});
+    const local = await updater.checkModelFiles(cfg, prev, {});
     assert.deepEqual(local.reasons, ['缺失 model-a.safetensors']);
     assert.deepEqual(local.missingFiles, ['model-a.safetensors']);
     assert.equal(local.perVersion.length, 1);

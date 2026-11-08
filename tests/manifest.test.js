@@ -14,7 +14,7 @@ const assert = require('node:assert/strict');
 
 const {
   manifestDiff,
-  manifestDiffers,
+  changedFileNames,
   sameManifest,
   sizeTolerance,
   sizeDiffers,
@@ -66,7 +66,7 @@ test('manifestDiff: 完全相同的清单 → same 为 true 且四个数组为�
 
   assert.equal(sameManifest(prev, online), true);
   assert.equal(sameManifest(prev, prev), true);
-  assert.deepEqual(manifestDiffers(prev, online), []);
+  assert.deepEqual(changedFileNames(prev, online), []);
 
   // The input must not be modified
   // 输入不应被修改
@@ -93,7 +93,7 @@ test('manifestDiff: 同名同大小但 sha256 不同 → 进入 changed（{prev,
   assert.deepEqual(d.renamed, []);
   assert.equal(d.same, false);
   assert.equal(sameManifest(prev, online), false);
-  assert.deepEqual(manifestDiffers(prev, online), ['a.safetensors']);
+  assert.deepEqual(changedFileNames(prev, online), ['a.safetensors']);
 });
 
 test('manifestDiff: sha256 比较大小写不敏感', () => {
@@ -126,7 +126,7 @@ test('manifestDiff: 同哈希的「新增+移除」识别为改名，且从 adde
   assert.deepEqual(d.changed, []);
   assert.equal(d.same, false, '改名仍视为清单发生变化');
   assert.equal(sameManifest(prev, online), false);
-  assert.deepEqual(manifestDiffers(prev, online), [], '改名不是内容变化');
+  assert.deepEqual(changedFileNames(prev, online), [], '改名不是内容变化');
 });
 
 test('manifestDiff: 多个同哈希改名逐一配对', () => {
@@ -178,7 +178,7 @@ test('manifestDiff: 线上新增文件 → 进入 added', () => {
   assert.deepEqual(d.changed, []);
   assert.deepEqual(d.renamed, []);
   assert.equal(d.same, false);
-  assert.deepEqual(manifestDiffers(prev, online), [], '纯新增不算内容变化');
+  assert.deepEqual(changedFileNames(prev, online), [], '纯新增不算内容变化');
 });
 
 test('manifestDiff: 本地有线上没有 → 进入 removed', () => {
@@ -191,7 +191,7 @@ test('manifestDiff: 本地有线上没有 → 进入 removed', () => {
   assert.deepEqual(d.changed, []);
   assert.deepEqual(d.renamed, []);
   assert.equal(d.same, false);
-  assert.deepEqual(manifestDiffers(prev, online), []);
+  assert.deepEqual(changedFileNames(prev, online), []);
 });
 
 // ---------------------------------------------------------------------------
@@ -331,15 +331,15 @@ test('manifestDiff: 空数组与 undefined 输入不抛异常', () => {
   assertEmptyDiff(d);
 
   assert.equal(sameManifest(undefined, []), true);
-  assert.deepEqual(manifestDiffers(undefined, undefined), []);
+  assert.deepEqual(changedFileNames(undefined, undefined), []);
 });
 
 // ---------------------------------------------------------------------------
-// 9. Name sanitizing in manifestDiffers
-// 9. manifestDiffers 的名字清理
+// 9. Name sanitizing in changedFileNames
+// 9. changedFileNames 的名字清理
 // ---------------------------------------------------------------------------
 
-test('manifestDiffers: 返回 sanitizeName 处理后的文件名', () => {
+test('changedFileNames: 返回 sanitizeName 处理后的文件名', () => {
   assert.equal(sanitizeName('a/b:c'), 'a_b_c', '前置条件：sanitizeName 会把非法字符换成下划线');
 
   const prev = [file('a/b:c', 'AAAA', 100)];
@@ -348,7 +348,7 @@ test('manifestDiffers: 返回 sanitizeName 处理后的文件名', () => {
   const d = manifestDiff(prev, online);
   assert.equal(d.changed.length, 1);
 
-  const names = manifestDiffers(prev, online);
+  const names = changedFileNames(prev, online);
   assert.deepEqual(names, ['a_b_c']);
   assert.deepEqual(names, [sanitizeName('a/b:c')]);
 
@@ -359,12 +359,12 @@ test('manifestDiffers: 返回 sanitizeName 处理后的文件名', () => {
   }
 });
 
-test('manifestDiffers: 线上只有 remoteName 时回退取 remoteName', () => {
+test('changedFileNames: 线上只有 remoteName 时回退取 remoteName', () => {
   const prev = [{ name: 'm?.bin', sha256: 'AAAA', bytes: 10 }];
   const online = [{ remoteName: 'm?.bin', sha256: 'BBBB', bytes: 10 }];
   assert.equal(keyOf(online[0]), 'm?.bin', '前置条件：keyOf 会回退到 remoteName');
   assert.equal(manifestDiff(prev, online).changed.length, 1);
-  assert.deepEqual(manifestDiffers(prev, online), ['m_.bin']);
+  assert.deepEqual(changedFileNames(prev, online), ['m_.bin']);
 });
 
 // ---------------------------------------------------------------------------
@@ -391,7 +391,7 @@ test('manifestDiff: 混合场景（changed + added + removed + renamed）', () =
   assert.deepEqual(d.renamed, [{ from: oldName, to: newName }]);
   assert.equal(d.same, false);
 
-  assert.deepEqual(manifestDiffers(prev, online), ['change.safetensors']);
+  assert.deepEqual(changedFileNames(prev, online), ['change.safetensors']);
   assert.equal(sameManifest(prev, online), false);
 
   // Swap the order: exchanging local and online keeps the same structure (rename direction flips)

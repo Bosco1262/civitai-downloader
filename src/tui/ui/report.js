@@ -22,11 +22,11 @@
  */
 
 const { t } = require('../../i18n');
-const { buildPageLayout, normalizeReport } = require('./page');
+const { buildPageLayout, normalizeReport } = require('./pageLayout');
 const list = require('./list');
 const layout = require('../core/layout');
 const view = require('../adapters/view');
-const pages = require('./pages');
+const pages = require('./prompts');
 const screen = require('../shell/screen');
 
 const { colors } = layout;

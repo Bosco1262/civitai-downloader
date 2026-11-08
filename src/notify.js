@@ -144,9 +144,7 @@ async function notifyFinished(config, summary, opts = {}) {
   const webhook = opts.webhook !== undefined ? opts.webhook : config && config.notifyWebhook;
   const wantToast = opts.toast !== undefined ? opts.toast : !!(config && config.notifyToast);
 
-  bell();
-
-  const result = { bell: true, toast: false, webhook: null };
+  const result = { bell: bell(), toast: false, webhook: null };
   if (wantToast) {
     result.toast = sendToast(t('notify.toastTitle'), describe(summary));
   }

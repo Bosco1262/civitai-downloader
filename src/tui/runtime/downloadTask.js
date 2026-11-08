@@ -225,7 +225,7 @@ async function runJob(job) {
     total: job.itemTotal,
     totalBytes: job.totalBytes,
     outDir: job.outDir,
-    jobs: job.jobs,
+    jobs: job.concurrency,
     current: [],
     failures: [],
   });
@@ -252,7 +252,7 @@ async function runJob(job) {
         force: job.force,
         verifyExisting: job.verifyExisting,
         totalBytes: job.totalBytes,
-        jobs: job.jobs,
+        jobs: job.concurrency,
         attempts: job.maxAttempts,
         quiet: true,
         isCancelled: () => job.cancelRequested,
@@ -424,7 +424,7 @@ function retryFailed(job) {
     outDir: job.outDir,
     force: true,
     totalBytes,
-    jobs: job.jobs,
+    jobs: job.concurrency,
     attempts: job.maxAttempts,
     onComplete: null,
   });
@@ -521,7 +521,7 @@ function startDownloadTask(config, opts) {
       ? plan.reduce((sum, item) => sum + (Number(item.totalBytes) || 0), 0)
       : Number(opts.totalBytes) || 0;
   const outDir = String(opts.outDir || config.outDir || '');
-  const jobs = Math.max(1, Math.min(Number(opts.jobs) || Number(config.jobs) || 1, 8));
+  const concurrency = Math.max(1, Math.min(Number(opts.jobs) || Number(config.jobs) || 1, 8));
   const collectionId = String(opts.collectionId || `task-${Date.now()}`);
   const name = String(opts.name || collectionId);
   const queued = hasActiveDownload();
@@ -531,7 +531,7 @@ function startDownloadTask(config, opts) {
     total: plan.length,
     totalBytes,
     outDir,
-    jobs,
+    jobs: concurrency,
     status: queued ? tasks.QUEUED : tasks.RUNNING,
   });
   const job = {
@@ -547,7 +547,7 @@ function startDownloadTask(config, opts) {
     force: !!opts.force,
     verifyExisting: !!opts.verifyExisting,
     totalBytes,
-    jobs,
+    concurrency,
     maxAttempts: opts.attempts,
     onComplete: opts.onComplete,
     // Tests (and embedders) can replace the whole downloader; production uses the real job.

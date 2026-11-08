@@ -4,7 +4,7 @@
  * Chinese (default language) message catalog.
  *
  * Key naming: `<module>.<scenario>[.<detail>]`, e.g. `cli.unknownCommand`, `download.usage`.
- * Placeholders use the `{name}` form and are interpolated by src/i18n.js.
+ * Placeholders use the `{name}` form and are interpolated by src/i18n/index.js.
  *
  * Note: the default language must keep existing output identical to the previous release
  * (tests assert some strings); multi-line usage() texts live in one key each, keeping their
@@ -14,7 +14,7 @@
  * 中文（默认语言）文案表。
  *
  * 键名规范：`<模块>.<场景>[.<细节>]`，例如 `cli.unknownCommand`、`download.usage`。
- * 占位符用 `{name}` 形式，由 src/i18n.js 插值。
+ * 占位符用 `{name}` 形式，由 src/i18n/index.js 插值。
  *
  * 注意：默认语言必须保证既有输出与旧版本逐字一致（测试会断言部分文案）。
  * 多行的 usage() 文案整体作为一个键存放，保留原始缩进与换行。
@@ -147,7 +147,7 @@ npm 用法（传参需要 -- 分隔）:
   --no-primary        不只下载 primary 文件
   --ignore-space      磁盘空间不足时仍然继续
   --force-lock        忽略「已有其它进程在处理该收藏集」的提示
-  --reset-state       状态文件损坏时忽略损坏记录、从空状态继续（损坏内容已自动备份）
+  --reset-state       模型库损坏时忽略损坏记录、从空模型库继续（损坏内容已自动备份）
   --engine <name>     下载引擎：curl（默认）/ aria2 / auto
   --dedup <mode>      跨收藏集去重：off（默认）/ hardlink / copy
   --notify <url>      任务结束后 POST 结果到该 Webhook

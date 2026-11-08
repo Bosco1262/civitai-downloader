@@ -324,7 +324,7 @@ async function showPlanWorkspace(opts = {}) {
         return;
       }
       if (typed === '?' && state.region !== 'input') {
-        await require('../pages').showHelp({});
+        await require('./prompts').showHelp({});
         return;
       }
 

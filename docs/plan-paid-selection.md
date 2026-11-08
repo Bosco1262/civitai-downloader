@@ -287,7 +287,7 @@ opts:  { concurrency, fileTypes, primaryOnly, entries, onLog, onProgress }
 | 「永远第一行」的光标规则 | 有勾选时用户最想确认「我上次选了什么」，第一行给不出答案（3.5） |
 | 只改三处中的一处来修勾选同步 | 见 3.7 的三种反例，单改任何一处都会互相抵消，甚至让整行消失 |
 | 依赖 `modelVersions[0]` 当最新版本 | 数组顺序是站点习惯，案例 2 的孪生版本相差 7 分钟且顺序与时间不一致（3.4） |
-| 在 `describeVersion` 里去掉 access 来消除重复徽标 | `downloadVersions()` 用的是通用选择器 `pages.pickMany`，那里没有徽标列，去掉就没提示了。改为版本页判断「描述里已含该标签就不再追加」 |
+| 在 `describeVersion` 里去掉 access 来消除重复徽标 | `downloadVersions()` 用的是通用选择器 `prompts.pickMany`，那里没有徽标列，去掉就没提示了。改为版本页判断「描述里已含该标签就不再追加」 |
 | 用 `availability` / `status: Published` 判断免费 | 免费版本同样带这两个字段，判断不出付费 |
 
 ---

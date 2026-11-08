@@ -35,8 +35,10 @@ const DEFAULTS = {
    */
   headless: 'auto',
   /**
-   * Number of files downloaded at the same time (1 = sequential, same as older versions).
-   * 同时下载的文件数（1 = 串行，保持与旧版本一致）
+   * Number of models processed at the same time; files inside one model stay sequential
+   * (1 = sequential, same as older versions).
+   *
+   * 同时处理的模型数；单个模型内的文件仍串行（1 = 串行，保持与旧版本一致）
    */
   jobs: 1,
   /**
@@ -133,7 +135,7 @@ const DEFAULTS = {
 
 const KNOWN_KEYS = new Set(Object.keys(DEFAULTS));
 
-function checkInt(cfg, key, { min, max }) {
+function normalizeInt(cfg, key, { min, max }) {
   const raw = cfg[key];
   if (raw === undefined || raw === null || raw === '') {
     cfg[key] = DEFAULTS[key];
@@ -152,7 +154,7 @@ function checkInt(cfg, key, { min, max }) {
   cfg[key] = n;
 }
 
-function checkString(cfg, key, { required, pattern, hint }) {
+function normalizeString(cfg, key, { required, pattern, hint }) {
   const raw = cfg[key];
   const value = raw === undefined || raw === null ? '' : String(raw).trim();
   const hintSuffix = hint ? t('config.hintSuffix', { hint }) : '';
@@ -182,39 +184,39 @@ function validateConfig(input, opts = {}) {
   }
 
   cfg.configVersion = Number(cfg.configVersion) || CONFIG_VERSION;
-  checkString(cfg, 'site', {
+  normalizeString(cfg, 'site', {
     required: true,
     pattern: /^https?:\/\/\S+$/i,
     hint: t('config.hintSiteUrl'),
   });
-  checkString(cfg, 'outDir', { required: true, hint: t('config.hintOutDir') });
-  checkString(cfg, 'profileDir', { required: true });
-  checkString(cfg, 'chromePath', { required: false });
-  checkString(cfg, 'userAgent', { required: true });
-  checkString(cfg, 'proxy', {
+  normalizeString(cfg, 'outDir', { required: true, hint: t('config.hintOutDir') });
+  normalizeString(cfg, 'profileDir', { required: true });
+  normalizeString(cfg, 'chromePath', { required: false });
+  normalizeString(cfg, 'userAgent', { required: true });
+  normalizeString(cfg, 'proxy', {
     required: false,
     pattern: /^(https?|socks[45]?):\/\/\S+$/i,
     hint: t('config.hintProxy'),
   });
-  checkInt(cfg, 'debugPort', { min: 1, max: 65535 });
-  checkInt(cfg, 'jobs', { min: 1, max: 8 });
-  checkInt(cfg, 'metaConcurrency', { min: 1, max: 8 });
-  checkInt(cfg, 'apiRateLimit', { min: 0, max: 1000 });
-  checkInt(cfg, 'requestTimeoutMs', { min: 1000, max: 600000 });
-  checkInt(cfg, 'retries', { min: 0, max: 10 });
-  checkInt(cfg, 'logMaxBytes', { min: 64 * 1024, max: 1024 * 1024 * 1024 });
-  checkInt(cfg, 'downloadAttempts', { min: 1, max: 20 });
+  normalizeInt(cfg, 'debugPort', { min: 1, max: 65535 });
+  normalizeInt(cfg, 'jobs', { min: 1, max: 8 });
+  normalizeInt(cfg, 'metaConcurrency', { min: 1, max: 8 });
+  normalizeInt(cfg, 'apiRateLimit', { min: 0, max: 1000 });
+  normalizeInt(cfg, 'requestTimeoutMs', { min: 1000, max: 600000 });
+  normalizeInt(cfg, 'retries', { min: 0, max: 10 });
+  normalizeInt(cfg, 'logMaxBytes', { min: 64 * 1024, max: 1024 * 1024 * 1024 });
+  normalizeInt(cfg, 'downloadAttempts', { min: 1, max: 20 });
 
   // Site API related (overridable, so a site revamp needs no code change).
   // 站点接口相关（可覆盖，便于站点改版时不动代码）
-  checkString(cfg, 'trpcPath', { required: true });
+  normalizeString(cfg, 'trpcPath', { required: true });
   if (cfg.trpcInput === null || typeof cfg.trpcInput !== 'object' || Array.isArray(cfg.trpcInput)) {
     throw new ConfigError(t('config.trpcInputNotObject'));
   }
-  if (!Array.isArray(cfg.fileTypes) || !cfg.fileTypes.length || cfg.fileTypes.some((t2) => typeof t2 !== 'string' || !t2.trim())) {
+  if (!Array.isArray(cfg.fileTypes) || !cfg.fileTypes.length || cfg.fileTypes.some((type) => typeof type !== 'string' || !type.trim())) {
     throw new ConfigError(t('config.fileTypesInvalid'));
   }
-  cfg.fileTypes = cfg.fileTypes.map((t2) => String(t2).trim());
+  cfg.fileTypes = cfg.fileTypes.map((type) => String(type).trim());
   cfg.primaryOnly = cfg.primaryOnly !== false;
 
   if (!['curl', 'aria2', 'auto'].includes(String(cfg.engine))) {
@@ -251,7 +253,7 @@ function validateConfig(input, opts = {}) {
   if (!['auto', 'always', 'never'].includes(cfg.headless)) {
     throw new ConfigError(t('config.headlessInvalid', { value: String(cfg.headless) }));
   }
-  checkString(cfg, 'notifyWebhook', {
+  normalizeString(cfg, 'notifyWebhook', {
     required: false,
     pattern: /^https?:\/\/\S+$/i,
     hint: t('config.hintWebhook'),
@@ -260,7 +262,7 @@ function validateConfig(input, opts = {}) {
 
   // Language accepts an explicit tag (en / zh-CN and variants) or an empty value meaning "auto".
   // 语言接受显式标签（en / zh-CN 及其变体），留空表示「自动解析」。
-  checkString(cfg, 'language', { required: false });
+  normalizeString(cfg, 'language', { required: false });
   if (cfg.language) {
     const normalized = normalizeLanguage(cfg.language);
     if (!normalized) {

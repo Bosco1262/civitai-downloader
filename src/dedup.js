@@ -91,11 +91,11 @@ function createDedupIndex(config) {
      * Record a file that already passed verification.
      * 记录一个已校验通过的文件。
      */
-    remember(file, sha256, bytes) {
+    remember(diskPath, sha256, bytes) {
       if (!sha256) return;
       const hash = String(sha256).toUpperCase();
       const entry = index.entries[hash] || { files: [], bytes: bytes || null, at: '' };
-      if (!entry.files.includes(file)) entry.files.unshift(file);
+      if (!entry.files.includes(diskPath)) entry.files.unshift(diskPath);
       entry.files = entry.files.slice(0, MAX_SOURCES_PER_HASH);
       entry.bytes = bytes || entry.bytes || null;
       entry.at = new Date().toISOString();

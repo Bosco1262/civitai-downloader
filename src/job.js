@@ -64,7 +64,7 @@ const layout = require('./layout');
 const { sameManifest } = require('./manifest');
 const { createDedupIndex } = require('./dedup');
 const { notifyFinished } = require('./notify');
-const { AuthError, isAccessRequiredError } = require('./errors');
+const { AppError, AuthError, isAccessRequiredError } = require('./errors');
 const { t } = require('./i18n');
 
 /**

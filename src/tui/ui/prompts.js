@@ -33,7 +33,7 @@ const view = require('../adapters/view');
 const screen = require('../shell/screen');
 const list = require('./list');
 const { isTextInput, installRawKeys } = require('../core/keys');
-const { pickDirectory, pickerCommand } = require('../core/fspicker');
+const { pickDirectory, pickerCommand } = require('../core/fsPicker');
 const { selectItems, isInteractive } = require('./select');
 
 const { colors, displayWidth, truncateTo, padTo } = layout;
@@ -102,40 +102,6 @@ function heading(text) {
 }
 
 /**
- * Scroll window of a list: which slice to draw and where the cursor sits inside it.
- *
- * The window only moves when the cursor would leave it: stepping through the visible rows keeps the
- * text still, and the "page" scrolls one row at a time at the top and bottom edges.
- *
- *
- * 列表的滚动视窗：画哪一段，以及光标在段内的位置。
- *
- * 只有光标将要离开视窗时视窗才移动：在可见范围内上下移动时文字不动，
- * 到顶/到底后再走一格，内容才会一行一行地滚。
- *
- * @param {number} count total rows
- * @param {number} cursor current row
- * @param {number} size rows that fit
- * @param {number} [previousStart] start of the previous window (0 when there is none yet)
- * @returns {{start:number, end:number, cursor:number}}
- */
-function windowOf(count, cursor, size, previousStart = 0) {
-  const total = Math.max(0, count);
-  const room = Math.max(1, Math.floor(size));
-  const clamped = Math.max(0, Math.min(Math.max(0, total - 1), Number(cursor) || 0));
-  const maxStart = Math.max(0, total - room);
-  // Stay where we were (as long as that is still a valid window)…
-  // 尽量待在原来的位置（只要它还是合法视窗）……
-  let start = Math.max(0, Math.min(Math.floor(Number(previousStart)) || 0, maxStart));
-  // …and only scroll when the cursor would fall outside it.
-  // ……只有光标要跑出去时才滚动。
-  if (clamped < start) start = clamped;
-  else if (clamped >= start + room) start = clamped - room + 1;
-  start = Math.max(0, Math.min(start, maxStart));
-  return { start, end: Math.min(total, start + room), cursor: clamped };
-}
-
-/**
  * Adjust a scroll window so a section heading is never separated from its rows.
  *
  * A heading is part of the section, not a free-standing line: the window may not start *inside* a
@@ -149,7 +115,7 @@ function windowOf(count, cursor, size, previousStart = 0) {
  * 标题属于分组，不是独立的一行：视窗不能在分组「中间」开始（标题被滚出去后，第一行看起来就没有归属），
  * 也不能停在标题上（下面什么都没有的标题只是噪音）。两个调整都遵守唯一的硬约束——光标始终可见。
  *
- * @param {{start:number, end:number, cursor:number}} win window from `windowOf`
+ * @param {{start:number, end:number, cursor:number}} win window from `list.windowOf`
  * @param {string[]} lines all rendered lines
  * @param {number} body how many lines fit
  * @param {number} cursorLine line of the cursor
@@ -231,10 +197,10 @@ function shellMenu(message, choices, options) {
       const lines = heading(message, ctx.width);
       lines.push('');
       let room = Math.max(1, ctx.rows - lines.length);
-      let win = windowOf(items.length, state.cursor, room, state.windowStart);
+      let win = list.windowOf(items.length, state.cursor, room, state.windowStart);
       if (win.end - win.start < items.length && room > 1) {
         room -= 1;
-        win = windowOf(items.length, state.cursor, room, state.windowStart);
+        win = list.windowOf(items.length, state.cursor, room, state.windowStart);
         lines.push(colors.dim(t('tui.pages.listPosition', { index: win.cursor + 1, total: items.length })));
       }
       state.windowStart = win.start;
@@ -1117,7 +1083,6 @@ module.exports = {
   hint,
   hintLines,
   heading,
-  windowOf,
   scrollToSection,
   rowLine,
   packageVersion,

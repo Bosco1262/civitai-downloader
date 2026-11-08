@@ -34,6 +34,7 @@ const {
   NotFoundError,
   DownloadError,
   CANCEL_MESSAGE,
+  isCancelError,
 } = require('./errors');
 const { t } = require('./i18n');
 
@@ -42,7 +43,7 @@ const SPEED_LIMIT = 51200; // 50 KB/s 下限 / 50 KB/s lower bound
 const SPEED_TIME = 120; // 低于限速持续 2 分钟即断开 / cut off after 2 minutes below the limit
 
 let curlBin = null;
-let currentCurl = null;
+let currentChild = null;
 let aborted = false;
 
 /**
@@ -199,7 +200,7 @@ function runAria2(opts) {
   return new Promise((resolve) => {
     const args = buildAria2Args(opts);
     const child = spawn('aria2c', args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
-    currentCurl = child;
+    currentChild = child;
 
     const MAX_OUTPUT = 1 * 1024 * 1024;
     let stdout = '';
@@ -214,7 +215,7 @@ function runAria2(opts) {
       stderr = String((e && e.message) || e);
     });
     child.on('close', (code) => {
-      if (currentCurl === child) currentCurl = null;
+      if (currentChild === child) currentChild = null;
       const text = `${stdout}\n${stderr}`;
       const httpCode = parseAria2HttpCode(text);
       resolve({
@@ -259,13 +260,9 @@ function isAborted() {
   return aborted;
 }
 
-function isCancelError(e) {
-  return e instanceof CancelError || !!(e && e.code === 'CancelError');
-}
-
 function cancelCurrentDownload() {
   aborted = true;
-  const child = currentCurl;
+  const child = currentChild;
   if (child && !child.killed) {
     try {
       child.kill();
@@ -319,7 +316,7 @@ function runCurl(opts) {
       stdio: ['ignore', 'pipe', showProgress ? 'inherit' : 'pipe'],
       windowsHide: true,
     });
-    currentCurl = child;
+    currentChild = child;
 
     let stdout = '';
     let stderr = '';
@@ -335,7 +332,7 @@ function runCurl(opts) {
       stderr = String((e && e.message) || e);
     });
     child.on('close', (code) => {
-      if (currentCurl === child) currentCurl = null;
+      if (currentChild === child) currentChild = null;
       const parts = stdout.trim().split(/\s+/);
       resolve({
         exitCode: code,

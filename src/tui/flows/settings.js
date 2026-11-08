@@ -27,11 +27,11 @@ const { saveConfig, DEFAULTS } = require('../../config');
 const { t } = require('../../i18n');
 const layout = require('../core/layout');
 const view = require('../adapters/view');
-const pages = require('../ui/pages');
+const pages = require('../ui/prompts');
 const screen = require('../shell/screen');
 const reportPage = require('../ui/report');
 const list = require('../ui/list');
-const { buildPageLayout } = require('../ui/page');
+const { buildPageLayout } = require('../ui/pageLayout');
 const { present } = require('../shell/present');
 const { color } = require('../ui/tokens');
 

@@ -9,7 +9,7 @@
 
 const { log } = require('./util');
 const { configureApi } = require('./api');
-const { createRateLimiter } = require('./ratelimit');
+const { createRateLimiter } = require('./rateLimit');
 const { setLanguage, getLanguage, resolveLanguage, getLanguageSource, t } = require('./i18n');
 const {
   AppError,

@@ -125,14 +125,14 @@ async function downloadModel(config, args, ref, opts) {
     modelMeta: detail,
     access: classifyVersionAccess(version, detail),
   };
-  const collectionId = `model-${detail.id}`;
+  const jobLabel = `model-${detail.id}`;
   log(t('download.singleModel', { name: detail.name, version: version.name || version.id }));
   if (item.access && item.access.requiresEntitlement) {
     log(t('download.paidAccessNotice', { name: detail.name, version: version.name || version.id }));
   }
   return runDownloadJob(config, {
     ...opts,
-    collectionId,
+    collectionId: jobLabel,
     items: [item],
     paidPolicy: opts.paidPolicy || 'include',
   });

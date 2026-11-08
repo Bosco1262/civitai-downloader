@@ -16,7 +16,7 @@
 
 const { log, formatBytes, mapPool, withRetry } = require('./util');
 const { AuthError, NotFoundError, NetworkError, RateLimitError, SiteInterfaceError } = require('./errors');
-const { createRateLimiter } = require('./ratelimit');
+const { createRateLimiter } = require('./rateLimit');
 const { classifyVersionAccess, summarizeAccess, parseTime } = require('./access');
 const { t } = require('./i18n');
 

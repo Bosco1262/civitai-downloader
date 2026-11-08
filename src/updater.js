@@ -808,7 +808,6 @@ module.exports = {
   markForRedownload,
   setPin,
   summarize,
-  checkLocalFiles: checkModelFiles,
   checkModelFiles,
   checkVersionFiles,
   localDirFor,

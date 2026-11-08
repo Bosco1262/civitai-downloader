@@ -2,12 +2,12 @@
 
 /**
  * English message catalog. Keys mirror src/i18n/zh-CN.js.
- * Any key missing here falls back to the zh-CN entry (see src/i18n.js).
+ * Any key missing here falls back to the zh-CN entry (see src/i18n/index.js).
  * Multi-line usage() texts are stored as a single key each, keeping the
  * original layout; sample commands stay untranslated on purpose.
  *
  * 英文文案表，键名与 src/i18n/zh-CN.js 一一对应。
- * 这里缺失的键回退到中文条目（见 src/i18n.js）。多行 usage() 文案各存为一个键，
+ * 这里缺失的键回退到中文条目（见 src/i18n/index.js）。多行 usage() 文案各存为一个键，
  * 保留原始排版；示例命令刻意不翻译。
  */
 
@@ -138,7 +138,7 @@ Options:
   --no-primary        Do not limit downloads to primary files
   --ignore-space      Continue even when disk space is insufficient
   --force-lock        Ignore the "another process is handling this collection" notice
-  --reset-state       Ignore corrupt records and continue from an empty state (corrupt content is backed up automatically)
+  --reset-state       Ignore corrupt records and continue from an empty model library (corrupt content is backed up automatically)
   --engine <name>     Download engine: curl (default) / aria2 / auto
   --dedup <mode>      Cross-collection dedup: off (default) / hardlink / copy
   --notify <url>      POST the result to this Webhook when the job finishes

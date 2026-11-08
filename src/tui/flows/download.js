@@ -36,7 +36,7 @@ const { setPin, applyPinsToItems } = require('../../updater');
 const { freeSpaceBytes } = require('../../job');
 const { t } = require('../../i18n');
 const view = require('../adapters/view');
-const pages = require('../ui/pages');
+const pages = require('../ui/prompts');
 const screen = require('../shell/screen');
 const tasks = require('../runtime/tasks');
 const { selectItems, isInteractive } = require('../ui/select');
@@ -46,7 +46,7 @@ const { present } = require('../shell/present');
 const { showPlanWorkspace } = require('../ui/planWorkspace');
 const steps = require('../ui/steps');
 const list = require('../ui/list');
-const { buildPageLayout, sectionHeading } = require('../ui/page');
+const { buildPageLayout, sectionHeading } = require('../ui/pageLayout');
 const { deleteVersions } = require('../core/versionDelete');
 const layout = require('../core/layout');
 const { color, glyph, format } = require('../ui/tokens');
@@ -1199,7 +1199,7 @@ async function confirmPage(config, data) {
       ];
       lines.push('');
       const listRoom = Math.max(1, room - lines.length);
-      const win = pages.windowOf(rows.length, cursor, listRoom, windowStart);
+      const win = list.windowOf(rows.length, cursor, listRoom, windowStart);
       windowStart = win.start;
       for (const key of rows.slice(win.start, win.end)) {
         lines.push(

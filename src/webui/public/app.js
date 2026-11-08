@@ -278,12 +278,12 @@ function table(headers, rows, emptyText) {
 // Key/value definition list.
 // 键值列表。
 function kvList(pairs) {
-  const dl = h('dl', { class: 'kv' });
+  const listNode = h('dl', { class: 'kv' });
   for (const [label, value] of pairs) {
     if (value === undefined || value === null || value === '') continue;
-    dl.append(h('dt', { text: label }), h('dd', {}, value instanceof Node ? value : String(value)));
+    listNode.append(h('dt', { text: label }), h('dd', {}, value instanceof Node ? value : String(value)));
   }
-  return dl;
+  return listNode;
 }
 
 // Panel with a header and an optional action row.
@@ -635,7 +635,7 @@ async function route() {
 
 // Replace the view with a title, an optional subtitle and the given content.
 // 用标题、可选副标题与给定内容替换视图。
-function showScreen(titleKey, subtitleKey, ...content) {
+function renderScreen(titleKey, subtitleKey, ...content) {
   const view = document.getElementById('view');
   clear(view);
   view.append(h('h1', { text: t(titleKey) }));
@@ -734,13 +734,13 @@ async function renderDashboard() {
   // 点击整行打开快照详情（成员 + 变化）。
   const collectionRows = collectionsTable.querySelectorAll('tbody tr');
   collections.forEach((collection, index) => {
-    if (collectionRows[index]) collectionRows[index].addEventListener('click', () => showCollection(collection.id));
+    if (collectionRows[index]) collectionRows[index].addEventListener('click', () => renderCollection(collection.id));
   });
 
   const doctorButton = h('button', {
     type: 'button',
     text: t('web.dash.doctor'),
-    onclick: () => showDoctor(),
+    onclick: () => renderDoctor(),
   });
   const sessionButton = h('button', {
     type: 'button',
@@ -769,7 +769,7 @@ async function renderDashboard() {
     },
   });
 
-  showScreen(
+  renderScreen(
     'web.dash.title',
     'web.dash.subtitle',
     cards,
@@ -808,7 +808,7 @@ async function renderDashboard() {
 
 // Environment check in a modal.
 // 弹窗形式的环境体检。
-async function showDoctor() {
+async function renderDoctor() {
   const loading = openModal({
     title: t('web.dash.doctor'),
     body: h('div', { class: 'loading', text: t('web.common.loading') }),
@@ -846,7 +846,7 @@ async function showDoctor() {
 
 // Collection snapshot detail: members, what changed, and a reset for the changed records.
 // 收藏集快照详情：成员、变化，以及重置变化项的记录。
-async function showCollection(collectionId) {
+async function renderCollection(collectionId) {
   const loading = openModal({
     title: t('web.dash.collectionTitle', { id: collectionId }),
     body: h('div', { class: 'loading', text: t('web.common.loading') }),
@@ -933,7 +933,7 @@ async function showCollection(collectionId) {
 
 // Persistent state of the download screen.
 // 下载页的持久状态。
-const dl = {
+const downloadState = {
   collectionId: '',
   refs: '',
   plan: null,
@@ -952,21 +952,21 @@ const dl = {
 // Filter + sort the current plan.
 // 过滤与排序当前计划。
 function visiblePlan() {
-  if (!dl.plan) return [];
-  const q = String(dl.q || '').trim().toLowerCase();
-  let list = dl.plan.items.filter((item) => {
+  if (!downloadState.plan) return [];
+  const q = String(downloadState.q || '').trim().toLowerCase();
+  let list = downloadState.plan.items.filter((item) => {
     if (q && !`${item.name || ''} ${item.modelId}`.toLowerCase().includes(q)) return false;
-    if (dl.type && item.type !== dl.type) return false;
-    if (dl.base && item.baseModel !== dl.base) return false;
-    const effectiveAccess = dl.overrides.get(String(item.modelId))?.access || item.access;
+    if (downloadState.type && item.type !== downloadState.type) return false;
+    if (downloadState.base && item.baseModel !== downloadState.base) return false;
+    const effectiveAccess = downloadState.overrides.get(String(item.modelId))?.access || item.access;
     const restricted = !!(effectiveAccess && effectiveAccess.requiresEntitlement);
-    if (dl.access === 'paid' && !restricted) return false;
-    if (dl.access === 'free' && restricted) return false;
+    if (downloadState.access === 'paid' && !restricted) return false;
+    if (downloadState.access === 'free' && restricted) return false;
     return true;
   });
-  if (dl.sort === 'size') list = list.slice().sort((a, b) => (b.totalBytes || 0) - (a.totalBytes || 0));
-  else if (dl.sort === 'size-asc') list = list.slice().sort((a, b) => (a.totalBytes || 0) - (b.totalBytes || 0));
-  else if (dl.sort === 'name') list = list.slice().sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+  if (downloadState.sort === 'size') list = list.slice().sort((a, b) => (b.totalBytes || 0) - (a.totalBytes || 0));
+  else if (downloadState.sort === 'size-asc') list = list.slice().sort((a, b) => (a.totalBytes || 0) - (b.totalBytes || 0));
+  else if (downloadState.sort === 'name') list = list.slice().sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
   return list;
 }
 
@@ -1064,21 +1064,21 @@ async function pickVersion(item, onPick) {
 // Ask the server to enumerate a collection and build the plan.
 // 请求服务器枚举收藏集并生成计划。
 async function loadPlan() {
-  const match = String(dl.collectionId || '').match(/(\d{2,})/);
+  const match = String(downloadState.collectionId || '').match(/(\d{2,})/);
   if (!match) {
     toast(t('web.dl.badId'), 'warn');
     return;
   }
-  dl.collectionId = match[1];
-  await runJob(() => api('/api/collections/plan', { method: 'POST', body: { collectionId: dl.collectionId } }), (job) => {
+  downloadState.collectionId = match[1];
+  await runJob(() => api('/api/collections/plan', { method: 'POST', body: { collectionId: downloadState.collectionId } }), (job) => {
     if (job.status !== 'done' || !job.result) return;
-    dl.plan = job.result;
-    dl.selected = new Set(
+    downloadState.plan = job.result;
+    downloadState.selected = new Set(
       job.result.items
         .filter((item) => !item.recorded && !item.error && !(item.access && item.access.requiresEntitlement))
         .map((item) => String(item.modelId))
     );
-    dl.overrides = new Map();
+    downloadState.overrides = new Map();
     route();
   });
 }
@@ -1088,24 +1088,24 @@ async function loadPlan() {
 async function renderDownload() {
   const state = await loadState();
   updateHeader(state);
-  if (dl.outDir === null) dl.outDir = state.outDir;
-  if (dl.jobs === null) dl.jobs = state.jobs;
+  if (downloadState.outDir === null) downloadState.outDir = state.outDir;
+  if (downloadState.jobs === null) downloadState.jobs = state.jobs;
 
   const params = new URLSearchParams(location.hash.split('?')[1] || '');
   const preset = params.get('collection');
-  if (preset && preset !== dl.collectionId) {
-    dl.collectionId = preset;
-    dl.plan = null;
-    dl.selected = new Set();
-    dl.overrides = new Map();
+  if (preset && preset !== downloadState.collectionId) {
+    downloadState.collectionId = preset;
+    downloadState.plan = null;
+    downloadState.selected = new Set();
+    downloadState.overrides = new Map();
   }
 
   const collectionInput = h('input', {
     type: 'text',
-    value: dl.collectionId || '',
+    value: downloadState.collectionId || '',
     placeholder: t('web.dl.collectionPlaceholder'),
     oninput: (event) => {
-      dl.collectionId = event.target.value;
+      downloadState.collectionId = event.target.value;
     },
   });
 
@@ -1125,16 +1125,16 @@ async function renderDownload() {
   // 单个模型：与 CLI / TUI 相同的引用语法，由服务端解析。
   const singlePanel = (() => {
     const area = h('textarea', { rows: '3', placeholder: t('web.dl.singlePlaceholder') });
-    area.value = dl.refs;
+    area.value = downloadState.refs;
     area.addEventListener('input', () => {
-      dl.refs = area.value;
+      downloadState.refs = area.value;
     });
     const button = h('button', {
       class: 'primary',
       type: 'button',
       text: t('web.dl.singleStart'),
       onclick: () => {
-        const refs = dl.refs
+        const refs = downloadState.refs
           .split(/[\r\n,]+/)
           .map((piece) => piece.trim())
           .filter(Boolean);
@@ -1143,10 +1143,10 @@ async function renderDownload() {
           return;
         }
         runJob(
-          () => api('/api/download', { method: 'POST', body: { refs, outDir: dl.outDir, jobs: dl.jobs } }),
+          () => api('/api/download', { method: 'POST', body: { refs, outDir: downloadState.outDir, jobs: downloadState.jobs } }),
           (job) => {
             if (job.status !== 'done') return;
-            dl.refs = '';
+            downloadState.refs = '';
             area.value = '';
           }
         );
@@ -1155,20 +1155,20 @@ async function renderDownload() {
     return panel(t('web.dl.singleTitle'), button, h('label', { class: 'field' }, area), h('p', { class: 'small muted', text: t('web.dl.singleHint') }));
   })();
 
-  if (!dl.plan) {
-    showScreen('web.dl.title', 'web.dl.subtitle', sourcePanel, singlePanel);
+  if (!downloadState.plan) {
+    renderScreen('web.dl.title', 'web.dl.subtitle', sourcePanel, singlePanel);
     // A link from the dashboard arrives with `?collection=<id>`: load it right away.
     // 从仪表盘跳过来会带 `?collection=<id>`：直接开始加载。
     if (preset) await loadPlan();
     return;
   }
 
-  const plan = dl.plan;
+  const plan = downloadState.plan;
   const tableHost = h('div');
   const summary = h('div', { class: 'small muted' });
 
   const refreshSummary = () => {
-    const chosen = plan.items.filter((item) => dl.selected.has(String(item.modelId)));
+    const chosen = plan.items.filter((item) => downloadState.selected.has(String(item.modelId)));
     const bytes = chosen.reduce((sum, item) => sum + (item.totalBytes || 0), 0);
     summary.textContent = t('web.dl.summary', {
       selected: chosen.length,
@@ -1194,7 +1194,7 @@ async function renderDownload() {
         ],
         visiblePlan().map((item) => {
           const id = String(item.modelId);
-          const override = dl.overrides.get(id);
+          const override = downloadState.overrides.get(id);
           const tags = [];
           const effectiveAccess = override ? override.access : item.access;
           if (item.error) tags.push(badge(t('web.dl.metaFailed'), 'fail'));
@@ -1207,11 +1207,11 @@ async function renderDownload() {
               {
                 node: h('input', {
                   type: 'checkbox',
-                  checked: dl.selected.has(id),
+                  checked: downloadState.selected.has(id),
                   disabled: !!item.error,
                   onchange: (event) => {
-                    if (event.target.checked) dl.selected.add(id);
-                    else dl.selected.delete(id);
+                    if (event.target.checked) downloadState.selected.add(id);
+                    else downloadState.selected.delete(id);
                     refreshSummary();
                   },
                 }),
@@ -1230,8 +1230,8 @@ async function renderDownload() {
                   text: t('web.dl.chooseVersion'),
                   onclick: () =>
                     pickVersion(item, (choice) => {
-                      dl.overrides.set(id, choice);
-                      dl.selected.add(id);
+                      downloadState.overrides.set(id, choice);
+                      downloadState.selected.add(id);
                       refreshTable();
                     }),
                 }),
@@ -1250,7 +1250,7 @@ async function renderDownload() {
     type: 'button',
     text: t('web.common.selectAll'),
     onclick: () => {
-      for (const item of visiblePlan()) if (!item.error) dl.selected.add(String(item.modelId));
+      for (const item of visiblePlan()) if (!item.error) downloadState.selected.add(String(item.modelId));
       refreshTable();
     },
   });
@@ -1259,7 +1259,7 @@ async function renderDownload() {
     type: 'button',
     text: t('web.common.selectNone'),
     onclick: () => {
-      dl.selected.clear();
+      downloadState.selected.clear();
       refreshTable();
     },
   });
@@ -1268,7 +1268,7 @@ async function renderDownload() {
     type: 'button',
     text: t('web.common.selectNew'),
     onclick: () => {
-      dl.selected = new Set(plan.items.filter((item) => !item.recorded && !item.error).map((item) => String(item.modelId)));
+      downloadState.selected = new Set(plan.items.filter((item) => !item.recorded && !item.error).map((item) => String(item.modelId)));
       refreshTable();
     },
   });
@@ -1285,10 +1285,10 @@ async function renderDownload() {
       h('span', { text: t('web.common.search') }),
       h('input', {
         type: 'text',
-        value: dl.q,
+        value: downloadState.q,
         placeholder: t('web.dl.searchPlaceholder'),
         oninput: (event) => {
-          dl.q = event.target.value;
+          downloadState.q = event.target.value;
           refreshTable();
         },
       })
@@ -1301,12 +1301,12 @@ async function renderDownload() {
         'select',
         {
           onchange: (event) => {
-            dl.type = event.target.value;
+            downloadState.type = event.target.value;
             refreshTable();
           },
         },
         h('option', { value: '', text: t('web.common.allTypes') }),
-        ...typeOptions.map((value) => h('option', { value, selected: dl.type === value, text: value }))
+        ...typeOptions.map((value) => h('option', { value, selected: downloadState.type === value, text: value }))
       )
     ),
     h(
@@ -1317,12 +1317,12 @@ async function renderDownload() {
         'select',
         {
           onchange: (event) => {
-            dl.base = event.target.value;
+            downloadState.base = event.target.value;
             refreshTable();
           },
         },
         h('option', { value: '', text: t('web.common.allBaseModels') }),
-        ...baseOptions.map((value) => h('option', { value, selected: dl.base === value, text: value }))
+        ...baseOptions.map((value) => h('option', { value, selected: downloadState.base === value, text: value }))
       )
     ),
     h(
@@ -1333,21 +1333,21 @@ async function renderDownload() {
         'select',
         {
           onchange: (event) => {
-            dl.access = event.target.value;
+            downloadState.access = event.target.value;
             refreshTable();
           },
         },
-        h('option', { value: '', text: t('web.dl.accessAll'), selected: dl.access === '' }),
-        h('option', { value: 'free', text: t('web.dl.accessFree'), selected: dl.access === 'free' }),
-        h('option', { value: 'paid', text: t('web.dl.accessPaid'), selected: dl.access === 'paid' })
+        h('option', { value: '', text: t('web.dl.accessAll'), selected: downloadState.access === '' }),
+        h('option', { value: 'free', text: t('web.dl.accessFree'), selected: downloadState.access === 'free' }),
+        h('option', { value: 'paid', text: t('web.dl.accessPaid'), selected: downloadState.access === 'paid' })
       )
     ),
     h(
       'label',
       { class: 'field' },
       h('span', { text: t('web.common.sort') }),
-      sortSelect(dl.sort, (value) => {
-        dl.sort = value;
+      sortSelect(downloadState.sort, (value) => {
+        downloadState.sort = value;
         refreshTable();
       })
     )
@@ -1355,25 +1355,25 @@ async function renderDownload() {
 
   const outDirInput = h('input', {
     type: 'text',
-    value: dl.outDir,
+    value: downloadState.outDir,
     oninput: (event) => {
-      dl.outDir = event.target.value;
+      downloadState.outDir = event.target.value;
     },
   });
   const jobsSelect = h(
     'select',
     {
       onchange: (event) => {
-        dl.jobs = Number(event.target.value);
+        downloadState.jobs = Number(event.target.value);
       },
     },
-    ...[1, 2, 3, 4].map((n) => h('option', { value: String(n), selected: Number(dl.jobs) === n, text: String(n) }))
+    ...[1, 2, 3, 4].map((n) => h('option', { value: String(n), selected: Number(downloadState.jobs) === n, text: String(n) }))
   );
   const forceCheckbox = h('input', {
     type: 'checkbox',
-    checked: !!dl.force,
+    checked: !!downloadState.force,
     onchange: (event) => {
-      dl.force = event.target.checked;
+      downloadState.force = event.target.checked;
     },
   });
 
@@ -1382,13 +1382,13 @@ async function renderDownload() {
     type: 'button',
     text: t('web.dl.start'),
     onclick: async () => {
-      const chosen = plan.items.filter((item) => dl.selected.has(String(item.modelId)));
+      const chosen = plan.items.filter((item) => downloadState.selected.has(String(item.modelId)));
       if (!chosen.length) {
         toast(t('web.dl.noneSelected'), 'warn');
         return;
       }
       const items = chosen.map((item) => {
-        const override = dl.overrides.get(String(item.modelId));
+        const override = downloadState.overrides.get(String(item.modelId));
         return override ? { modelId: item.modelId, versionId: override.versionId } : item;
       });
       await runJob(
@@ -1398,16 +1398,16 @@ async function renderDownload() {
             body: {
               collectionId: plan.collectionId,
               items,
-              outDir: dl.outDir,
-              jobs: dl.jobs,
-              force: !!dl.force,
+              outDir: downloadState.outDir,
+              jobs: downloadState.jobs,
+              force: !!downloadState.force,
             },
           }),
         (job) => {
           if (job.status === 'done') {
-            dl.plan = null;
-            dl.selected = new Set();
-            dl.overrides = new Map();
+            downloadState.plan = null;
+            downloadState.selected = new Set();
+            downloadState.overrides = new Map();
           }
         }
       );
@@ -1420,7 +1420,7 @@ async function renderDownload() {
     (item) => item.access && item.access.requiresEntitlement
   ).length;
 
-  showScreen(
+  renderScreen(
     'web.dl.title',
     'web.dl.subtitle',
     sourcePanel,
@@ -1458,7 +1458,7 @@ async function renderDownload() {
 
 // Persistent state of the library screen.
 // 模型库页的持久状态。
-const lib = { q: '', sort: 'recent', collectionId: '' };
+const libraryState = { q: '', sort: 'recent', collectionId: '' };
 
 // Library table with search, sort and collection filter.
 // 带搜索、排序与收藏集筛选的模型库表格。
@@ -1471,9 +1471,9 @@ async function renderLibrary() {
   const reload = async () => {
     host.replaceChildren(h('div', { class: 'loading', text: t('web.common.loading') }));
     const params = new URLSearchParams();
-    if (lib.q) params.set('q', lib.q);
-    params.set('sort', lib.sort);
-    if (lib.collectionId) params.set('collectionId', lib.collectionId);
+    if (libraryState.q) params.set('q', libraryState.q);
+    params.set('sort', libraryState.sort);
+    if (libraryState.collectionId) params.set('collectionId', libraryState.collectionId);
     let data;
     try {
       data = await api(`/api/library?${params.toString()}`);
@@ -1510,12 +1510,12 @@ async function renderLibrary() {
     const rows = host.querySelectorAll('tbody tr');
     data.items.forEach((model, index) => {
       if (!rows[index]) return;
-      rows[index].addEventListener('click', () => showModelDetail(model.modelId));
+      rows[index].addEventListener('click', () => renderModelDetail(model.modelId));
     });
     store.library = data;
   };
 
-  showScreen(
+  renderScreen(
     'web.lib.title',
     'web.lib.subtitle',
     panel(
@@ -1530,10 +1530,10 @@ async function renderLibrary() {
           h('span', { text: t('web.common.search') }),
           h('input', {
             type: 'text',
-            value: lib.q,
+            value: libraryState.q,
             placeholder: t('web.lib.searchPlaceholder'),
             oninput: (event) => {
-              lib.q = event.target.value;
+              libraryState.q = event.target.value;
               clearTimeout(debounce);
               debounce = setTimeout(reload, 250);
             },
@@ -1543,8 +1543,8 @@ async function renderLibrary() {
           'label',
           { class: 'field' },
           h('span', { text: t('web.common.sort') }),
-          sortSelect(lib.sort, (value) => {
-            lib.sort = value;
+          sortSelect(libraryState.sort, (value) => {
+            libraryState.sort = value;
             reload();
           })
         ),
@@ -1556,7 +1556,7 @@ async function renderLibrary() {
             'select',
             {
               onchange: (event) => {
-                lib.collectionId = event.target.value;
+                libraryState.collectionId = event.target.value;
                 reload();
               },
             },
@@ -1564,7 +1564,7 @@ async function renderLibrary() {
             ...(state.collections || []).map((collection) =>
               h('option', {
                 value: collection.id,
-                selected: lib.collectionId === collection.id,
+                selected: libraryState.collectionId === collection.id,
                 text: t('web.lib.collectionOption', { id: collection.id, count: collection.members }),
               })
             )
@@ -1625,7 +1625,7 @@ function promptForget(name) {
 
 // Model detail modal: versions, pin, download, check, verify, forget.
 // 模型详情弹窗：版本、固定、下载、检查、校验、删除。
-async function showModelDetail(modelId) {
+async function renderModelDetail(modelId) {
   const loading = openModal({
     title: t('web.lib.detailTitle', { modelId }),
     body: h('div', { class: 'loading', text: t('web.common.loading') }),
@@ -1765,7 +1765,7 @@ async function showModelDetail(modelId) {
 
 // Persistent state of the check screen.
 // 检查页的持久状态。
-const chk = { collections: new Set(), models: new Set(), deep: false };
+const checkState = { collections: new Set(), models: new Set(), deep: false };
 
 // Check screen: pick collections and/or models, run, render the reports.
 // 检查界面：选择收藏集和/或模型，运行并渲染报告。
@@ -1780,10 +1780,10 @@ async function renderCheck() {
       { class: 'checkbox' },
       h('input', {
         type: 'checkbox',
-        checked: chk.collections.has(collection.id),
+        checked: checkState.collections.has(collection.id),
         onchange: (event) => {
-          if (event.target.checked) chk.collections.add(collection.id);
-          else chk.collections.delete(collection.id);
+          if (event.target.checked) checkState.collections.add(collection.id);
+          else checkState.collections.delete(collection.id);
         },
       }),
       h('span', { text: t('web.check.collectionLabel', { id: collection.id, count: collection.members }) })
@@ -1799,10 +1799,10 @@ async function renderCheck() {
         { class: 'checkbox' },
         h('input', {
           type: 'checkbox',
-          checked: chk.models.has(model.modelId),
+          checked: checkState.models.has(model.modelId),
           onchange: (event) => {
-            if (event.target.checked) chk.models.add(model.modelId);
-            else chk.models.delete(model.modelId);
+            if (event.target.checked) checkState.models.add(model.modelId);
+            else checkState.models.delete(model.modelId);
           },
         }),
         h('span', { text: model.name || `#${model.modelId}` })
@@ -1810,7 +1810,7 @@ async function renderCheck() {
     )
   );
 
-  showScreen(
+  renderScreen(
     'web.check.title',
     'web.check.subtitle',
     panel(
@@ -1839,9 +1839,9 @@ async function renderCheck() {
         { class: 'checkbox' },
         h('input', {
           type: 'checkbox',
-          checked: chk.deep,
+          checked: checkState.deep,
           onchange: (event) => {
-            chk.deep = event.target.checked;
+            checkState.deep = event.target.checked;
           },
         }),
         h('span', { text: t('web.check.deep') })
@@ -1852,7 +1852,7 @@ async function renderCheck() {
         type: 'button',
         text: t('web.check.run'),
         onclick: async () => {
-          if (!chk.collections.size && !chk.models.size) {
+          if (!checkState.collections.size && !checkState.models.size) {
             toast(t('web.check.nothingSelected'), 'warn');
             return;
           }
@@ -1860,7 +1860,7 @@ async function renderCheck() {
             () =>
               api('/api/check', {
                 method: 'POST',
-                body: { collections: [...chk.collections], models: [...chk.models], deep: chk.deep },
+                body: { collections: [...chk.collections], models: [...chk.models], deep: checkState.deep },
               }),
             (job) => {
               if (job.status === 'done' && job.result) renderCheckReports(job.result.reports);
@@ -1944,7 +1944,7 @@ function renderCheckReports(reports) {
 
 // Persistent state of the verify screen.
 // 校验页的持久状态。
-const vfy = { models: new Set(), deep: true };
+const verifyState = { models: new Set(), deep: true };
 
 // Verify screen: scope, deep switch, run, render the result.
 // 校验界面：范围、深度开关、运行并渲染结果。
@@ -1962,10 +1962,10 @@ async function renderVerify() {
         { class: 'checkbox' },
         h('input', {
           type: 'checkbox',
-          checked: vfy.models.has(model.modelId),
+          checked: verifyState.models.has(model.modelId),
           onchange: (event) => {
-            if (event.target.checked) vfy.models.add(model.modelId);
-            else vfy.models.delete(model.modelId);
+            if (event.target.checked) verifyState.models.add(model.modelId);
+            else verifyState.models.delete(model.modelId);
           },
         }),
         h('span', { text: model.name || `#${model.modelId}` })
@@ -1973,7 +1973,7 @@ async function renderVerify() {
     )
   );
 
-  showScreen(
+  renderScreen(
     'web.verify.title',
     'web.verify.subtitle',
     panel(
@@ -1986,9 +1986,9 @@ async function renderVerify() {
         { class: 'checkbox' },
         h('input', {
           type: 'checkbox',
-          checked: vfy.deep,
+          checked: verifyState.deep,
           onchange: (event) => {
-            vfy.deep = event.target.checked;
+            verifyState.deep = event.target.checked;
           },
         }),
         h('span', { text: t('web.verify.deep') })
@@ -2002,7 +2002,7 @@ async function renderVerify() {
             () =>
               api('/api/verify', {
                 method: 'POST',
-                body: { modelIds: [...vfy.models], noHash: !vfy.deep },
+                body: { modelIds: [...vfy.models], noHash: !verifyState.deep },
               }),
             (job) => {
               if (job.status === 'done' && job.result) renderVerifyResult(job.result);
@@ -2252,7 +2252,7 @@ async function renderSettings() {
     },
   });
 
-  showScreen(
+  renderScreen(
     'web.settings.title',
     'web.settings.subtitle',
     ...SETTINGS_SPEC.map((group) => panel(t(group.title), null, h('div', { class: 'row' }, ...group.fields.map(field)))),
@@ -2318,7 +2318,7 @@ async function renderLogin() {
     },
   });
 
-  showScreen(
+  renderScreen(
     'web.login.title',
     'web.login.subtitle',
     panel(
@@ -2348,7 +2348,7 @@ async function renderHelp() {
     cells: [{ text: t(`web.help.${key}Title`), class: 'name' }, { text: t(`web.help.${key}Body`) }],
   }));
 
-  showScreen(
+  renderScreen(
     'web.help.title',
     'web.help.subtitle',
     panel(t('web.help.workflows'), null, table([t('web.help.topic'), t('web.help.details')], rows, t('web.common.empty'))),

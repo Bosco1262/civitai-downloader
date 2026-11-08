@@ -378,7 +378,7 @@ function openHelp() {
     refresh();
     return;
   }
-  require('../ui/pages').showHelp({});
+  require('../ui/prompts').showHelp({});
   refresh();
 }
 
@@ -847,7 +847,7 @@ function cancelSelectedTask() {
   cancelPromptOpen = true;
   Promise.resolve()
     .then(() =>
-      require('../ui/pages').promptConfirm(t('tui.screen.taskCancelConfirm', { name: task.name || task.id }), {
+      require('../ui/prompts').promptConfirm(t('tui.screen.taskCancelConfirm', { name: task.name || task.id }), {
         danger: true,
         initial: false,
       })

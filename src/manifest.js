@@ -30,7 +30,7 @@ function sizeDiffers(a, b) {
   return Math.abs(Number(a) - Number(b)) > sizeTolerance(b);
 }
 
-function hashOf(file) {
+function sha256Of(file) {
   return file && file.sha256 ? String(file.sha256).toUpperCase() : null;
 }
 
@@ -50,36 +50,36 @@ function manifestDiff(prevFiles, onlineFiles) {
   const removed = [];
   const renamed = [];
 
-  for (const [key, o] of online) {
-    const p = prev.get(key);
-    if (!p) {
-      added.push(o);
+  for (const [key, onlineFile] of online) {
+    const prevFile = prev.get(key);
+    if (!prevFile) {
+      added.push(onlineFile);
       continue;
     }
-    const hp = hashOf(p);
-    const ho = hashOf(o);
-    if (hp && ho) {
-      if (hp !== ho) changed.push({ prev: p, online: o });
-    } else if (p.bytes && o.bytes && sizeDiffers(p.bytes, o.bytes)) {
-      changed.push({ prev: p, online: o });
+    const prevHash = sha256Of(prevFile);
+    const onlineHash = sha256Of(onlineFile);
+    if (prevHash && onlineHash) {
+      if (prevHash !== onlineHash) changed.push({ prev: prevFile, online: onlineFile });
+    } else if (prevFile.bytes && onlineFile.bytes && sizeDiffers(prevFile.bytes, onlineFile.bytes)) {
+      changed.push({ prev: prevFile, online: onlineFile });
     }
   }
-  for (const [key, p] of prev) {
-    if (!online.has(key)) removed.push(p);
+  for (const [key, prevFile] of prev) {
+    if (!online.has(key)) removed.push(prevFile);
   }
 
   // A same-hash "add + remove" pair counts as a rename (the author renamed the file).
   // 同哈希的「新增 + 移除」视为改名（作者重命名文件）
   const renamedRemoved = new Set();
   const renamedAdded = new Set();
-  for (const o of added) {
-    const ho = hashOf(o);
-    if (!ho) continue;
-    const match = removed.find((p) => !renamedRemoved.has(p) && hashOf(p) === ho);
+  for (const onlineFile of added) {
+    const onlineHash = sha256Of(onlineFile);
+    if (!onlineHash) continue;
+    const match = removed.find((prevFile) => !renamedRemoved.has(prevFile) && sha256Of(prevFile) === onlineHash);
     if (match) {
       renamedRemoved.add(match);
-      renamedAdded.add(o);
-      renamed.push({ from: match, to: o });
+      renamedAdded.add(onlineFile);
+      renamed.push({ from: match, to: onlineFile });
     }
   }
 
@@ -96,10 +96,10 @@ function manifestDiff(prevFiles, onlineFiles) {
 }
 
 /**
- * Backwards-compatible helper: return the names of files whose content changed.
- * 兼容旧调用：返回发生内容变化的文件名数组。
+ * Return the names of files whose content changed.
+ * 返回发生内容变化的文件名数组。
  */
-function manifestDiffers(prevFiles, onlineFiles) {
+function changedFileNames(prevFiles, onlineFiles) {
   return manifestDiff(prevFiles, onlineFiles).changed.map((c) => sanitizeName(c.online.name || c.online.remoteName));
 }
 
@@ -113,4 +113,4 @@ function sameManifest(a, b) {
   return manifestDiff(a, b).same;
 }
 
-module.exports = { manifestDiff, manifestDiffers, sameManifest, sizeTolerance, sizeDiffers, keyOf };
+module.exports = { manifestDiff, changedFileNames, sameManifest, sizeTolerance, sizeDiffers, keyOf };

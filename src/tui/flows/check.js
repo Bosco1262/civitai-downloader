@@ -28,7 +28,7 @@ const {
 const { listCollectionIds, readCollection } = require('../../storage');
 const { t } = require('../../i18n');
 const view = require('../adapters/view');
-const pages = require('../ui/pages');
+const pages = require('../ui/prompts');
 const reportPage = require('../ui/report');
 const screen = require('../shell/screen');
 const { present } = require('../shell/present');

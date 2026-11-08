@@ -24,7 +24,7 @@ const highWaterMark = (workerData && workerData.highWaterMark) || 4 * 1024 * 102
 const progressIntervalMs = (workerData && workerData.progressIntervalMs) || 250;
 
 const hash = crypto.createHash('sha256');
-let read = 0;
+let bytesRead = 0;
 let lastReport = Date.now();
 let settled = false;
 
@@ -49,12 +49,12 @@ try {
 if (stream) {
   stream.on('data', (chunk) => {
     hash.update(chunk);
-    read += chunk.length;
+    bytesRead += chunk.length;
     const now = Date.now();
     if (now - lastReport >= progressIntervalMs) {
       lastReport = now;
       try {
-        parentPort.postMessage({ type: 'progress', bytes: read });
+        parentPort.postMessage({ type: 'progress', bytes: bytesRead });
       } catch (e) {
         // Ignore.
         // 忽略。
@@ -62,7 +62,7 @@ if (stream) {
     }
   });
   stream.on('end', () => {
-    finish({ type: 'done', hash: hash.digest('hex').toUpperCase(), bytes: read });
+    finish({ type: 'done', hash: hash.digest('hex').toUpperCase(), bytes: bytesRead });
   });
   stream.on('error', (e) => {
     finish({ type: 'error', message: e.message, code: e.code || null });

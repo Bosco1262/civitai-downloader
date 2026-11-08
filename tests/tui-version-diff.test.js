@@ -8,9 +8,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const selection = require('../src/tui/ui/versionSelection');
+const selection = require('../src/tui/ui/versionDiff');
 
-test('versionSelection: 保留/下载/删除/跳过', () => {
+test('versionDiff: 保留/下载/删除/跳过', () => {
   const installed = [
     { versionId: '1', versionName: 'v1', files: [{ name: 'a', bytes: 10 }] },
     { versionId: '2', versionName: 'v2', files: [{ name: 'b', bytes: 20 }] },

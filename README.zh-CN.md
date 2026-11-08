@@ -14,16 +14,16 @@
 - **终端交互界面**（`npm run tui`）：菜单式操作——登录、收藏集条目筛选/勾选下载、实时进度条与日志、完成状态管理、版本固定、本地校验修复、环境体检、设置编辑，无需记命令；模型详情、收藏集快照、检查报告、校验结果与体检结果都是**可滚动的一页**（摘要 + 分区 + 操作），不必翻日志
 - 一键枚举收藏集条目（分页自动翻页、去重合并、限流）
 - 自动获取每个模型的最新版本、主 Model 文件的：文件名 / 大小 / SHA256 / 下载直链
-- **版本选择与固定**：多版本模型可指定下载哪个版本——TUI 的计划页按 `v` 打开版本列表，**可勾选一个或多个版本**（同一模型的多个版本会各占一行、一起下载），也可在模型详情页点「下载 / 切换版本…」多选；CLI 用 `--version <modelId=versionId>` 覆盖；`pin` 命令可把版本**固定**下来，之后不会被站点新版覆盖
+- **版本选择与固定**：多版本模型可指定下载哪个版本——TUI 的计划页按 `Enter` 打开版本列表，**可勾选一个或多个版本**（同一模型的多个版本会各占一行、一起下载），也可在模型详情页点「下载 / 切换版本…」多选；CLI 用 `--version <modelId=versionId>` 覆盖；`pin` 命令可把版本**固定**下来，之后不会被站点新版覆盖
 - **付费/受限版本兼容**：按版本读取 `paidAccess`，区分付费、限时付费、Early Access 与不可下载；批量收藏集默认跳过付费项并显示徽标，单模型显式引用可尝试。只使用当前账号已有下载权限，**不会自动购买或消耗 Buzz**；无权限会显示为“需权限”，不会误报登录过期或反复重试
-- **同一模型多版本共存**：每个版本独立记录目录/文件清单/SHA256，首个版本在 `outDir/<模型名>/`、追加版本在 `outDir/<模型名>/<版本名>/`，切换版本不会互相覆盖
+- **同一模型多版本共存**：每个版本在模型库里独立记录文件清单/SHA256，文件放在模型目录（`outDir/<类型>/<底模?>/<模型名>/`）；若两个版本的同名文件内容不同，双方都带上各自的 `-<版本>` 后缀，切换版本不会互相覆盖
 - **必需组件**：除主 Model 外，自动带上站点标记为 `metadata.isRequired` 的组件（如 Text Encoder），以及版本通过 `vaeId` 关联的 VAE；它们不受默认 `fileTypes`/`primaryOnly` 过滤
-- **单个模型（不依赖收藏集）**：`download <模型URL | model:<id> | version:<id>>` 直接下载（支持批量粘贴 / `--models` / `--from-file`）；`models` 命令统一管理——列表与搜索排序、导出 JSON/CSV、固定版本、删除记录（可连文件一起删）；`check`/`verify` 支持 `model:<id>` 与 `--models`；TUI 主菜单第 2 项「单个模型」有同款入口
+- **单个模型（不依赖收藏集）**：`download <模型URL | model:<id> | version:<id>>` 直接下载（支持批量粘贴 / `--models` / `--from-file`）；`models` 命令统一管理——列表与搜索排序、导出 JSON/CSV、固定版本、删除记录（可连文件一起删）；`check`/`verify` 支持 `model:<id>` 与 `--models`；TUI 主菜单「本地模型管理」有同款入口
 - 下载能力（基于 curl + 登录 Cookie）：
   - 断点续传（`curl -C -`），网络中断后重跑同一命令即可续传；续传前比对 **ETag**，远端文件变了会丢弃旧分片，避免拼出必然校验失败的文件
   - 失败自动重试（单项最多 5 次，可配），低速保护（<50KB/s 持续 2 分钟自动断开重试）
   - 下载到 `*.part`，SHA256 校验通过后才改名为正式文件
-  - 已存在且校验通过的文件自动跳过；`state` 记录已完成模型，重复运行秒级跳过
+  - 已存在且校验通过的文件自动跳过；模型库记录已完成的版本，重复运行秒级跳过
   - **惰性元数据**：已完成的条目不再逐个拉元数据（二次运行几乎零请求）
   - **并发下载**（`--jobs N`）与元数据并发获取
   - 登录态中途过期会**自动重新导出 Cookie 并重试**
@@ -48,7 +48,7 @@
 - **按类型分层目录**：`layout` 选择目录预设（`a1111`（默认）/ `comfy` / `custom` + `typeFolders`），`baseModelLayer` 可选再插一层底模，目录名用站点 Base Model 原值，例如 `Lora/SDXL 1.0/<模型>`（站点未给底模时用 `unknown`）
 - **一个模型一个目录**：同一底模的所有版本放在同一目录；若两个版本的同名文件内容不同，**双方**都加上各自的 `-<版本>` 后缀（`model.safetensors` → `model-v1.safetensors` / `model-v2.safetensors`）；一旦某个目录进入「后缀模式」，之后的新版本即使不撞名也会带上自己的后缀，保持命名一致。**若同一个模型的版本横跨多个底模**（站点上确实存在，例如同一模型同时有 SDXL / SD 1.5 / Illustrious 版本），则按各自底模各放一处，避免把 SD 1.5 的 LoRA 放进 SDXL 目录；`models --relayout` 可把已有文件搬到新布局
 - `--dry-run` 预览计划、`--only` 只下指定模型、`--force` 强制重下、`--refresh-meta` 重新比对线上清单
-- 全流程日志落盘（`.data/download-<收藏集ID>.log`，按大小自动轮转，含耗时统计）
+- 全流程日志落盘（`.data/download-<任务标签>.log`，按大小自动轮转，含耗时统计）
 - 数据安全：模型库原子写入 + 自动备份 + 全局单锁（防止两个进程互相覆盖）；损坏的模型库会被备份并明确报错，而不是静默丢记录
 - 旧的按目标分文件产物（`state-*.json`、`items-*.json`、`plan-*.json`、`report-*.json`）在新格式下一律忽略：首次运行会把它们移入 `.data/legacy/`
 
@@ -71,7 +71,7 @@
 ## 快速开始
 
 ```powershell
-cd C:\Users\kongf\Downloads\loras\civitai-collection-downloader
+cd <仓库目录>
 npm install
 copy config.example.json config.json    # 首次使用时创建配置
 notepad config.json                     # 按需修改 outDir / jobs / proxy 等（见下文）
@@ -139,7 +139,7 @@ npm run tui
   │ 并发      3                                                  │
   │                                                              │
   │ 任务总览                                                     │
-  │ 总进度  ███████░░░░░░░░░ 42.5% · 完成 1/3 · 运行 1 · 排队 1  │
+  │ 总进度  ███████░░░░░░░░░ 42.5%  · 完成 1/3 | 运行 1 | 排队 1  │
   └──────────────────────────────────────────────────────────────┘
 
   主菜单
@@ -152,7 +152,7 @@ npm run tui
     设置                  登录、下载目录、并发、代理等全部可修改项
     退出
 
-  ↑↓ 选择 · Enter 进入 · Ctrl+T 任务 · ? 帮助
+  ↑↓ 选择 | Enter 进入 | Ctrl+T 任务 | ? 帮助
 ```
 
 完整仪表盘只显示在主菜单。进入下载、管理、设置或任务视图后，它压缩成一行「站点 | 会话 | 任务数」，把空间留给正文。
@@ -251,7 +251,7 @@ npm run download -- 161131 --resume        # 继续上次取消的任务
 | `--dry-run` | 只列出计划不下载 | `npm run download -- 161131 --dry-run` |
 | `--ignore-space` | 磁盘空间不足时仍继续 | |
 | `--force-lock` | 忽略「已有其它进程在处理」的提示 | |
-| `--reset-state` | 状态文件损坏时忽略损坏记录继续（损坏内容已自动备份） | |
+| `--reset-state` | 模型库损坏时忽略损坏记录继续（损坏内容已自动备份） | |
 | `--engine <name>` | 下载引擎：`curl`（默认）/ `aria2` / `auto` | `npm run download -- 161131 --engine aria2` |
 | `--dedup <mode>` | 跨收藏集内容去重：`off`（默认）/ `hardlink` / `copy` | `npm run download -- 161131 --dedup hardlink` |
 | `--notify <url>` | 任务结束后 POST 结果到 Webhook | `npm run download -- 161131 --notify https://example.com/hook` |
@@ -364,7 +364,7 @@ npm run pin    -- --list                         # 列出所有已固定的模�
 - 模型库是 `.data\library.json`（schema v1）：`{ "schemaVersion": 1, "updatedAt", "entries": { "<模型ID>": { "name", "type", "baseModel", "creator", "stats", "nsfw", "mode", "pinnedVersionId", "versions": { "<版本ID>": { "versionName", "baseModel", "dirName", "outDir", "files": [...], "verifiedAt", "site": {...} } } } } }`——`site` 原样镜像 `/api/v1/model-versions/{ID}` 返回的对象（超长文本会截断），尽量不丢信息
 - 收藏集快照是 `.data\collections\<收藏集ID>.json`：成员清单 + `changes { added, removed, versionChanged }`
 - 想重下某个版本：用 `models --forget <id> --version <版本ID>`，也可用 TUI「模型库 → 删除记录」/「收藏集成员与变化 → 重置某个模型的重下标记」
-- 运行日志：`.data\download-<收藏集ID>.log`（单模型为 `download-model-<模型ID>.log`，超过 5MB 自动轮转为 `.1`）
+- 运行日志：`.data\download-<任务标签>.log`（收藏集为 `download-<收藏集ID>.log`，单模型为 `download-model-<模型ID>.log`，超过 5MB 自动轮转为 `.1`）
 - 旧的 `state-*.json` / `items-*.json` / `plan-*.json` / `report-*.json` 从 v1 起一律忽略：首次运行会把它们移入 `.data\legacy\`（不删除，也不做迁移）
 
 ## 配置说明（config.json）
@@ -404,7 +404,7 @@ npm run pin    -- --list                         # 列出所有已固定的模�
 ## 项目结构
 
 ```
-civitai-collection-downloader/
+civitai-downloader/
 ├─ web.js                  # Web 界面入口（npm run webui；本地服务 + 浏览器界面）
 ├─ ui.js                   # 终端交互界面入口（npm run tui）
 ├─ cli.js                  # 命令行入口（login / list / download / check / verify / pin / doctor）
@@ -427,10 +427,9 @@ civitai-collection-downloader/
 │  ├─ manifest.js          # 文件清单双向比对（内容变化 / 改名 / 增删）
 │  ├─ dedup.js             # 跨收藏集内容去重索引（SHA256 → 路径，硬链接/复制）
 │  ├─ notify.js            # 任务结束通知（响铃 / 系统通知 / Webhook）
-│  ├─ i18n.js              # 文案引擎（t / 占位符 / 语言回退）
-│  ├─ i18n/                # 文案表（zh-CN.js / en.js，CLI + 核心模块 + TUI 全部文案）
+│  ├─ i18n/                # 文案引擎（index.js）+ 文案表（zh-CN.js / en.js，CLI + 核心模块 + TUI 全部文案）
 │  │  └─ web/              # Web 界面文案（zh-CN.json / en.json，经 /api/i18n 下发）
-│  ├─ ratelimit.js         # 匀速限流器
+│  ├─ rateLimit.js         # 匀速限流器
 │  ├─ hashWorker.js        # SHA256 计算工作线程
 │  ├─ downloader.js        # curl / aria2c 下载（断点续传 / ETag 校验 / 重试 / 取消）
 │  ├─ job.js               # 下载任务主循环（CLI 与两个界面共用）
@@ -455,7 +454,7 @@ civitai-collection-downloader/
 │     ├─ runtime/          # 任务登记表、下载队列、进度采样
 │     ├─ adapters/         # 终端输出与简易模式兼容门面
 │     └─ *.js              # 兼容 re-export（旧路径保持可用）
-└─ .data/                  # 运行时数据（会话 / Cookie / 缓存 / 状态 / 日志）
+└─ .data/                  # 运行时数据（会话 / Cookie / 模型库 / 快照 / 日志）
 ```
 
 ### 注释规范
@@ -469,13 +468,13 @@ civitai-collection-downloader/
 ## 测试
 
 ```powershell
-npm test           # node --test tests/（标准方式）
+npm test           # node --test（自动发现 tests/*.test.js）
 npm run test:seq   # 同一进程顺序执行（某些受限环境下 node --test 的子进程管道会被拒绝时使用）
 ```
 
 覆盖：参数解析、模型库与收藏集快照、目录布局与版本文件名冲突（双方加后缀、幂等、多扩展名）、`models --relayout`、旧格式清理、原子写与损坏处理、清单比对（含改名/增删）、下载续传（完整分片、416、ETag 变化、哈希不符、取消、重试耗尽）、配置校验与站点隔离、API 重试/限流/超时、aria2 参数与引擎选择、内容去重、通知负载、三语言层（CLI / 核心模块 / TUI）的文案与中英切换、TUI 各层的纯函数（选择器的过滤/排序/滚动视窗/渲染、菜单与帮助页构造、进度面板文本、按键语义、终端尺寸与字符集）、Web 界面（任务管理、进度换算、路径穿越防护、HTTP API 与请求防护、静态文件与 SPA 回落、`web.*` 文案契约），以及一条端到端集成链路（枚举 → 元数据 → 下载 → 模型库与快照 → 检查更新 → 修复 → 断点续跑）。
 
-测试文件：`tests/{util,storage,library,config,manifest,api,downloader,commands,platform,i18n,i18n-cli,i18n-core,i18n-tui,select,models,models-cli,tui-report,integration}.test.js`。
+测试文件：`tests/*.test.js`——每个核心模块一个文件，另有契约测试（`tui-*.test.js`、`webui*.test.js`、`i18n-*.test.js`）与一条端到端集成测试。
 
 ## 常见问题（FAQ）
 
@@ -506,7 +505,7 @@ npm run test:seq   # 同一进程顺序执行（某些受限环境下 node --tes
 
 **9. 模型库损坏了会怎样？** 工具会把它备份为 `library.json.corrupt-<时间戳>` 并停止，不会静默清空记录；确认后删除原文件即可重新开始（已下载的文件不受影响）。
 
-**9b. 同一模型想同时留 v1 和 v2 怎么办？** TUI 里可以一次完成：在计划页选中该模型按 `v`，或在模型详情页点「下载 / 切换版本…」，勾选 v1 与 v2 后它们会各占一行、进入同一份计划和同一个下载任务。CLI 则分两次（例如 `download model:<id>` 选 v1，再 `download model:<id> --version <id>=<v2>`）。两个版本都在同一个布局目录里，各自独立记录。若它们同名但内容不同，双方都会带上版本后缀（`model-v1.safetensors` / `model-v2.safetensors`），文件名始终能对应到版本。用 `models` 或 TUI「模型库 → 列出记录」可以看到全部版本。事后改了布局配置，用 `models --relayout`（先加 `--dry-run` 看计划）把文件搬过去。
+**9b. 同一模型想同时留 v1 和 v2 怎么办？** TUI 里可以一次完成：在计划页选中该模型按 `Enter`，或在模型详情页点「下载 / 切换版本…」，勾选 v1 与 v2 后它们会各占一行、进入同一份计划和同一个下载任务。CLI 则分两次（例如 `download model:<id>` 选 v1，再 `download model:<id> --version <id>=<v2>`）。两个版本都在同一个布局目录里，各自独立记录。若它们同名但内容不同，双方都会带上版本后缀（`model-v1.safetensors` / `model-v2.safetensors`），文件名始终能对应到版本。用 `models` 或 TUI「模型库 → 列出记录」可以看到全部版本。事后改了布局配置，用 `models --relayout`（先加 `--dry-run` 看计划）把文件搬过去。
 
 **9c. 同一个模型在两个收藏集里，会有两条记录吗？** 不会。模型库 `.data/library.json` 一个模型只有一条记录；收藏集只是 `.data/collections/` 下的成员快照。`check <收藏集ID>` 按快照比对，`check --models` / `verify --models` 覆盖整个模型库。
 

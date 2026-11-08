@@ -183,11 +183,11 @@ function shortVersionTag(versionId) {
   return (digits.length > 4 ? digits.slice(-4) : digits) || String(versionId).slice(-4);
 }
 
-function fileKey(name) {
+function nameKey(name) {
   return String(name === undefined || name === null ? '' : name).toLowerCase();
 }
 
-function shaOf(file) {
+function sha256Of(file) {
   return file && file.sha256 ? String(file.sha256).toUpperCase() : null;
 }
 
@@ -196,8 +196,8 @@ function shaOf(file) {
  * 两条文件记录是否为同一份内容：哈希相同，或缺少哈希时大小相同。
  */
 function sameFileContent(a, b) {
-  const sa = shaOf(a);
-  const sb = shaOf(b);
+  const sa = sha256Of(a);
+  const sb = sha256Of(b);
   if (sa && sb) return sa === sb;
   return Number.isFinite(a && a.bytes) && Number.isFinite(b && b.bytes) && a.bytes === b.bytes;
 }
@@ -239,7 +239,7 @@ function planFileNames(input = {}) {
     return {
       remoteName,
       diskName: diskFileName(dir, f.name || remoteName),
-      sha256: shaOf(f),
+      sha256: sha256Of(f),
       bytes: Number.isFinite(f.bytes) ? f.bytes : null,
     };
   });
@@ -250,7 +250,7 @@ function planFileNames(input = {}) {
   for (const w of wanted) {
     for (const other of others) {
       for (const f of other.files || []) {
-        if (fileKey(f.name) !== fileKey(w.diskName)) continue;
+        if (nameKey(f.name) !== nameKey(w.diskName)) continue;
         if (sameFileContent(f, w)) continue;
         involved.set(String(other.versionId), other);
       }

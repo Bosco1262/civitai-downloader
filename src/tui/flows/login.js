@@ -8,7 +8,7 @@
 const { performLogin, checkLogin } = require('../../loginFlow');
 const { t } = require('../../i18n');
 const view = require('../adapters/view');
-const pages = require('../ui/pages');
+const pages = require('../ui/prompts');
 const downloadTask = require('../runtime/downloadTask');
 const { color } = require('../ui/tokens');
 

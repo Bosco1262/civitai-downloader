@@ -43,7 +43,7 @@ const { configureRuntime, printConfigWarnings } = require('../../runtime');
 const { t } = require('../../i18n');
 const layout = require('../core/layout');
 const view = require('../adapters/view');
-const pages = require('../ui/pages');
+const pages = require('../ui/prompts');
 const list = require('../ui/list');
 const screen = require('../shell/screen');
 const tasks = require('../runtime/tasks');
@@ -255,12 +255,12 @@ function mainScreen() {
     status: () => (state.busy ? t('tui.app.busyHint') : null),
     render(ctx) {
       const lines = [];
-      // On a very short terminal the five entries do not all fit: the window follows the cursor and a
+      // On a very short terminal the six entries do not all fit: the window follows the cursor and a
       // position line says how many there are, so nothing looks missing.
       //
-      // 终端特别矮时五项放不下：视窗跟随光标滚动，并用一行位置提示说明总数，不会显得缺项。
+      // 终端特别矮时六项放不下：视窗跟随光标滚动，并用一行位置提示说明总数，不会显得缺项。
       const room = Math.max(1, ctx.rows);
-      const win = pages.windowOf(MAIN_MENU.length, cursor.index, room, cursor.windowStart);
+      const win = list.windowOf(MAIN_MENU.length, cursor.index, room, cursor.windowStart);
       cursor.windowStart = win.start;
       cursor.index = win.cursor;
       MAIN_MENU.slice(win.start, win.end).forEach((item, index) => {
@@ -319,9 +319,9 @@ function runExclusive(fn) {
     .catch((e) => {
       const { describeError } = require('../../runtime');
       // The failure is the one thing the user must see: show it as a toast (it also lands in the log,
-      // reachable with L, and in the run log file).
+      // reachable with Ctrl+L, and in the run log file).
       //
-      // 失败是用户必须看到的一件事：用 toast 显示（同时进入日志页 `L` 与运行日志文件）。
+      // 失败是用户必须看到的一件事：用 toast 显示（同时进入日志页 `Ctrl+L` 与运行日志文件）。
       view.notice(t('tui.app.operationFailed', { error: describeError(e) }), colors.red);
       if (process.env.DEBUG) console.error(e);
     })
