@@ -543,6 +543,9 @@ const BOOLEAN_FLAGS = new Set([
   'reset-state',
   'toast',
   'relayout',
+  'include-paid',
+  'skip-paid',
+  'paid-only',
 ]);
 
 /**

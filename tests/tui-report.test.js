@@ -219,10 +219,12 @@ test('report: 页面显示事实/分区/操作，Enter 执行，Esc 返回', asy
     assert.ok(text.includes('LORA'), text);
     assert.ok(text.includes('v1') && text.includes('v2'), text);
     assert.ok(text.includes('执行一次'), text);
-    assert.equal(frame()[frame().length - 1].trim(), i18n.t('tui.hint.report'), '页脚只列本页的键');
+    assert.equal(frame()[frame().length - 1].trim(), i18n.t('tui.hint.reportBody'), '页脚只列本页的键');
 
-    // Rows without `onEnter` are read-only, so the cursor starts on the first action.
-    // 没有 `onEnter` 的行是只读的，因此光标从第一个操作开始。
+    // The page starts on the content; Tab moves focus to the action block.
+    // 页面默认停留在正文；Tab 才把焦点移到操作区。
+    key('tab');
+    await settle();
     key('return');
     await settle();
     assert.equal(await page, null);
@@ -259,6 +261,8 @@ test('report: 页面显示事实/分区/操作，Enter 执行，Esc 返回', asy
       ],
     });
     await settle();
+    key('tab');
+    await settle();
     key('return');
     await settle();
     screen.render();
@@ -293,6 +297,8 @@ test('report: 行按 Enter 交给分区的 onEnter，可在其中打开子菜单
     screen.render();
     assert.ok(frame().join('\n').includes('版本'), frame().join('\n'));
 
+    key('tab');
+    await settle();
     key('return');
     await settle();
     assert.equal(opened, rows[0], 'onEnter 收到调用方传入的原始行');
@@ -361,8 +367,10 @@ test('model detail: 进入模型即看到类型/版本/大小/固定/目录', as
       assert.ok(text.includes(path.join(config.outDir, 'Model-X')), text);
       assert.ok(text.includes(i18n.t('tui.models.actionCheck')), text);
 
-      // Enter on the version row opens its own menu.
-      // 在版本行按 Enter 打开它自己的菜单。
+      // Tab moves focus to the selectable version rows; Enter opens that row's menu.
+      // Tab 把焦点移到可选的版本行；Enter 打开该行的菜单。
+      key('tab');
+      await settle();
       key('return');
       await settle();
       screen.render();
@@ -403,7 +411,7 @@ test('collection snapshot: 枚举时间/成员数/新增/移除/版本变化', a
 
       const text = frame().join('\n');
       assert.ok(text.includes(i18n.t('tui.manage.collectionLabel', { id: '777' })), text);
-      assert.ok(text.includes('2026-10-02T00:00:00.000Z'), text);
+      assert.ok(text.includes('2026-10-02 00:00'), text);
       assert.ok(text.includes(i18n.t('tui.manage.snapshot.factMembers')), text);
       assert.ok(text.includes(i18n.t('tui.manage.snapshot.sectionAdded')), text);
       assert.ok(text.includes(i18n.t('tui.manage.snapshot.sectionRemoved')), text);
@@ -411,8 +419,8 @@ test('collection snapshot: 枚举时间/成员数/新增/移除/版本变化', a
       assert.ok(text.includes('B'), text);
       assert.ok(text.includes('10 → 11'), text);
 
-      // The action list scrolls with the page: End shows the last actions.
-      // 操作列表随页面滚动：按 End 能看到最后几项操作。
+      // End scrolls the read-only content; the action block remains reachable in the same view.
+      // End 滚动只读正文；操作区仍可在同一页到达。
       key('end');
       await settle();
       screen.render();
@@ -537,8 +545,10 @@ test('check flow: 单目标直接进报告页，多目标列表可逐项进入',
     assert.ok(list.includes(i18n.t('tui.check.report.factTargets')), list);
     assert.ok(list.includes('100') && list.includes('200'), list);
 
-    // Enter opens the selected target's own report; Esc returns to the list.
-    // Enter 打开所选目标自己的报告，Esc 回到列表。
+    // Tab focuses the target rows; Enter opens the selected target's own report.
+    // Tab 聚焦目标行；Enter 打开所选目标自己的报告。
+    key('tab');
+    await settle();
     key('return');
     for (let index = 0; index < 6; index++) await settle();
     screen.render();

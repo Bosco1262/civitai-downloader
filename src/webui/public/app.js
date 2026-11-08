@@ -463,6 +463,9 @@ function renderJobProgress(progress, status) {
       h('span', { text: fmtPercent(progress.bytes, progress.expected) }),
       progress.speed ? h('span', { text: `${fmtBytes(progress.speed)}/s` }) : null,
       progress.etaMs ? h('span', { text: t('web.job.eta', { eta: fmtDuration(progress.etaMs) }) }) : null,
+      progress.accessRequired
+        ? h('span', { class: 'small warn', text: t('web.job.accessRequiredCount', { count: progress.accessRequired }) })
+        : null,
       progress.failed
         ? h('span', { class: 'small', style: { color: 'var(--danger)' }, text: t('web.job.failedCount', { count: progress.failed }) })
         : null,
@@ -939,6 +942,7 @@ const dl = {
   q: '',
   type: '',
   base: '',
+  access: '',
   sort: 'name',
   outDir: null,
   jobs: null,
@@ -954,6 +958,10 @@ function visiblePlan() {
     if (q && !`${item.name || ''} ${item.modelId}`.toLowerCase().includes(q)) return false;
     if (dl.type && item.type !== dl.type) return false;
     if (dl.base && item.baseModel !== dl.base) return false;
+    const effectiveAccess = dl.overrides.get(String(item.modelId))?.access || item.access;
+    const restricted = !!(effectiveAccess && effectiveAccess.requiresEntitlement);
+    if (dl.access === 'paid' && !restricted) return false;
+    if (dl.access === 'free' && restricted) return false;
     return true;
   });
   if (dl.sort === 'size') list = list.slice().sort((a, b) => (b.totalBytes || 0) - (a.totalBytes || 0));
@@ -1017,6 +1025,9 @@ async function pickVersion(item, onPick) {
           },
         }),
         h('span', {}, h('strong', { text: version.versionName || version.versionId }), ' '),
+        version.access && version.access.requiresEntitlement
+          ? badge(t('web.dl.paid'), 'warn')
+          : null,
         h('span', {
           class: 'small muted',
           text: `${version.baseModel || '—'} · ${t('web.dl.fileCount', { count: version.files })} · ${fmtBytes(
@@ -1037,7 +1048,13 @@ async function pickVersion(item, onPick) {
         onClick: (done) => {
           const version = model.versions.find((v) => v.versionId === picked);
           done();
-          if (version) onPick({ versionId: version.versionId, versionName: version.versionName || version.versionId });
+          if (version) {
+            onPick({
+              versionId: version.versionId,
+              versionName: version.versionName || version.versionId,
+              access: version.access || null,
+            });
+          }
         },
       },
     ],
@@ -1056,7 +1073,11 @@ async function loadPlan() {
   await runJob(() => api('/api/collections/plan', { method: 'POST', body: { collectionId: dl.collectionId } }), (job) => {
     if (job.status !== 'done' || !job.result) return;
     dl.plan = job.result;
-    dl.selected = new Set(job.result.items.filter((item) => !item.recorded && !item.error).map((item) => String(item.modelId)));
+    dl.selected = new Set(
+      job.result.items
+        .filter((item) => !item.recorded && !item.error && !(item.access && item.access.requiresEntitlement))
+        .map((item) => String(item.modelId))
+    );
     dl.overrides = new Map();
     route();
   });
@@ -1175,7 +1196,9 @@ async function renderDownload() {
           const id = String(item.modelId);
           const override = dl.overrides.get(id);
           const tags = [];
+          const effectiveAccess = override ? override.access : item.access;
           if (item.error) tags.push(badge(t('web.dl.metaFailed'), 'fail'));
+          if (effectiveAccess && effectiveAccess.requiresEntitlement) tags.push(badge(t('web.dl.paid'), 'warn'));
           if (item.recorded) tags.push(badge(t('web.dl.recorded'), 'ok'));
           else if (item.hasRecord) tags.push(badge(t('web.dl.updateAvailable'), 'warn'));
           if (item.pinned) tags.push(badge(t('web.dl.pinned'), 'info'));
@@ -1305,6 +1328,23 @@ async function renderDownload() {
     h(
       'label',
       { class: 'field' },
+      h('span', { text: t('web.dl.access') }),
+      h(
+        'select',
+        {
+          onchange: (event) => {
+            dl.access = event.target.value;
+            refreshTable();
+          },
+        },
+        h('option', { value: '', text: t('web.dl.accessAll'), selected: dl.access === '' }),
+        h('option', { value: 'free', text: t('web.dl.accessFree'), selected: dl.access === 'free' }),
+        h('option', { value: 'paid', text: t('web.dl.accessPaid'), selected: dl.access === 'paid' })
+      )
+    ),
+    h(
+      'label',
+      { class: 'field' },
       h('span', { text: t('web.common.sort') }),
       sortSelect(dl.sort, (value) => {
         dl.sort = value;
@@ -1376,6 +1416,10 @@ async function renderDownload() {
 
   refreshTable();
 
+  const restrictedCount = plan.items.filter(
+    (item) => item.access && item.access.requiresEntitlement
+  ).length;
+
   showScreen(
     'web.dl.title',
     'web.dl.subtitle',
@@ -1398,6 +1442,9 @@ async function renderDownload() {
         h('label', { class: 'checkbox' }, forceCheckbox, h('span', { text: t('web.dl.force') })),
         startButton
       ),
+      restrictedCount
+        ? h('p', { class: 'small warn', text: t('web.dl.paidHint', { count: restrictedCount }) })
+        : null,
       h('p', { class: 'small muted', text: t('web.dl.optionsHint') })
     ),
     singlePanel
@@ -1840,6 +1887,9 @@ function renderCheckReports(reports) {
         ? t('web.check.reportCollection', { id: report.target.id })
         : t('web.check.reportModel', { id: report.target.id });
     const buttons = [];
+    const restrictedCount = (report.items || []).filter(
+      (item) => item.access && item.access.requiresEntitlement
+    ).length;
     if (report.changed) {
       buttons.push(
         h('button', {
@@ -1850,7 +1900,12 @@ function renderCheckReports(reports) {
             runJob(() =>
               api('/api/download', {
                 method: 'POST',
-                body: { collectionId: report.collectionId, items: report.items, force: false },
+                body: {
+                  collectionId: report.collectionId,
+                  items: report.items,
+                  force: false,
+                  paidPolicy: 'skip',
+                },
               })
             ),
         })
@@ -1872,6 +1927,9 @@ function renderCheckReports(reports) {
             failed: (report.stats && report.stats.failed) || 0,
           })
         ),
+        restrictedCount
+          ? h('p', { class: 'small warn', text: t('web.dl.paidHint', { count: restrictedCount }) })
+          : null,
         h('pre', { class: 'job-log', style: { maxHeight: '22vh' }, text: (report.lines || []).join('\n') })
       )
     );

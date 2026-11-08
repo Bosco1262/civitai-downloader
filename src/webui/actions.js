@@ -45,6 +45,7 @@ const { ensureBrowser } = require('../browser');
 const { fetchCollectionItems } = require('../collection');
 const { buildPlan, fetchModelDetail, extractFiles, versionToItem } = require('../api');
 const { runDownloadJob, freeSpaceBytes } = require('../job');
+const { classifyVersionAccess } = require('../access');
 const { cancelCurrentDownload } = require('../downloader');
 const { performLogin, checkLogin } = require('../loginFlow');
 const { writeJson } = require('../util');
@@ -535,6 +536,7 @@ function createActions(opts = {}) {
             publishedAt: v.publishedAt || null,
             files: files.length,
             bytes: files.reduce((sum, file) => sum + (Number(file.bytes) || 0), 0),
+            access: classifyVersionAccess(v, detail),
           };
         }),
       });
@@ -672,6 +674,7 @@ function createActions(opts = {}) {
             outDir,
             force: !!payload.force,
             jobs: concurrency,
+            paidPolicy: payload.paidPolicy === 'skip' ? 'skip' : 'include',
             isCancelled: () => ctx.isCancelled(),
           },
           {
@@ -688,6 +691,7 @@ function createActions(opts = {}) {
           done: summary.done,
           skipped: summary.skipped,
           failed: summary.failed,
+          accessRequired: summary.accessRequired,
           metaFailed: summary.metaFailed,
           cancelled: summary.cancelled,
           elapsedMs: summary.elapsedMs,

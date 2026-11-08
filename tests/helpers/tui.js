@@ -77,8 +77,17 @@ async function withFakeTerminal(fn, opts = {}) {
   process.stdout.isTTY = true;
   process.stdout.columns = opts.columns || 100;
   process.stdout.rows = opts.rows || 30;
-  process.stdout.write = (chunk) => {
+  process.stdout.write = (chunk, encoding, callback) => {
+    // Under `node --test` the child process reports results over stdout as binary protocol data.
+    // Keep forwarding non-string writes to the real stream while TUI text stays captured.
+    //
+    // `node --test` 的子进程会用 stdout 发送二进制测试协议；字符串帧继续被捕获，
+    // 非字符串写入则转发给原始流，避免替换 stdout 时把测试协议吞掉，也不混进帧记录。
+    if (process.env.NODE_TEST_CONTEXT && typeof chunk !== 'string') {
+      return original.write.call(process.stdout, chunk, encoding, callback);
+    }
     frames.push(String(chunk));
+    if (typeof callback === 'function') callback();
     return true;
   };
   Object.defineProperty(process, 'stdin', { value: stdin, configurable: true, writable: true });

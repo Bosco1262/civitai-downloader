@@ -114,39 +114,73 @@ async function showReportPage(config, model) {
 
   const raw = model || {};
   let current = normalizeReport(raw);
-  const state = { cursor: 0, windowStart: 0, placed: false };
+  const state = {
+    region: 'body',
+    scroll: 0,
+    rowCursor: 0,
+    actionCursor: 0,
+    placed: false,
+    rowCount: 0,
+    actionCount: 0,
+  };
+
+  const dataNow = () => reportLayout(current, screen.bodyWidth());
+  const rowsOf = (data) => data.entries.filter((entry) => entry.kind === 'row');
+  const actionsOf = (data) => data.entries.filter((entry) => entry.kind === 'action');
+  const regions = () => (state.rowCount ? ['body', 'rows', 'actions'] : ['body', 'actions']);
+  const hint = () => {
+    if (state.region === 'rows') return t('tui.hint.reportRows');
+    if (state.region === 'actions') return t('tui.hint.reportActions');
+    return t('tui.hint.reportBody');
+  };
+  const compactHint = () => {
+    if (state.region === 'rows') return t('tui.hint.reportRowsCompact');
+    if (state.region === 'actions') return t('tui.hint.reportActionsCompact');
+    return t('tui.hint.reportBodyCompact');
+  };
 
   for (;;) {
     const answer = await screen.prompt({
       title: current.title,
       crumbPath: current.crumbPath,
       handlesHelp: true,
-      hints: () => [current.hint],
+      hints: () => [hint()],
+      compactHints: () => [compactHint()],
       render(_promptState, ctx) {
         const width = Math.max(20, Math.floor(ctx.width) || 80);
         const room = Math.max(1, Math.floor(ctx.rows) || 3);
         const data = reportLayout(current, width);
-        if (!data.entries.length) return data.lines.slice(0, room);
+        const rowEntries = rowsOf(data);
+        const actionEntries = actionsOf(data);
+        state.rowCount = rowEntries.length;
+        state.actionCount = actionEntries.length;
 
         if (!state.placed) {
           state.placed = true;
           const wanted = sectionCursor(data.entries, current.initialSection);
-          if (wanted >= 0) state.cursor = wanted;
+          if (wanted >= 0 && data.entries[wanted].kind === 'row') state.rowCursor = wanted;
+          state.region = 'body';
+          state.scroll = 0;
         }
-        state.cursor = Math.max(0, Math.min(data.entries.length - 1, state.cursor));
-        const entry = data.entries[state.cursor];
-        const win = pages.scrollToSection(
-          list.windowOf(data.lines.length, entry.line, room, state.windowStart),
-          data.lines,
-          room,
-          entry.line,
-          data.headingOfLine,
-          data.headingLines
-        );
-        state.windowStart = win.start;
-        const shown = data.lines.slice(win.start, win.end);
-        const row = entry.line - win.start;
-        if (row >= 0 && row < shown.length) shown[row] = withCursor(shown[row]);
+        state.rowCursor = Math.max(0, Math.min(rowEntries.length - 1, state.rowCursor));
+        state.actionCursor = Math.max(0, Math.min(actionEntries.length - 1, state.actionCursor));
+
+        let focusLine = null;
+        if (state.region === 'rows' && rowEntries[state.rowCursor]) focusLine = rowEntries[state.rowCursor].line;
+        else if (state.region === 'actions' && actionEntries[state.actionCursor]) {
+          focusLine = actionEntries[state.actionCursor].line;
+        }
+        const maxStart = Math.max(0, data.lines.length - room);
+        if (focusLine !== null) {
+          if (focusLine < state.scroll) state.scroll = focusLine;
+          else if (focusLine >= state.scroll + room) state.scroll = focusLine - room + 1;
+        }
+        state.scroll = Math.max(0, Math.min(state.scroll, maxStart));
+        const shown = data.lines.slice(state.scroll, state.scroll + room);
+        if (focusLine !== null) {
+          const row = focusLine - state.scroll;
+          if (row >= 0 && row < shown.length) shown[row] = withCursor(shown[row]);
+        }
         return shown;
       },
       async onKey(text, key, entry) {
@@ -154,27 +188,73 @@ async function showReportPage(config, model) {
           await pages.showHelp({});
           return;
         }
-        const data = reportLayout(current, view.screenColumns());
-        const count = data.entries.length;
-        if (!count) return;
-        if (key.name === 'up') {
-          state.cursor = list.moveCursor(state.cursor, -1, count, 'form');
-        } else if (key.name === 'down') {
-          state.cursor = list.moveCursor(state.cursor, 1, count, 'form');
-        } else if (key.name === 'home') {
-          state.cursor = list.homeCursor();
-        } else if (key.name === 'end') {
-          state.cursor = list.endCursor(count);
-        } else if (key.name === 'pageup') {
-          state.cursor = list.pageCursor(state.cursor, -1, count, 10, 'form');
-        } else if (key.name === 'pagedown') {
-          state.cursor = list.pageCursor(state.cursor, 1, count, 10, 'form');
-        } else if (key.name === 'return') {
-          entry.settle(data.entries[state.cursor]);
-        } else {
+        if (key.name === 'tab') {
+          const order = regions();
+          const index = order.indexOf(state.region);
+          state.region = order[(index + 1) % order.length] || 'body';
           return;
         }
-        entry.state = state;
+
+        const geometry = screen.bodyGeometry();
+        const room = Math.max(1, geometry.bodyRows);
+        const data = dataNow();
+        const rowEntries = rowsOf(data);
+        const actionEntries = actionsOf(data);
+        state.rowCount = rowEntries.length;
+        state.actionCount = actionEntries.length;
+        const maxStart = Math.max(0, data.lines.length - room);
+
+        if (state.region === 'body') {
+          if (key.name === 'up') state.scroll -= 1;
+          else if (key.name === 'down') state.scroll += 1;
+          else if (key.name === 'pageup') state.scroll -= room;
+          else if (key.name === 'pagedown') state.scroll += room;
+          else if (key.name === 'home') state.scroll = 0;
+          else if (key.name === 'end') state.scroll = maxStart;
+          else return;
+          state.scroll = Math.max(0, Math.min(state.scroll, maxStart));
+          return;
+        }
+
+        if (state.region === 'rows') {
+          if (!rowEntries.length) {
+            state.region = 'body';
+            return;
+          }
+          if (key.name === 'up') state.rowCursor = list.moveCursor(state.rowCursor, -1, rowEntries.length, 'form');
+          else if (key.name === 'down') {
+            state.rowCursor = list.moveCursor(state.rowCursor, 1, rowEntries.length, 'form');
+          } else if (key.name === 'home') state.rowCursor = 0;
+          else if (key.name === 'end') state.rowCursor = rowEntries.length - 1;
+          else if (key.name === 'pageup') {
+            state.rowCursor = list.pageCursor(state.rowCursor, -1, rowEntries.length, 10, 'form');
+          } else if (key.name === 'pagedown') {
+            state.rowCursor = list.pageCursor(state.rowCursor, 1, rowEntries.length, 10, 'form');
+          } else if (key.name === 'return') {
+            entry.settle(rowEntries[state.rowCursor]);
+          } else return;
+          return;
+        }
+
+        if (state.region === 'actions') {
+          if (!actionEntries.length) {
+            state.region = 'body';
+            return;
+          }
+          if (key.name === 'up') {
+            state.actionCursor = list.moveCursor(state.actionCursor, -1, actionEntries.length, 'form');
+          } else if (key.name === 'down') {
+            state.actionCursor = list.moveCursor(state.actionCursor, 1, actionEntries.length, 'form');
+          } else if (key.name === 'home') state.actionCursor = 0;
+          else if (key.name === 'end') state.actionCursor = actionEntries.length - 1;
+          else if (key.name === 'pageup') {
+            state.actionCursor = list.pageCursor(state.actionCursor, -1, actionEntries.length, 10, 'form');
+          } else if (key.name === 'pagedown') {
+            state.actionCursor = list.pageCursor(state.actionCursor, 1, actionEntries.length, 10, 'form');
+          } else if (key.name === 'return') {
+            entry.settle(actionEntries[state.actionCursor]);
+          } else return;
+        }
       },
     });
     if (!answer) return null;

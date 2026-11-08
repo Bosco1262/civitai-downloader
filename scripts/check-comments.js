@@ -36,10 +36,11 @@ const ROOT = path.resolve(__dirname, '..');
 const SCAN_DIRS = ['src', 'tests', 'scripts'];
 const SCAN_FILES = ['cli.js', 'ui.js', 'web.js'];
 
-// Translation tables are data files whose banner comments are structural; skip them.
-// 文案表是数据文件，里面的分节注释属于结构标记，跳过检查。
-const EXEMPT = new Set(['src/i18n/zh-CN.js', 'src/i18n/en.js']);
 const SKIP_DIRS = new Set(['node_modules', '.git', '.data', 'downloads']);
+
+// Non-JS files that still carry human comments and follow the same rules, with `#` as the marker.
+// 同样写人类注释、遵守同一套规则的非 JS 文件，注释标记是 `#`。
+const HASH_FILES = ['.gitignore'];
 
 const CJK = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/;
 const ASCII_WORD = /[A-Za-z]{2,}/;
@@ -72,16 +73,16 @@ function walk(dir, out) {
   }
 }
 
-// Build the file list (relative paths, exemption applied).
-// 生成待检查文件清单（相对路径，已应用豁免）。
+// Build the file list (relative paths).
+// 生成待检查文件清单（相对路径）。
 function collectFiles() {
   const files = [];
   const seen = new Set();
-  const add = (abs) => {
+  const add = (abs, style = 'js') => {
     const rel = path.relative(ROOT, abs).replace(/\\/g, '/');
-    if (seen.has(rel) || EXEMPT.has(rel)) return;
+    if (seen.has(rel)) return;
     seen.add(rel);
-    files.push({ abs, rel });
+    files.push({ abs, rel, style });
   };
   for (const dir of SCAN_DIRS) {
     const found = [];
@@ -89,6 +90,10 @@ function collectFiles() {
     for (const abs of found) add(abs);
   }
   for (const name of SCAN_FILES) add(path.join(ROOT, name));
+  for (const rel of HASH_FILES) {
+    const abs = path.join(ROOT, rel);
+    if (fs.existsSync(abs)) add(abs, 'hash');
+  }
   return files.sort((a, b) => a.rel.localeCompare(b.rel));
 }
 
@@ -133,7 +138,9 @@ function classifyLines(lines) {
 function stripBlock(lines, style) {
   return lines.map((raw) => {
     let text = raw;
-    if (style === 'line') {
+    if (style === 'hash') {
+      text = text.replace(/^\s*#/, '');
+    } else if (style === 'line') {
       text = text.replace(/^\s*\/\/+/, '');
     } else {
       text = text
@@ -244,10 +251,29 @@ function checkFile(file) {
   const source = fs.readFileSync(file.abs, 'utf8');
   const lines = source.split(/\r?\n/);
   const problems = [];
+  const hashStyle = file.style === 'hash';
   let i = 0;
   while (i < lines.length) {
     const line = lines[i];
     const trimmed = line.trim();
+
+    // Standalone # comment block (config files such as .gitignore)
+    // 独立 # 注释块（.gitignore 这类配置文件）
+    if (hashStyle) {
+      if (!trimmed.startsWith('#')) {
+        i++;
+        continue;
+      }
+      const start = i;
+      const raw = [];
+      while (i < lines.length && lines[i].trim().startsWith('#')) {
+        raw.push(lines[i]);
+        i++;
+      }
+      const stripped = stripBlock(raw, 'hash').map((text, k) => ({ text, line: start + 1 + k }));
+      problems.push(...checkBlock({ startLine: start + 1, lines: stripped }));
+      continue;
+    }
 
     // Block comment /* ... */
     // 块注释 /* ... */

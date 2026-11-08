@@ -1,6 +1,16 @@
 'use strict';
 
 /**
+ * Chinese (default language) message catalog.
+ *
+ * Key naming: `<module>.<scenario>[.<detail>]`, e.g. `cli.unknownCommand`, `download.usage`.
+ * Placeholders use the `{name}` form and are interpolated by src/i18n.js.
+ *
+ * Note: the default language must keep existing output identical to the previous release
+ * (tests assert some strings); multi-line usage() texts live in one key each, keeping their
+ * original indentation and line breaks.
+ *
+ *
  * 中文（默认语言）文案表。
  *
  * 键名规范：`<模块>.<场景>[.<细节>]`，例如 `cli.unknownCommand`、`download.usage`。
@@ -11,6 +21,7 @@
  */
 
 module.exports = {
+  // Common
   // 通用
   'common.yes': '是',
   'common.no': '否',
@@ -28,6 +39,7 @@ module.exports = {
 
   // ---------------------------------------------------------------------------
   // cli.js
+  // cli.js：命令行入口
   // ---------------------------------------------------------------------------
   'cli.usage': `civitai-downloader
 
@@ -65,6 +77,7 @@ npm 用法（传参需要 -- 分隔）:
 
   // ---------------------------------------------------------------------------
   // login
+  // login：登录与会话
   // ---------------------------------------------------------------------------
   'loginFlow.openingPage': '打开登录页: {url}',
   'loginFlow.gotoFailed': '跳转登录页失败（可手动在浏览器中导航）: {message}',
@@ -89,6 +102,7 @@ npm 用法（传参需要 -- 分隔）:
 
   // ---------------------------------------------------------------------------
   // list
+  // list：列出收藏集
   // ---------------------------------------------------------------------------
   'list.usage': `用法: node cli.js list <收藏集ID|收藏集URL> [选项]
 
@@ -115,6 +129,7 @@ npm 用法（传参需要 -- 分隔）:
 
   // ---------------------------------------------------------------------------
   // download
+  // download：下载流程
   // ---------------------------------------------------------------------------
   'download.usage': `用法: node cli.js download <收藏集ID|收藏集URL|模型URL> [选项]
 
@@ -141,6 +156,9 @@ npm 用法（传参需要 -- 分隔）:
   --model <URL|ID>    下载单个模型（也可直接作为位置参数传入模型 URL）
   --models <ref,ref>  批量下载单个模型（逗号分隔：模型 URL / model:<ID> / version:<ID>）
   --from-file <文件>  从文件读取要下载的目标（一行一个，空行与 # 注释会被忽略）
+  --include-paid      尝试下载付费/受限版本（需要当前账号已有下载权限）
+  --skip-paid         跳过付费/受限版本（收藏集批量默认）
+  --paid-only         只处理付费/受限版本
 
 示例:
   node cli.js download 161131
@@ -156,6 +174,7 @@ npm 用法（传参需要 -- 分隔）:
   'download.modelNoVersions': '模型 {modelId} 没有可用版本',
   'download.modelVersionNotFound': '模型 {modelId} 中未找到版本 {versionId}',
   'download.singleModel': '单模型下载: {name}（版本 {version}）',
+  'download.paidAccessNotice': '{name} 的版本 {version} 是付费/受限版本；将使用当前登录态尝试，不会自动购买或消耗 Buzz',
   'download.unrecognizedArg': '无法识别的参数: {value}（应为收藏集 ID/URL 或模型 URL）',
   'download.badCollectionItem': '--collections 中的项无法识别: {value}',
   'download.badModelFlag': '--model 无法识别: {value}',
@@ -169,6 +188,7 @@ npm 用法（传参需要 -- 分隔）:
 
   // ---------------------------------------------------------------------------
   // check
+  // check：检查更新
   // ---------------------------------------------------------------------------
   'check.usage': `用法: node cli.js check <收藏集ID|收藏集URL|model:<模型ID>|模型URL> [更多目标…] [选项]
 
@@ -178,6 +198,9 @@ npm 用法（传参需要 -- 分隔）:
 选项:
   --verify-files     深度校验：拉取线上文件哈希并校验本地 SHA256（能发现同版本重传/改名/增删）
   --download         检查后只下载有变化的项（版本更新 / 文件变化 / 本地缺失）
+  --include-paid     下载变化项时尝试付费/受限版本
+  --skip-paid        下载变化项时跳过付费/受限版本（默认）
+  --paid-only        只下载付费/受限的变化项
   --all              检查所有有成员快照的收藏集
   --models           检查模型库里的全部模型
   --json             以 JSON 输出检查报告
@@ -211,6 +234,7 @@ npm 用法（传参需要 -- 分隔）:
 
   // ---------------------------------------------------------------------------
   // verify
+  // verify：校验本地文件
   // ---------------------------------------------------------------------------
   'verify.usage': `用法: node cli.js verify [收藏集ID…|model:<模型ID>…] [选项]
 
@@ -244,6 +268,7 @@ npm 用法（传参需要 -- 分隔）:
 
   // ---------------------------------------------------------------------------
   // doctor
+  // doctor：环境体检
   // ---------------------------------------------------------------------------
   'doctor.usage': `用法: node cli.js doctor [收藏集ID] [--json] [--deep]
 
@@ -325,6 +350,7 @@ npm 用法（传参需要 -- 分隔）:
 
   // ---------------------------------------------------------------------------
   // pin
+  // pin：固定版本
   // ---------------------------------------------------------------------------
   'pin.usage': `用法:
   node cli.js pin <模型ID> [版本ID]        固定版本（省略版本ID = 固定当前已下载的最新版本）
@@ -346,6 +372,7 @@ npm 用法（传参需要 -- 分隔）:
   'pin.pinned': '已固定: {name} → {version}',
 
   // ---------------------------------------------------------------------------
+  // models (model library: list / export / forget / pin / relayout)
   // models（模型库：列表 / 导出 / 遗忘 / 固定 / 重排目录）
   // ---------------------------------------------------------------------------
   'models.usage': `用法: node cli.js models [选项]
@@ -415,6 +442,7 @@ npm 用法（传参需要 -- 分隔）:
   'models.relayoutMissing': '有 {count} 个记录中的文件已不存在（已跳过）',
 
   // ---------------------------------------------------------------------------
+  // runtime (error presentation)
   // runtime（错误呈现）
   // ---------------------------------------------------------------------------
   'runtime.configWarning': '配置提示: {message}',
@@ -426,6 +454,7 @@ npm 用法（传参需要 -- 分隔）:
   'runtime.hintNetwork': '提示：检查网络/代理设置（config.json 的 proxy）',
 
   // ---------------------------------------------------------------------------
+  // util.js (errors and formatting reused by other modules)
   // util.js（错误与格式化，被其它模块复用）
   // ---------------------------------------------------------------------------
   'util.verifyCancelled': '校验已取消',
@@ -434,6 +463,7 @@ npm 用法（传参需要 -- 分隔）:
 
   // ---------------------------------------------------------------------------
   // notify.js
+  // notify.js：系统通知
   // ---------------------------------------------------------------------------
   'notify.finished': '任务结束',
   'notify.cancelledSummary': '已取消：完成 {done}，跳过 {skipped}，失败 {failed}',
@@ -443,6 +473,7 @@ npm 用法（传参需要 -- 分隔）:
 
   // ---------------------------------------------------------------------------
   // config.js
+  // config.js：配置读写
   // ---------------------------------------------------------------------------
   'config.intRange': 'config.json 中 {key} 必须是 {range} 之间的整数（当前：{value}）',
   'config.hintSuffix': '（{hint}）',
@@ -468,6 +499,7 @@ npm 用法（传参需要 -- 分隔）:
 
   // ---------------------------------------------------------------------------
   // browser.js
+  // browser.js：浏览器与会话
   // ---------------------------------------------------------------------------
   'browser.chromePathMissing': 'config.json 中 chromePath 指向的文件不存在：{path}',
   'browser.notFound':
@@ -497,6 +529,7 @@ npm 用法（传参需要 -- 分隔）:
 
   // ---------------------------------------------------------------------------
   // collection.js
+  // collection.js：收藏集枚举
   // ---------------------------------------------------------------------------
   'collection.challengeProbe': '站点要求人机验证，请在浏览器窗口完成后再试',
   'collection.unauthorized': '未登录或登录已过期',
@@ -515,6 +548,7 @@ npm 用法（传参需要 -- 分隔）:
 
   // ---------------------------------------------------------------------------
   // api.js
+  // api.js：站点接口
   // ---------------------------------------------------------------------------
   'api.requestFailed': '请求失败（{reason}）：{url}',
   'api.timeout': '超时',
@@ -532,6 +566,7 @@ npm 用法（传参需要 -- 分隔）:
 
   // ---------------------------------------------------------------------------
   // storage.js
+  // storage.js：模型库与快照
   // ---------------------------------------------------------------------------
   'storage.stateCorrupt':
     '文件无法解析（{reason}）：{file}\n已备份为 {backup}。' +
@@ -550,6 +585,7 @@ npm 用法（传参需要 -- 分隔）:
 
   // ---------------------------------------------------------------------------
   // downloader.js
+  // downloader.js：并发下载
   // ---------------------------------------------------------------------------
   'downloader.curlExitCode': '{bin} 退出码 {code}',
   'downloader.curlLastError': '（最后一次尝试：{error}）',
@@ -562,6 +598,9 @@ npm 用法（传参需要 -- 分隔）:
   'downloader.partVerifyFailed': '  已完整的分片校验不通过，删除后重新下载: {file}',
   'downloader.remoteChanged': '  远端文件已变化（ETag 不同），丢弃旧分片重新下载',
   'downloader.authFailed': '认证失败（HTTP {status}），登录可能已过期，请重新运行: npm run login',
+  'downloader.paymentRequired': '下载受限（HTTP {status}）：需要购买或当前账号没有下载权限',
+  'downloader.accessFailed': '没有下载权限（HTTP {status}）：请确认登录账号或站点访问权限',
+  'downloader.accessGated': '下载接口返回登录/购买页面，而不是模型文件；请在站点确认访问权限',
   'downloader.notFound404': 'HTTP 404: 下载链接无效或文件已下架',
   'downloader.rangeRejected': '  服务端拒绝续传（HTTP 416），丢弃分片重新下载',
   'downloader.rateLimited': '  触发限流（HTTP 429），等待 30 秒后重试',
@@ -576,6 +615,7 @@ npm 用法（传参需要 -- 分隔）:
 
   // ---------------------------------------------------------------------------
   // job.js
+  // job.js：任务编排
   // ---------------------------------------------------------------------------
   'job.offlineNeedsPlan': '离线模式下必须提供下载计划（--resume 或 verify --repair），无法枚举收藏集',
   'job.start': '=== 开始 === 收藏集 {collectionId} | 输出目录: {outDir}',
@@ -602,8 +642,9 @@ npm 用法（传参需要 -- 分隔）:
   'job.planLine': '  [计划] {name} / {file} ({size})',
   'job.dryRunDone': '--dry-run 结束，未下载任何文件',
   'job.nothingToDownload': '没有需要下载的内容（全部已完成；如需强制重下请加 --force）',
-  'job.summary': '{head} 完成 {done}，跳过 {skipped}，失败 {failed}{metaFailed}（用时 {elapsed}）',
+  'job.summary': '{head} 完成 {done}，跳过 {skipped}，失败 {failed}{accessRequired}{metaFailed}（用时 {elapsed}）',
   'job.summaryMetaSuffix': '，元数据失败 {count}',
+  'job.summaryAccessSuffix': '，需权限 {count}',
   'job.headDone': '=== 结束 ===',
   'job.headCancelled': '=== 已取消 ===',
   'job.insufficientSpace': '磁盘空间不足：计划下载 {total}，但 {dir} 所在磁盘仅剩 {free}。',
@@ -625,6 +666,10 @@ npm 用法（传参需要 -- 分隔）:
   'job.cookiesRefreshed': '已重新导出 {count} 条 Cookie',
   'job.cancelNotice': '已取消当前下载（已下载的 .part 文件保留，可续传）',
   'job.fileFailed': '  失败: {file} -> {message}',
+  'job.fileAccessRequired': '  需权限: {file} -> {message}',
+  'job.paidSkipped': '跳过付费/受限项 {name}（使用 --include-paid 可尝试）',
+  'job.paidPlanLine': '  付费/受限: {name}（需要已有下载权限；不会自动购买或消耗 Buzz）',
+  'job.itemAccessRequired': '跳过 {name}：需要购买或已有下载权限',
   'job.fileVerified': '  已存在且校验通过: {file}',
   'job.fileDeduped': '  已通过内容去重就位: {file}',
   'job.fileDownloaded': '  下载完成并校验通过: {file}',
@@ -635,6 +680,7 @@ npm 用法（传参需要 -- 分隔）:
 
   // ---------------------------------------------------------------------------
   // updater.js
+  // updater.js：检查更新与重排
   // ---------------------------------------------------------------------------
   'updater.missingFile': '缺失 {file}',
   'updater.sizeMismatch': '大小不符 {file}',
@@ -692,11 +738,17 @@ npm 用法（传参需要 -- 分隔）:
   'updater.historyLine': '  · {name}：{versions}',
 
   // ---------------------------------------------------------------------------
+  // TUI (terminal UI, src/tui/**)
+  // Cursor marks (▸), progress-bar glyphs (█░), checkboxes ([×]/[ ]), tag brackets
+  // (e.g. [ OK ]) and separators (· / ｜ / spaces) stay in code; only user-readable
+  // text lives here.
+  //
   // TUI（终端交互界面，src/tui/**）
   // 注意：光标符号（▸）、进度条字符（█░）、勾选框（[×]/[ ]）、标签括号（[ OK ] 等）
   //       以及缩进/分隔符（· / ｜ / 空格）保留在代码里，文案表只放用户可读文字。
   // ---------------------------------------------------------------------------
 
+  // app.js: fixed header / info panel / main menu
   // app.js：固定页眉 / 信息面板 / 主菜单
   'tui.app.bannerTitle': 'civitai-downloader',
   'tui.app.loggedIn': '已导出（如提示过期请重新登录）',
@@ -709,10 +761,12 @@ npm 用法（传参需要 -- 分隔）:
   'tui.app.menuTitle': '主菜单',
   'tui.app.menuDownload': '下载',
   'tui.app.menuDownloadDesc': '下载模型或收藏集：粘贴链接 / ID，勾选条目后开始',
+  'tui.app.menuTasks': '任务',
+  'tui.app.menuTasksDesc': '查看活动任务、失败原因与历史结果（Ctrl+T）',
   'tui.app.menuModels': '本地模型管理',
   'tui.app.menuModelsDesc': '按模型管理本地文件：更新、校验、固定版本、删除记录',
   'tui.app.menuCollections': '本地收藏集管理',
-  'tui.app.menuCollectionsDesc': '按收藏集管理：检查更新、重新下载、重置成员记录',
+  'tui.app.menuCollectionsDesc': '按收藏集管理：检查更新、重新下载、标记成员需重下',
   'tui.app.menuSettings': '设置',
   'tui.app.menuSettingsDesc': '登录、下载目录、并发、代理等全部可修改项',
   'tui.app.menuCheck': '检查更新',
@@ -720,7 +774,8 @@ npm 用法（传参需要 -- 分隔）:
   'tui.app.menuVerify': '校验 / 修复本地文件',
   'tui.app.menuVerifyDesc': '按模型库记录校验文件完整性，可只重下损坏的文件',
   'tui.app.menuExit': '退出',
-  'tui.app.busyHint': '正在执行上一步操作…（Ctrl+M 可查看任务视图）',
+  'tui.app.busyHint': '正在执行上一步操作…（Ctrl+T 可查看任务视图）',
+  'tui.app.exitWithTasksConfirm': '仍有 {count} 个任务在运行。取消它们并退出程序？',
   'tui.app.downloadTitle': '要下载什么？',
   'tui.app.downloadModel': '下载模型',
   'tui.app.downloadModelDesc': '粘贴模型链接 / model:<ID> / version:<ID>，可多行或逗号分隔',
@@ -735,11 +790,14 @@ npm 用法（传参需要 -- 分隔）:
   'tui.app.byeAbort': '已退出。',
   'tui.app.goodbye': '再见。',
 
+  // screen.js: dashboard / task view / log pane
   // screen.js：仪表盘 / 任务视图 / 日志区
   'tui.screen.infoTitle': '仪表盘',
   'tui.screen.infoSettings': '当前配置',
   'tui.screen.infoTasks': '任务总览',
   'tui.screen.infoIdle': '空闲 | 没有进行中的任务',
+  'tui.screen.infoCompactIdle': '空闲',
+  'tui.screen.infoActive': '任务 {count} 个',
   'tui.screen.infoProgress': '总进度',
   'tui.screen.infoDoneCount': '完成 {done}/{total}',
   'tui.screen.infoRunningCount': '运行 {count}',
@@ -755,6 +813,7 @@ npm 用法（传参需要 -- 分隔）:
   'tui.screen.taskMore': '… 另有 {count} 个任务',
   'tui.screen.taskElapsed': '已用 {elapsed}',
   'tui.screen.taskCounts': '完成 {done} | 跳过 {skipped} | 失败 {failed} / 共 {total} 项',
+  'tui.screen.taskAccess': '需权限 {count}',
   'tui.screen.statusRunning': '进行中',
   'tui.screen.statusDone': '已完成',
   'tui.screen.statusFailed': '失败',
@@ -775,6 +834,7 @@ npm 用法（传参需要 -- 分隔）:
   'tui.screen.taskNotRunning': '该任务已经结束，无法取消',
   'tui.screen.taskQueueCancelled': '已取消排队：{name}',
   'tui.screen.taskCancelRequested': '已请求取消：{name}',
+  'tui.screen.taskCancelConfirm': '取消任务“{name}”？已下载的部分会保留，之后仍可续传。',
   'tui.screen.taskSkipRequested': '已请求跳过当前模型：{name}',
   'tui.screen.taskSkipNotRunning': '只有运行中的下载可以跳过',
   'tui.screen.taskNoSkip': '这个任务没有可跳过的下载',
@@ -786,8 +846,10 @@ npm 用法（传参需要 -- 分隔）:
   'tui.screen.promptFailed': '界面渲染失败: {error}',
   'tui.screen.suspendUnsupported': '当前平台不支持挂起（Ctrl+Z 已忽略）',
 
+  // Footer: exactly one line per page, listing only the keys that work there
   // 页脚：每个页面只有一行，只列这一页能用的键
-  'tui.hint.main': '↑↓ 选择 | Enter 进入 | ? 帮助',
+  'tui.hint.main': '↑↓ 选择 | Enter 进入 | Ctrl+T 任务 | ? 帮助',
+  'tui.hint.mainCompact': '↑↓ 选择 | Enter | ? 帮助',
   'tui.hint.menu': '↑↓ 选择 | Enter 确认 | Esc 返回 | ? 帮助',
   'tui.hint.confirm': '←→ 选择 | y/n 快捷 | Enter 确认 | Esc 返回 | ? 帮助',
   'tui.hint.text': 'Enter 提交 | Esc 放弃 | ? 帮助',
@@ -796,15 +858,18 @@ npm 用法（传参需要 -- 分隔）:
   'tui.hint.textPickReset':
     'Enter 提交 | Esc 放弃 | Ctrl+O 选择目录 | Ctrl+R 恢复默认 | ? 帮助',
   'tui.hint.message': 'Esc 返回 | ? 帮助',
-  'tui.hint.settings': '↑↓ 选择 | Enter 修改 / 执行 | Esc 返回 | ? 帮助',
+  'tui.hint.settings': '↑↓ 选择 | Enter 修改并保存 / 执行 | Esc 返回 | ? 帮助',
+  'tui.hint.settingsCompact': 'Enter 修改保存 | Esc 返回 | ? 帮助',
   'tui.hint.picker': '↑↓ 选择 | 空格 勾选 | / 搜索 | t/b/s 筛选 | Enter 确认 | Esc 返回 | ? 帮助',
   'tui.hint.pickerSearch': '直接输入 | Enter 结束输入 | Esc 清空关键字 | Backspace 删除',
   'tui.hint.pickerHelp': '任意键返回列表 | Esc 取消选择',
   'tui.hint.downloadPlan': '↑↓ 选择 | 空格 勾选 | a/i 全/反选 | n 未下载 | v 版本 | o 选项 | / 搜索 | Enter 确认 | ? 帮助',
   'tui.hint.downloadConfirm': '↑↓ 选择 | Enter 修改 / 开始 | Esc 返回计划 | ? 帮助',
   'tui.hint.downloadVersion': '↑↓ 选择 | 空格 勾选（可多选） | Enter 使用所选版本 | p 固定光标版本 | Esc 返回 | ? 帮助',
-  'tui.hint.receipt': 'Enter 返回下载 | Esc 返回主菜单 | ? 帮助',
-  'tui.hint.taskView': '↑↓ 选择 | Esc 返回 | ? 帮助',
+  'tui.hint.receipt': '↑↓ 选择 | Enter 执行 | Esc 返回下载 | ? 帮助',
+  'tui.hint.receiptCompact': '↑↓ 选择 | Enter 执行 | Esc 返回 | ?',
+  'tui.hint.taskView': '↑↓ 选择 | PgUp/PgDn 翻页 | Esc 返回 | ? 帮助',
+  'tui.hint.taskViewCompact': '↑↓ | c 取消 | Esc | ?',
   'tui.hint.taskRunning': '↑↓ 选择 | c 取消 | s 跳过当前 | x 清理 | Esc 返回 | ? 帮助',
   'tui.hint.taskRunningNoSkip': '↑↓ 选择 | c 取消 | x 清理 | Esc 返回 | ? 帮助',
   'tui.hint.taskQueued': '↑↓ 选择 | c 取消排队 | x 清理 | Esc 返回 | ? 帮助',
@@ -813,14 +878,22 @@ npm 用法（传参需要 -- 分隔）:
   'tui.hint.taskFinishedNoDir': '↑↓ 选择 | r 重试失败 | x 清理 | Esc 返回 | ? 帮助',
   'tui.hint.taskFinishedOnly': '↑↓ 选择 | x 清理 | Esc 返回 | ? 帮助',
   'tui.hint.logView': '↑↓ / PgUp / PgDn 滚动 | Esc 返回 | ? 帮助',
+  'tui.hint.logViewCompact': '↑↓ 滚动 | Esc | ?',
   'tui.hint.modelVersion': '↑↓ 选择 | Enter 下载这个版本 | Esc 返回 | ? 帮助',
   'tui.hint.compact': '↑↓ 选择 | Enter | Esc | ?',
-  'tui.hint.workspace': 'Tab 切换区域 | Enter 执行 | Esc 返回 | ? 帮助',
+  'tui.hint.workspaceInput': '输入后 Enter 添加 | Tab 切换区域 | Esc 返回 | ? 帮助',
+  'tui.hint.workspace': '↑↓ 选择 | 空格 勾选 | / 搜索 | t/b/d/p 筛选 | s 排序 | a 全选 | n 免费未下载 | c 清空 | x 移除 | Tab | ? 帮助',
+  'tui.hint.workspaceSearch': '直接输入筛选 | Enter 完成 | Esc 清空 | Backspace 删除',
+  'tui.hint.workspaceNext': 'Enter 确认选择 | Tab 返回列表 | Esc 返回 | ? 帮助',
+  'tui.hint.workspaceCompactInput': 'Enter 添加 | Tab | Esc | ?',
+  'tui.hint.workspaceCompactSelected': '空格 选 | Enter 版本 | p 付费 | / | Tab | Esc | ?',
+  'tui.hint.workspaceCompactNext': 'Enter 确认 | Tab | Esc | ?',
+  'tui.hint.workspaceCompactSearch': 'Enter 完成搜索 | Esc 清空 | 退格 | ?',
   'tui.workspace.stepSelect': '选择',
   'tui.workspace.stepConfirm': '确认',
   'tui.workspace.stepReceipt': '回执',
   'tui.workspace.search': '输入',
-  'tui.workspace.modelInputLabel': '模型 ID 或模型页 URL（支持 model: / version:）',
+  'tui.workspace.modelInputLabel': '模型 ID、模型页 URL 或 version:ID（逗号分隔可批量）',
   'tui.workspace.modelEmpty': '输入模型 ID 或完整链接，按 Enter 添加',
   'tui.workspace.modelTitle': '模型标题',
   'tui.workspace.collectionTitle': '收藏集标题',
@@ -834,27 +907,65 @@ npm 用法（传参需要 -- 分隔）:
   'tui.models.versionsDeleted': '已删除 {count} 个版本',
   'tui.workspace.collectionEmptyPrompt': '输入收藏集 ID 或收藏集页 URL，按 Enter 枚举',
   'tui.workspace.busy': '正在处理…',
+  'tui.workspace.resolving': '正在解析模型引用…',
+  'tui.workspace.loadingVersions': '正在加载版本信息…',
+  'tui.workspace.position': '第 {index}/{total} 项',
   'tui.workspace.selected': '已选 {count}/{total} 项',
+  'tui.workspace.selectionSummary': '已选 {selected}/{visible} 项 | 共 {total} 项 | {size}{filters}',
+  'tui.workspace.filterSearch': '搜索“{value}”',
+  'tui.workspace.filterDownloaded': '仅已下载',
+  'tui.workspace.filterNew': '仅未下载',
+  'tui.workspace.sortName': '按名称',
+  'tui.workspace.sortSize': '按大小',
+  'tui.workspace.noMatches': '没有符合当前筛选条件的项目',
+  'tui.workspace.metaFailed': '有 {count} 项元数据获取失败，未进入计划：{names}',
+  'tui.access.paid': '付费',
+  'tui.access.paidFree': '付费/免费',
+  'tui.access.paidUntil': '付费至 {date}',
+  'tui.access.paidExpired': '付费期已结束',
+  'tui.access.early': '限时访问',
+  'tui.access.earlyFree': '限时访问/免费',
+  'tui.access.earlyUntil': '限时访问至 {date}',
+  'tui.access.unavailable': '不可下载',
+  'tui.access.warning': '有 {count} 项包含付费版本，需要当前账号已有下载权限',
+  'tui.workspace.accessFree': '仅免费',
+  'tui.workspace.accessPaid': '仅含付费',
+  'tui.workspace.accessStats': '付费 {selected}/{total}',
+  'tui.workspace.versionAccess': '{name}（{access}）',
   'tui.workspace.empty': '还没有可下载的模型',
   'tui.workspace.next': '确认选择',
   'tui.workspace.emptyInput': '请输入模型 ID 或完整链接',
   'tui.workspace.invalidInput': '格式错误：只接受模型 ID 或完整链接',
+  'tui.workspace.invalidInputBatch': '格式错误：{refs}',
   'tui.workspace.noResult': '没有解析到可下载的版本',
+  'tui.workspace.noSelection': '尚未选择任何项目；请按空格勾选后再继续',
   'tui.workspace.rowVersion': '{name}（{version}）',
-  'tui.hint.workspaceConfirm': 'Tab 切换区域 | Enter 执行 | Esc 返回选择 | ? 帮助',
+  'tui.hint.workspaceConfirmRows': '↑↓ 滚动列表 | Tab 到操作区 | Esc 返回选择 | ? 帮助',
+  'tui.hint.workspaceConfirmActions': '↑↓ 选择操作 | Enter 执行 | Tab 回列表 | Esc 返回 | ? 帮助',
+  'tui.hint.workspaceConfirmCompact': 'Tab 区域 | ↑↓ 选择 | Enter | Esc | ?',
   'tui.workspace.confirmNext': '开始下载',
   'tui.workspace.confirmBack': '返回选择',
+  'tui.workspace.confirmWork': '本次任务',
+  'tui.workspace.confirmWorkValue': '新下载 {downloads} 项 | 校验已有 {verify} 项 | 合计 {size}',
+  'tui.workspace.confirmFiles': '文件类型',
+  'tui.workspace.confirmDisk': '磁盘剩余',
+  'tui.workspace.confirmAccess': '访问权限',
+  'tui.workspace.confirmPaidHint': '{count} 项需已有下载权限；不会购买或消耗 Buzz',
+  'tui.workspace.deleteTitle': '将删除',
   'tui.workspace.deleteSummary': '将删除 {count} 个已下载版本（{size}）',
-  'tui.workspace.deleteDone': '已删除 {count} 个版本',
+  'tui.workspace.deleteFinalConfirm': '最后确认：永久删除 {count} 个已下载版本，共 {size}？',
 
   // view.js
+  // view.js：通用输出
   'tui.view.helpNoWait': '（当前终端无法读取按键，帮助页不会等待按键；直接Enter继续）',
+  // view.js: decision echo left behind by a full-screen screen
   // view.js：全屏界面退出后留下的决定回显
   'tui.view.decisionCancelled': '已取消选择',
   'tui.view.decisionSelected': '已选择：{name}',
   'tui.view.decisionPicked': '已勾选 {count} 项',
   'tui.view.nothingToCancel': '当前没有可取消的操作',
 
+  // select.js: sort labels / key hints / status text
   // select.js：排序标签 / 按键提示 / 状态文案
   'tui.select.sortDefault': '默认排序',
   'tui.select.sortName': '按名称',
@@ -863,6 +974,7 @@ npm 用法（传参需要 -- 分隔）:
   'tui.select.statusDownloaded': '已下载',
   'tui.select.statusUpdated': '版本有更新',
   'tui.select.statusPinned': '已固定版本',
+  // select.js: header / columns / footer
   // select.js：表头 / 列头 / 页脚
   'tui.select.filterSearchQuoted': '搜索：\u201c{value}\u201d',
   'tui.select.filterSearchOff': '搜索：未启用',
@@ -882,6 +994,7 @@ npm 用法（传参需要 -- 分隔）:
   'tui.select.footer': '第 {page}/{pageCount} 页 | 本页 {count} 项 | 已选 {selected}/{total}',
   'tui.select.noMatches': '没有匹配的条目（用 / t b 调整过滤）',
   'tui.select.typing': '输入中…',
+  // select.js: action feedback
   // select.js：操作反馈
   'tui.select.toggledOn': '已勾选',
   'tui.select.toggledOff': '已取消勾选',
@@ -899,6 +1012,7 @@ npm 用法（传参需要 -- 分隔）:
   'tui.select.selectorUnavailable': '交互式选择器不可用（{error}），改用简易选择',
   'tui.select.selectorRenderFailed': '交互式选择器渲染失败（{error}），改用简易选择',
 
+  // select.js: help overlay / single-select mode
   // select.js：帮助浮层 / 单选模式
   'tui.select.helpOpen': '已打开帮助，按任意键返回',
   'tui.select.helpPage': '帮助：↑/↓ 浏览列表时同样可用',
@@ -916,6 +1030,7 @@ npm 用法（传参需要 -- 分隔）:
   'tui.select.rawUnavailable': '终端不支持原始键盘输入（改用简易选择）',
   'tui.select.suspendUnsupported': 'Windows 不支持挂起，已忽略 Ctrl+Z',
 
+  // run.js: download progress panel
   // run.js：下载进度面板
   'tui.run.downloading': '下载中',
   'tui.run.counts': '完成 {ok} | 跳过 {skipped} | 失败 {failed} / 共 {total} 项',
@@ -930,6 +1045,7 @@ npm 用法（传参需要 -- 分隔）:
   'tui.run.cancelPending': '正在取消，请稍候…（已下载部分保留，可续传）',
   'tui.run.skipNotice': '收到跳过请求，将跳过当前模型（已下载部分保留）…',
 
+  // download.js: filtering / selection
   // download.js：筛选 / 勾选
   'tui.download.prefilterHint': '可用 / 搜索、t 类型、b 基础模型、s 排序 在全屏列表里筛选，不再逐步提问',
   'tui.download.prefilterSummary': '共 {count} 项 | 合计 {size} {done}',
@@ -952,6 +1068,7 @@ npm 用法（传参需要 -- 分隔）:
   'tui.download.statusPinned': '已固定版本',
   'tui.download.selectTitle': '选择要下载的条目（共 {count} 项，合计 {size}）',
   'tui.download.noneSelected': '未选择任何条目',
+  // download.js: version picking
   // download.js：版本选择
   'tui.download.versionListFailed': '版本列表获取失败（保持默认版本）: {name} -> {error}',
   'tui.download.singleVersionOnly': '所选模型均只有一个版本，无需选择',
@@ -962,6 +1079,7 @@ npm 用法（传参需要 -- 分隔）:
   'tui.download.versionSwitched': '已切换版本: {name} -> {version}',
   'tui.download.pinConfirm': '已手动指定 {count} 个模型的版本，是否固定这些版本（下次下载不再自动跟随新版）？',
   'tui.download.pinMarked': '已标记固定；下载完成后会写入完成记录',
+  // download.js: download options
   // download.js：下载选项
   'tui.download.outDirPrompt': '输出目录（相对路径相对项目根：{root}）',
   'tui.download.notEmpty': '不能为空',
@@ -971,6 +1089,7 @@ npm 用法（传参需要 -- 分隔）:
   'tui.download.jobsTwo': '2 个',
   'tui.download.jobsThree': '3 个',
   'tui.download.startConfirm': '开始下载 {count} 项，共 {size} → {dir}？',
+  // download.js: main flow
   // download.js：主流程
   'tui.download.collectionIdPrompt': '收藏集 ID 或收藏集页 URL',
   'tui.download.enumerating': '枚举收藏集 {collectionId} 的条目…',
@@ -1004,9 +1123,11 @@ npm 用法（传参需要 -- 分隔）:
   'tui.download.summaryCancelled': '本次已取消：完成 {done}，跳过 {skipped}，失败 {failed}（已下载文件保留，可续传）',
   'tui.download.summaryDone': '本次完成：完成 {done}，跳过 {skipped}，失败 {failed}',
   'tui.download.summaryDoneMeta': '本次完成：完成 {done}，跳过 {skipped}，失败 {failed}，元数据失败 {metaFailed}',
+  'tui.download.summaryAccess': '本次完成：完成 {done}，跳过 {skipped}，需权限 {accessRequired}，失败 {failed}',
   'tui.download.elapsed': '用时 {elapsed}；日志文件: {file}',
   'tui.download.openDirConfirm': '打开下载目录？',
   'tui.download.opened': '已打开: {dir}',
+  // download.js: shell plan / confirm / receipt
   // download.js：外壳计划 / 确认 / 回执
   'tui.download.statusNew': '未下载',
   'tui.download.statusManual': '手动指定',
@@ -1048,19 +1169,23 @@ npm 用法（传参需要 -- 分隔）:
   'tui.download.receiptMissing': '任务不存在或已被清理',
   'tui.download.receiptSummary': '{name} | {count} 项 | {size} → {dir} | 并发 {jobs}',
   'tui.download.receiptQueued': '排队中（第 {position} 位，队列 {waiting} 个）；前面的任务结束后自动开始',
-  'tui.download.receiptRunning': '运行中：进度与结果见 Ctrl+M 任务视图',
-  'tui.download.receiptDone': '已完成：结果见 Ctrl+M 任务视图',
-  'tui.download.receiptCancelled': '已取消：结果见 Ctrl+M 任务视图',
+  'tui.download.receiptRunning': '运行中：进度与结果见 Ctrl+T 任务视图',
+  'tui.download.receiptDone': '已完成：结果见 Ctrl+T 任务视图',
+  'tui.download.receiptCancelled': '已取消：结果见 Ctrl+T 任务视图',
   'tui.download.receiptFailed': '启动失败：{error}',
-  'tui.download.receiptHint': '任务在后台继续，与是否停留在本页无关。Ctrl+M 查看进度与结果；Enter 返回下载，Esc 返回主菜单。',
-  'tui.download.taskFailedNotice': '下载失败：{error} | Ctrl+M 查看任务',
-  'tui.download.viewTasksHint': ' | Ctrl+M 查看任务',
+  'tui.download.receiptHint': '任务在后台继续，与是否停留在本页无关。可从下方打开任务视图，或继续添加下载。',
+  'tui.download.receiptViewTask': '查看任务进度与结果',
+  'tui.download.receiptContinue': '继续下载',
+  'tui.download.receiptMain': '返回主菜单',
+  'tui.download.taskFailedNotice': '下载失败：{error} | Ctrl+T 查看任务',
+  'tui.download.viewTasksHint': ' | Ctrl+T 查看任务',
   'tui.download.retryName': '{name}（重试）',
   'tui.download.postProcessFailed': '下载完成后的收尾失败：{error}',
   'tui.download.snapshotFailed': '收藏集快照写入失败：{error}',
   'tui.download.planWriteFailed': '计划文件写入失败：{error}',
 
   // check.js
+  // check.js：TUI 检查流程
   'tui.check.noRecords': '暂无收藏集成员快照（先运行 node cli.js list <收藏集ID> 或下载一次）',
   'tui.check.collectionLabel': '收藏集 {id}',
   'tui.check.completionRecords': '成员 {count} 项',
@@ -1090,6 +1215,7 @@ npm 用法（传参需要 -- 分隔）:
   'tui.check.checking': '检查中…',
   'tui.check.selectedModel': '已选择模型：{id}',
 
+  // check.js: check report pages
   // check.js：检查报告页
   'tui.check.report.titleCollection': '检查报告 | 收藏集 {id}',
   'tui.check.report.titleModel': '检查报告 | {name}',
@@ -1141,6 +1267,7 @@ npm 用法（传参需要 -- 分隔）:
   'tui.check.report.allTargets': '检查报告（{count} 个目标）',
 
   // login.js
+  // login.js：TUI 登录流程
   'tui.login.title': '登录 / 校验登录态（{site}）',
   'tui.login.modeLogin': '登录 / 更新登录',
   'tui.login.modeLoginDesc': '打开浏览器完成登录并保存会话',
@@ -1151,6 +1278,7 @@ npm 用法（传参需要 -- 分隔）:
   'tui.login.waitConfirm': '浏览器中完成登录后按 y 继续（n 放弃本次保存）',
   'tui.login.done': '登录流程结束，可返回主菜单继续使用',
 
+  // manage.js (collection members and changes)
   // manage.js（收藏集成员与变化）
   'tui.manage.cancelled': '已取消',
   'tui.manage.back': '返回',
@@ -1174,11 +1302,12 @@ npm 用法（传参需要 -- 分隔）:
   'tui.manage.noChanges': '未做任何更改',
   'tui.manage.nameSeparator': '、',
   'tui.manage.actionPrompt': '收藏集 {collectionId} 要做什么？',
-  'tui.manage.resetAction': '重置某个模型的重下标记',
-  'tui.manage.resetActionDesc': '删除记录后，下次下载会重新下载该模型',
-  'tui.manage.resetPick': '选择要重置记录的模型（空格多选）',
-  'tui.manage.resetConfirm': '将 {count} 个模型的记录重置为重下，确认？',
-  'tui.manage.resetDone': '已重置 {count} 个模型的记录：{names}',
+  'tui.manage.cancel': '取消',
+  'tui.manage.resetAction': '选择成员并标记为需重下',
+  'tui.manage.resetActionDesc': '只更新下载记录，不会删除已下载文件',
+  'tui.manage.resetPick': '选择要标记为需重下的模型（空格多选）',
+  'tui.manage.resetConfirm': '将 {count} 个模型标记为需重新下载？不会删除本地文件。',
+  'tui.manage.resetDone': '已将 {count} 个模型标记为需重下：{names}',
   'tui.manage.resetEmpty': '收藏集 {collectionId} 中没有已记录的模型',
   'tui.manage.pinnedMark': '已固定',
   'tui.manage.noVersionId': '该记录没有版本号，无法固定',
@@ -1199,6 +1328,7 @@ npm 用法（传参需要 -- 分隔）:
   'tui.manage.skipNoUrl': '跳过 {name}：记录中没有下载直链',
   'tui.manage.repairFailed': '有文件修复失败，可稍后重试',
 
+  // manage.js: collection snapshot page
   // manage.js：收藏集快照页
   'tui.manage.snapshotMissing': '收藏集 {id} 还没有成员快照',
   'tui.manage.snapshot.factId': '收藏集 ID',
@@ -1214,16 +1344,17 @@ npm 用法（传参需要 -- 分隔）:
   'tui.manage.snapshot.emptyAdded': '没有新增成员',
   'tui.manage.snapshot.emptyRemoved': '没有移除的成员',
   'tui.manage.snapshot.emptyChanged': '没有版本变化',
-  'tui.manage.resetChanged': '重置变化项记录',
-  'tui.manage.resetChangedDesc': '只重置新增与版本变化项，下次下载会重新拉取（不会删除文件）',
-  'tui.manage.resetChangedConfirm': '重置 {count} 项变化记录（不会删除文件）？',
-  'tui.manage.resetChangedDone': '已重置 {count} 项变化记录',
+  'tui.manage.resetChanged': '变化项标记为需重下',
+  'tui.manage.resetChangedDesc': '只更新新增与版本变化项的下载记录，不会删除文件',
+  'tui.manage.resetChangedConfirm': '将 {count} 项变化记录标记为需重新下载？不会删除本地文件。',
+  'tui.manage.resetChangedDone': '已将 {count} 项变化记录标记为需重下',
   'tui.manage.resetChangedEmpty': '没有可重置的变化项',
   'tui.manage.membersAction': '查看成员列表',
   'tui.manage.membersActionDesc': '可搜索 / 排序；Enter 打开有本地记录的模型页面',
   'tui.manage.membersPick': '选择成员',
   'tui.manage.memberNoRecord': '成员 {modelId} 还没有本地记录',
 
+  // models.js (model library: one record per model)
   // models.js（模型库：一模型一记录）
   'tui.models.menuTitle': '本地模型管理',
   'tui.models.menuCheck': '检查全部模型更新',
@@ -1256,12 +1387,20 @@ npm 用法（传参需要 -- 分隔）:
   'tui.models.pinPick': '选择要操作的模型',
   'tui.models.pinVersionPick': '固定哪个版本？',
   'tui.models.forgetPick': '选择要删除记录的模型（空格多选）',
-  'tui.models.forgetConfirm': '删除 {count} 条模型记录，确认？',
-  'tui.models.forgetFilesConfirm': '同时删除这些记录里的文件？（不可恢复；否 = 只删记录）',
+  'tui.models.forgetModeTitle': '要如何处理 {count} 个模型的记录？',
+  'tui.models.forgetCancelDesc': '不修改模型库，也不删除文件',
+  'tui.models.forgetRecordsOnly': '仅删除记录',
+  'tui.models.forgetRecordsOnlyDesc': '保留磁盘文件，但工具不再管理它们',
+  'tui.models.forgetWithFiles': '删除记录和文件',
+  'tui.models.forgetWithFilesDesc': '永久删除本地文件；执行前还会最后确认',
+  'tui.models.forgetFinalConfirm': '最后确认：删除 {count} 个模型记录及其文件（{size}）？此操作不可恢复。',
+  'tui.models.forgetDoneRecords': '已删除 {count} 条模型记录',
+  'tui.models.forgetDoneFiles': '已删除 {count} 条模型记录及其文件',
   'tui.models.filterCollection': '按收藏集筛选（快照成员）',
   'tui.models.allCollections': '全部模型（不过滤）',
   'tui.models.collectionItem': '收藏集 {id}（{count} 项）',
 
+  // models.js: source picker / browser / detail page
   // models.js：来源选择 / 浏览页 / 详情页
   'tui.models.sourcePrompt': '模型从哪里来？',
   'tui.models.sourcePaste': '粘贴模型 URL / 编号',
@@ -1299,10 +1438,11 @@ npm 用法（传参需要 -- 分隔）:
   'tui.models.pageAuthor': '作者 {author}',
   'tui.models.pageDownloads': '下载 {count}',
   'tui.models.pageVersions': '版本（{count}）',
-  'tui.models.pageVersionsSelected': '版本（已选 {selected}/{total}）',
-  'tui.hint.downloadVersionMulti': '空格 勾选 | Enter 使用所选版本 | Esc 返回 | ? 帮助',
+  'tui.models.pageVersionsSelected': '版本（已选 {selected}/{total}，共 {size}）',
+  'tui.hint.downloadVersionMulti': '空格 勾选 | Enter 应用（不勾选=不加入本次下载） | Esc 返回 | ? 帮助',
   'tui.models.pageDownloaded': '已下载 {count} 个版本',
 
+  // models.js: model detail report page
   // models.js：模型详情报告页
   'tui.models.factBaseModel': '底模',
   'tui.models.factDir': '目录',
@@ -1322,6 +1462,7 @@ npm 用法（传参需要 -- 分隔）:
   'tui.models.versionActionVerifyDesc': '按该模型的全部版本校验本地文件',
   'tui.models.versionActionOpenDir': '打开此版本目录',
 
+  // pages.js: shared interaction (folder picker / multi-select help / re-download choice / fact blocks)
   // pages.js：公共交互（目录选择 / 多选说明 / 重下确认 / 信息块）
   'tui.pages.pickUnavailable': '当前环境无法打开目录选择框，请直接输入路径',
   'tui.pages.invalidValue': '输入无效',
@@ -1334,6 +1475,7 @@ npm 用法（传参需要 -- 分隔）:
   'tui.pages.redownloadForce': '强制重新下载',
   'tui.pages.redownloadForceDesc': '覆盖本地文件重新校验/下载，可修复损坏文件',
 
+  // pages.js: help page (main menu → Help / shortcuts)
   // pages.js：帮助页（主菜单「帮助 / 快捷键」）
   'tui.help.title': '帮助 / 快捷键',
   'tui.help.shortTitle': '帮助',
@@ -1352,16 +1494,16 @@ npm 用法（传参需要 -- 分隔）:
   'tui.help.generalQuickSelect': '跳到第 n 行（配合 Shift 直接勾选）',
   'tui.help.generalConfirm': '选中 / 确认，并进入下一个界面',
   'tui.help.generalBack': '返回上一级（在主菜单里不生效；退出请用 Ctrl+C）',
-  'tui.help.generalTasks': '打开/关闭任务视图（Ctrl+M）',
+  'tui.help.generalTasks': '打开/关闭任务视图（Ctrl+T；主菜单也有「任务」入口）',
   'tui.help.generalLog': '打开本次会话的日志（Ctrl+L；Esc 返回）',
   'tui.help.generalQuit': '立刻退出程序',
-  'tui.help.generalCancelTask': '在任务视图里取消选中的任务',
   'tui.help.generalHelp': '在列表里打开本页按键速查',
-  'tui.help.runSkip': '跳过当前模型（已下载的部分保留）',
-  'tui.help.runCancel': '取消本次下载（可稍后续传）',
+  'tui.help.runSkip': '在任务视图中跳过当前模型（已下载的部分保留）',
+  'tui.help.runCancel': '在任务视图中取消下载（可稍后续传）',
   'tui.help.footer': '按任意键返回',
 
   // settings.js
+  // settings.js：TUI 设置页
   'tui.settings.site': '站点地址（改后需重新登录）',
   'tui.settings.invalidSite': '需以 http(s):// 开头',
   'tui.settings.outDir': '下载目录（相对路径相对项目根：{root}）',
@@ -1437,12 +1579,20 @@ npm 用法（传参需要 -- 分隔）:
   'tui.settings.siteChanged':
     '站点已变更：Chrome profile 会切换到新站点的独立目录，请重新登录（主菜单 → 登录 / 更新登录）',
 
+  // report.js: shared report page
   // report.js：共享报告页
   'tui.report.actions': '操作',
   'tui.report.empty': '（无）',
   'tui.report.fromTo': '{from} → {to}',
-  'tui.hint.report': '↑↓ 选择 | Enter 执行 | Esc 返回 | ? 帮助',
+  'tui.hint.report': '↑↓ 滚动 / 选择 | Tab 切换区域 | Enter 执行 | Esc 返回 | ? 帮助',
+  'tui.hint.reportBody': '↑↓ / PgUp / PgDn 滚动正文 | Tab 到操作区 | Esc 返回 | ? 帮助',
+  'tui.hint.reportRows': '↑↓ 选择条目 | Enter 打开 | Tab 切换区域 | Esc 返回 | ? 帮助',
+  'tui.hint.reportActions': '↑↓ 选择操作 | Enter 执行 | Tab 回正文 | Esc 返回 | ? 帮助',
+  'tui.hint.reportBodyCompact': '↑↓ 滚动 | Tab | Esc | ?',
+  'tui.hint.reportRowsCompact': '↑↓ 选择 | Enter | Tab | Esc | ?',
+  'tui.hint.reportActionsCompact': '↑↓ 操作 | Enter | Tab | Esc | ?',
 
+  // models.js: verify report page
   // models.js：校验报告页
   'tui.verify.report.title': '校验报告',
   'tui.verify.report.factScope': '范围',
@@ -1461,6 +1611,7 @@ npm 用法（传参需要 -- 分隔）:
   'tui.verify.report.actionDeep': '深度校验（SHA256）',
   'tui.verify.report.actionDeepDesc': '计算本地文件哈希，可发现同版本被重传',
 
+  // settings.js: environment check report page
   // settings.js：环境体检报告页
   'tui.doctor.report.title': '环境体检',
   'tui.doctor.report.collecting': '正在体检…',

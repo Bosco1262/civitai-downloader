@@ -21,7 +21,13 @@ async function loginFlow(config) {
   if (mode === null || mode === 'back') return;
 
   if (mode === 'check') {
-    await checkLogin(config, { log: view.log });
+    const probe = await checkLogin(config, { log: view.log });
+    view.notice(
+      probe && probe.ok
+        ? t('loginFlow.checkOk')
+        : t('loginFlow.checkFailed', { reason: (probe && probe.reason) || t('common.unknown') }),
+      probe && probe.ok ? color.success : color.danger
+    );
     return;
   }
 

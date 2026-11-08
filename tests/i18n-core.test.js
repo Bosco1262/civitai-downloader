@@ -673,8 +673,9 @@ test('i18n-core: 占位符确实被替换（数字、文件名、路径、URL）
     );
     assert.equal(i18n.t('api.notFound', { url: 'https://civitai.red/api/v1/models/1' }), 'HTTP 404：https://civitai.red/api/v1/models/1');
     assert.equal(i18n.t('downloader.resuming', { size: '1 MiB', total: '2 MiB', attempt: 2, attempts: 5 }), '  已下载 1 MiB / 2 MiB，继续断点续传（第 2/5 次）');
-    assert.equal(i18n.t('job.summary', { head: '=== 结束 ===', done: 1, skipped: 2, failed: 0, metaFailed: '', elapsed: '3 秒' }), '=== 结束 === 完成 1，跳过 2，失败 0（用时 3 秒）');
-    assert.equal(i18n.t('job.summary', { head: '=== 结束 ===', done: 1, skipped: 2, failed: 0, metaFailed: '，元数据失败 4', elapsed: '3 秒' }), '=== 结束 === 完成 1，跳过 2，失败 0，元数据失败 4（用时 3 秒）');
+    assert.equal(i18n.t('job.summary', { head: '=== 结束 ===', done: 1, skipped: 2, failed: 0, accessRequired: '', metaFailed: '', elapsed: '3 秒' }), '=== 结束 === 完成 1，跳过 2，失败 0（用时 3 秒）');
+    assert.equal(i18n.t('job.summary', { head: '=== 结束 ===', done: 1, skipped: 2, failed: 0, accessRequired: '', metaFailed: '，元数据失败 4', elapsed: '3 秒' }), '=== 结束 === 完成 1，跳过 2，失败 0，元数据失败 4（用时 3 秒）');
+    assert.equal(i18n.t('job.summary', { head: '=== 结束 ===', done: 1, skipped: 0, failed: 0, accessRequired: '，需权限 2', metaFailed: '', elapsed: '3 秒' }), '=== 结束 === 完成 1，跳过 0，失败 0，需权限 2（用时 3 秒）');
     // Missing parameters leave the placeholder untouched (so an omitted value is easy to spot)
     // 未提供参数时保留占位符原样（便于发现漏传）
     assert.equal(i18n.t('storage.lockFailed', {}), '无法获取模型库的锁文件：{file}');

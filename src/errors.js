@@ -37,6 +37,26 @@ class ConfigError extends AppError {}
 class AuthError extends AppError {}
 
 /**
+ * The resource exists but the current account does not have download access.
+ *
+ * HTTP 402, a paid-version 403, or an HTML login/purchase page returned instead of a binary file.
+ * This error is not retryable without a login/purchase change.
+ *
+ *
+ * 资源存在，但当前账号没有下载权限。
+ *
+ * HTTP 402、付费版本的 403，或本应返回二进制却返回登录/购买 HTML 页面。
+ * 在登录或购买状态变化前不应重试。
+ */
+class AccessRequiredError extends AppError {
+  constructor(message, options = {}) {
+    super(message, options);
+    this.status = Number(options.status) || 0;
+    this.reason = options.reason || 'access';
+  }
+}
+
+/**
  * Resource missing or taken down (HTTP 404).
  * 资源不存在或已下架（HTTP 404）。
  */
@@ -115,6 +135,10 @@ function isAuthError(e) {
   return e instanceof AuthError || !!(e && e.code === 'AuthError');
 }
 
+function isAccessRequiredError(e) {
+  return e instanceof AccessRequiredError || !!(e && e.code === 'AccessRequiredError');
+}
+
 function isNotFoundError(e) {
   return e instanceof NotFoundError || !!(e && e.code === 'NotFoundError');
 }
@@ -128,6 +152,7 @@ module.exports = {
   AppError,
   ConfigError,
   AuthError,
+  AccessRequiredError,
   NotFoundError,
   NetworkError,
   RateLimitError,
@@ -140,6 +165,7 @@ module.exports = {
   CANCEL_MESSAGE,
   isCancelError,
   isAuthError,
+  isAccessRequiredError,
   isNotFoundError,
   errorMessage,
 };

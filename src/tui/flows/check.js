@@ -33,7 +33,8 @@ const reportPage = require('../ui/report');
 const screen = require('../shell/screen');
 const { present } = require('../shell/present');
 const { runWithProgress } = require('../runtime/run');
-const { color, format } = require('../ui/tokens');
+const { color, format, glyph } = require('../ui/tokens');
+const { accessLabel } = require('../ui/accessText');
 
 /**
  * Ask which collection(s) to check. Returns a single id, an array of ids, or null when cancelled.
@@ -42,7 +43,7 @@ const { color, format } = require('../ui/tokens');
 async function askCollectionId(config, message) {
   const ids = listCollectionIds(config);
   if (!ids.length) {
-    view.log(t('tui.check.noRecords'));
+    await pages.promptMessage(t('tui.app.menuCheck'), [t('tui.check.noRecords')]);
     return null;
   }
   const rows = ids.map((id) => {
@@ -173,15 +174,21 @@ function reportSections(report) {
   const sections = [
     {
       title: t('tui.check.report.sectionUpdated'),
-      rows: report.updated.map(({ item, prev }) => ({
-        label: item.name || item.modelId,
-        detail: t('tui.report.fromTo', {
-          from: prev
-            ? versionLabel(prev.versionName, prev.pinnedVersionId || Object.keys(prev.versions || {}).join('/'))
-            : t('updater.notDownloadedShort'),
-          to: versionLabel(item.versionName, item.versionId),
-        }),
-      })),
+      rows: report.updated.map(({ item, prev }) => {
+        const badge = accessLabel(item.access);
+        return {
+          label: item.name || item.modelId,
+          detail: [
+            t('tui.report.fromTo', {
+              from: prev
+                ? versionLabel(prev.versionName, prev.pinnedVersionId || Object.keys(prev.versions || {}).join('/'))
+                : t('updater.notDownloadedShort'),
+              to: versionLabel(item.versionName, item.versionId),
+            }),
+            badge,
+          ].filter(Boolean).join(` ${color.muted(glyph.bullet)} `),
+        };
+      }),
     },
     {
       title: t('tui.check.report.sectionFileChanged'),
@@ -201,7 +208,9 @@ function reportSections(report) {
       title: t('tui.check.report.sectionNotDownloaded'),
       rows: report.notDownloaded.map((item) => ({
         label: item.name || item.modelId,
-        detail: versionLabel(item.versionName, item.versionId),
+        detail: [versionLabel(item.versionName, item.versionId), accessLabel(item.access)]
+          .filter(Boolean)
+          .join(` ${color.muted(glyph.bullet)} `),
       })),
     },
     {

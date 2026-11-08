@@ -15,6 +15,7 @@ Download every model file in a [Civitai](https://civitai.com) collection in bulk
 - Enumerate collection entries in one go (automatic paging, dedup and merge, rate limiting)
 - Automatically fetch each model's latest version and its primary Model file's: file name / size / SHA256 / direct download URL
 - **Version selection and pinning**: for models with several versions you can choose which one to download — in the TUI press `v` on a plan row to open a **multi-select** version list (several versions of one model become separate rows in the same plan and download together), or use "Download / switch versions…" on the model page; the CLI overrides with `--version <modelId=versionId>`; the `pin` command **pins** a version so a newer release on the site can never overwrite it
+- **Paid/restricted versions**: version-level `paidAccess` is classified as paid, timed paid, Early Access or unavailable. Collection batches skip paid rows by default and show a badge; an explicit single model may try with the current account. The tool never purchases or spends Buzz and only uses existing download access; denied items are reported as access-required, not as login/network failures
 - **Several versions of the same model side by side**: every version records its own directory / file manifest / SHA256. The first version goes to `outDir/<model name>/`, later ones to `outDir/<model name>/<version name>/`, so switching versions never overwrites anything
 - **Single models (no collection needed)**: `download <model URL | model:<id> | version:<id>>` downloads directly (batch pasting / `--models` / `--from-file` supported); the `models` command manages them in one place — list with search and sorting, export to JSON/CSV, pin versions, delete records (optionally together with their files); `check`/`verify` accept `model:<id>` and `--models`; item 2 of the TUI main menu, "Single models", offers the same entry point
 - Download capabilities (built on curl + the login cookie):
@@ -158,53 +159,48 @@ The terminal UI is a full-screen app rather than a scrolling log: the screen is 
   ────────────────────────────────────────────────────────────────
 
   ▸ Download                  Download models or collections: paste a link / ID, tick the items
+    Tasks                     Active tasks, failures and recent results
     Local model management    Manage local files per model: update, verify, pin, delete records
     Local collection management  Manage per collection: check, re-download, reset members
     Settings                  Login, download directory, concurrency, proxy and every option
     Exit
 
-  ↑↓ Select · Enter Open · Tab Task view · Ctrl+C Quit
+  ↑↓ Select · Enter Open · Ctrl+T Tasks · ? Help
 ```
 
-The fixed part of the screen: the project name on the first line, the **dashboard** in the middle — "Current settings" (site, session, download directory, concurrency), a blank line, then **"Task overview"** (one fixed aggregate progress line over every task in the registry: a bar, the percentage and the counts per state; it returns to "idle" once nothing is running or queued, and `Tab` opens the per-task detail) — the current page below that (a **breadcrumb** such as `Main menu › Settings` with a rule under it, the content and, when there is something to say, one transient `✔ …` line that fades after 5 seconds), and **the last line is the key hint of that page**. The wording follows the configured language; the sample above is the English one.
+The full dashboard belongs to the main menu. Every other page collapses it to one line (site, session, active tasks), leaving the body enough room on a 24-row terminal.
 
-The raw log is no longer a permanent strip: it is **a page** — `L` opens it, `L` or `Esc` closes it (`↑↓` / `PgUp` / `PgDn` scroll), and it keeps being written to the run log on disk. Results show up in that transient line (saved, download summary, failure), and the details live in the log page.
+The raw log is a page: `Ctrl+L` opens it and `Esc` returns (`↑↓` / `PgUp` / `PgDn` scroll). The task view opens with `Ctrl+T` or the stable **Tasks** menu entry. It is the only home of a download's live progress and result; `c` asks for confirmation before cancelling, `s` skips the current model, `r` retries failed items, `d` opens the output folder and `x` clears finished tasks.
 
-There is only one hint line: the page owns it and lists **only the keys that work there**. That is why the main menu's line does not mention Esc (it does nothing there), a text field's line does not mention ↑↓, and the task view's line changes with the selected task (`c` / `s` while running, `r` / `d` / `l` when finished). On a terminal too narrow for the page's own line, a compact universal spelling takes over instead of clipping it.
+The main menu has six entries:
 
-Two "system views" open on top of whatever is there and are mutually exclusive: `Tab` is the task view, `L` is the log page, and each one's footer lists its own keys. The task view is the **only** home of a download's progress and result: a download keeps running after you leave the download pages, and the task view shows its live progress, current files, failures and final result (plus `c` cancel, `s` skip, `r` retry failed items, `d` open the output folder and `l` the per-task log tail).
+- **Download**: one entry point for models and collections. Model references can be comma-separated; the collection workspace supports search, type/base-model/status filters, sorting, select-all-filtered, clear and "new only". The read-only confirmation page keeps its start button visible below a scrolling list and shows new downloads, existing items to verify, total size, file types and free disk.
+- **Tasks**: a discoverable task-view entry in addition to `Ctrl+T`.
+- **Local model management**: list → detail → back restores the list. Reports start at the top of the summary; `Tab` cycles content, selectable rows and actions.
+- **Local collection management**: snapshot reports separate added / removed / version changes. "Mark changes for re-download" and "mark selected members for re-download" update records only and never delete files.
+- **Settings**: one page for every option; `Enter` edits and saves immediately. `Ctrl+R` fills the default value and `Ctrl+O` picks a folder.
+- **Exit**: if tasks are still running, the app confirms before cancelling them and exiting.
 
-The main menu has exactly five entries:
+Report and download-confirmation pages keep long content in an independently scrolling region, so the action block cannot be pushed off-screen. A checkbox in the download plan means "include in this task" only; unchecking it never deletes a local file. Version or record deletion happens only through explicit local-management actions, with count, size and a safe default.
 
-- **Download**: one entry point for models and collections. "Download models" accepts model links, `model:<ID>` and `version:<ID>` (several per line or comma separated); "Download a collection" enumerates the items and records the collection snapshot. Both then share the same shell flow: **plan page** (filter / tick / `v` choose a version per item / `n` select only new) → **confirmation page** (totals, disk space, output directory, concurrency, already-finished handling, start) → **receipt page** ("added to the task list", `Tab` for progress, `Esc` leaves the download screen). If a download is already running, the new one is **queued** and starts automatically when the previous task ends
-- **Local model management**: the list of locally known models (`Enter` opens one). A model is a **report page**: type, base model, version count, total size, pinned version and folder are visible immediately, followed by one row per version (state / file count / size / verification date); `Enter` on a version row opens its own menu (download this version, pin/unpin, verify the model, open its folder), while the bottom of the page holds the model-wide actions — check for updates, verify/repair, download another version, pin/unpin, open folder, delete record. No `L` round-trip is needed. The library-wide "check every model" and "verify every file" passes sit next to the list
-- **Local collection management**: the list of collections (members, enumeration time, changes); opening one is a **snapshot report page** with the enumeration time, previous run, member count and change count, followed by "added / removed / version changes" sections. Its actions are **check for updates** (quick/deep), **re-download**, **reset the records of the changes** in one go, **reset one member for re-download**, and **view the member list** (searchable/sortable; `Enter` opens the model page when a local record exists)
-- **Settings**: one page listing **every option** (site, download directory, browser, language, concurrency, request timeout, retries, file types, directory layout, base-model layer, primary-only, engine, dedup, rate limit, proxy, User-Agent, notifications) with its current value; `Enter` edits the current row and **confirms it straight into config.json** (there is no separate save step), while `Esc` goes back. `Ctrl+R` in a text field fills in that field's built-in default (still editable; `Enter` applies it), and the last row, "Restore all defaults", resets the whole page after a confirmation. The download directory can also be filled with the platform's folder dialog (`Ctrl+O`): the picked path is put into the input line, so it can still be edited, and a device without a dialog simply types it. Login, "open the download directory" and the environment check live here too; the check is an OK / WARN / FAIL **report page** (with each hint) and can be re-run quick or deep
-- **Exit**
-
-Keys: `↑↓` move (wrapping at both ends), `Enter` selects/confirms and always moves on to the next screen, `Esc` cancels or goes back one level without saving (it has **no effect in the main menu**, so a repeated Esc cannot quit the program by accident), `Tab` switches to the task view from anywhere (press again to return; while running `c` cancels and `s` skips the current model, when finished `r` retries failed items, `d` opens the output folder, `l` shows the task log tail and `x` clears finished ones), `L` opens the log page (press again or `Esc` to go back), `Ctrl+C` quits the program, `?` opens the key reference. During a download, `Esc` on the receipt page only leaves the download screen; the task keeps running in the task list. `s` (skip) and `c` (cancel) live in the task view; Ctrl+C on a running task asks to cancel it first.
-
-Keys on the settings page: `↑↓` select (wrapping), `Enter` edits or runs the row, `Esc` goes back; inside a text field `Ctrl+R` restores the default and `Ctrl+O` picks a folder. Every confirmation is written immediately, and the line under the list briefly shows `✔ Saved: <field> = <new value>`; re-entering the same value says "unchanged" and writes nothing.
-
-Keys in the item-selection screen (useful when there are many entries):
+Keys in the item-selection screen:
 
 | Key | Action |
 |---|---|
-| `↑`/`↓`, `k`/`j` | Move the cursor (the list scrolls along so the cursor stays visible); `Home`/`End` jump to the first/last item |
-| `PgUp`/`PgDn`, `[`/`]` | Scroll one screen up / down |
-| `1`-`9` | Jump to row n; `Shift`+`1`-`9` toggles row n directly |
-| `space` | Tick / untick the current item; `Shift`+`↑`/`↓` extends the selection |
-| `a` / `i` | Select all **current filter results** (press again to clear) / invert the selection |
-| `n` / `c` | Select only items whose target version is not downloaded yet / clear the selection (download plan) |
-| `v` / `o` | Choose the version of the current item / open the download confirmation (download plan) |
-| `/` | Search (Enter exits and keeps the keyword, `Esc` exits and clears it, backspace is supported) |
-| `t` / `b` / `s` | Cycle the type / base model / sort order (default, name, largest first, smallest first) |
-| `?` | Show the key reference of the screen you are in |
-| `enter` | Confirm (you are warned when nothing is selected); `Esc`/`q` cancels |
+| `↑`/`↓`, `Home`/`End`, `PgUp`/`PgDn` | Move / page; menus wrap, tables clamp |
+| `space` | Tick / untick the current item |
+| `a` / `i` / `c` | Select all filtered / invert filtered / clear all |
+| `n` / `x` | Select only free, not-yet-downloaded items / remove the row from this plan (download workspace) |
+| `p` | Cycle access filter: all / paid only / free only (download workspace) |
+| `/` | Search (`Esc` clears and leaves search) |
+| `t` / `b` / `s` / `d` | Cycle type / base model / sort / download-status filter |
+| `Tab` | Switch between input, list and confirmation or content, rows and actions |
+| `?` | Show the key reference of the current screen |
+| `Esc` | Go back one level; no effect in the main menu |
 
-The footer of every list only describes the keys that do something right now, and the list carries its own position and totals. The same picker drives every "choose one / choose several" step, so there is only one set of keys to learn.
+Every footer only describes the keys that work right now; when the full line does not fit, that page supplies its own compact version.
 
-> In a non-interactive environment (when output is redirected) the tool falls back to the original step-by-step prompts plus a multi-select list; set `CIVITAI_PLAIN=1` to force that mode.
+> In a non-interactive environment (when output is redirected) the tool falls back to step-by-step prompts plus a multi-select list; set `CIVITAI_PLAIN=1` to force that mode. Plain mode covers the core download, check, verify and settings flows, but not the full task view, search/filter workspace or every version-management action.
 
 > If you prefer the command line, you can keep using the `login` / `list` / `download` / `check` / `verify` commands below — both share the same config, login session and completion records.
 
@@ -261,6 +257,9 @@ Common optional flags:
 | `--resume` | Resume the last cancelled job from its checkpoint list | `npm run download -- 161131 --resume` |
 | `--from-cache` | Use the item cache written by the last `list` run instead of re-enumerating the collection; with `--offline` no browser is opened at all | `npm run download -- 161131 --from-cache --offline` |
 | `--file-types <t,t>` | Download only the given file types (default `Model`) | `npm run download -- 161131 --file-types Model,VAE` |
+| `--include-paid` | Try paid/restricted versions (requires existing access on this account) | `npm run download -- 161131 --include-paid` |
+| `--skip-paid` | Skip paid/restricted versions (default for collection batches) | |
+| `--paid-only` | Process paid/restricted versions only | |
 | `--force` | Ignore completion records and download again | `npm run download -- 161131 --only 276011 --force` |
 | `--dry-run` | Only list the plan; do not download | `npm run download -- 161131 --dry-run` |
 | `--ignore-space` | Continue even when disk space is insufficient | |

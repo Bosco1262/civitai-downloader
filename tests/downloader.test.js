@@ -8,7 +8,13 @@ const path = require('path');
 const crypto = require('crypto');
 
 const downloader = require('../src/downloader');
-const { AuthError, NotFoundError, DownloadError, CancelError } = require('../src/errors');
+const {
+  AuthError,
+  AccessRequiredError,
+  NotFoundError,
+  DownloadError,
+  CancelError,
+} = require('../src/errors');
 
 const CONTENT = Buffer.from('civitai-downloader-test-payload\n'.repeat(512));
 const SHA = crypto.createHash('sha256').update(CONTENT).digest('hex').toUpperCase();
@@ -150,15 +156,56 @@ test('HTTP 416 → 丢弃分片后重新下载成功', async (t) => {
   assert.equal(fs.readFileSync(target).length, CONTENT.length);
 });
 
-test('401 / 404 分别抛出认证与不存在错误（不重试）', async (t) => {
+test('401 / 402 / 403 / 404 分别抛出对应错误（不重试）', async (t) => {
   cleanup(t);
   const dir1 = tempDir('401');
-  installStub([() => ({ exitCode: 22, httpCode: 401, stderr: '' })]);
+  const authCalls = installStub([() => ({ exitCode: 22, httpCode: 401, stderr: '' })]);
   await assert.rejects(() => downloader.downloadFile(baseOpts(dir1)), (e) => e instanceof AuthError);
+  assert.equal(authCalls.length, 1);
 
-  const dir2 = tempDir('404');
+  const dir2 = tempDir('402');
+  const paymentCalls = installStub([() => ({ exitCode: 22, httpCode: 402, stderr: '' })]);
+  await assert.rejects(
+    () => downloader.downloadFile(baseOpts(dir2)),
+    (e) => e instanceof AccessRequiredError && e.status === 402 && e.reason === 'payment'
+  );
+  assert.equal(paymentCalls.length, 1, '付费错误不应自动重试');
+
+  const dir3 = tempDir('403');
+  const accessCalls = installStub([() => ({ exitCode: 22, httpCode: 403, stderr: '' })]);
+  await assert.rejects(
+    () => downloader.downloadFile(baseOpts(dir3)),
+    (e) => e instanceof AccessRequiredError && e.status === 403
+  );
+  assert.equal(accessCalls.length, 1);
+
+  const dir4 = tempDir('404');
   installStub([() => ({ exitCode: 22, httpCode: 404, stderr: '' })]);
-  await assert.rejects(() => downloader.downloadFile(baseOpts(dir2)), (e) => e instanceof NotFoundError);
+  await assert.rejects(() => downloader.downloadFile(baseOpts(dir4)), (e) => e instanceof NotFoundError);
+});
+
+test('200 HTML 登录/购买页不会保存为模型，清理分片', async (t) => {
+  cleanup(t);
+  const dir = tempDir('gated');
+  const target = path.join(dir, 'model.safetensors');
+  installStub([
+    (opts) => {
+      fs.writeFileSync(opts.out, Buffer.from('<!doctype html><html>login</html>'));
+      fs.writeFileSync(
+        opts.headerFile,
+        'HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\r\n',
+        'utf8'
+      );
+      return { exitCode: 0, httpCode: 200, stderr: '' };
+    },
+  ]);
+
+  await assert.rejects(
+    () => downloader.downloadFile(baseOpts(dir)),
+    (e) => e instanceof AccessRequiredError && e.reason === 'gated'
+  );
+  assert.equal(fs.existsSync(target), false, '访问页不能被当成模型保存');
+  assert.equal(fs.existsSync(`${target}.part`), false, '访问页分片应清理');
 });
 
 test('未下载完 → 记录 ETag sidecar 并续传完成', async (t) => {

@@ -259,7 +259,7 @@ function doctorReportModel(items, deep) {
         rows: items.map((item) => ({
           label: `${doctorTag(item.status)} ${item.name}`,
           detail: String(item.detail || ''),
-          extra: item.hint ? String(item.hint) : '',
+          sub: item.hint ? String(item.hint) : '',
           color: doctorColor(item.status),
         })),
       },
@@ -322,7 +322,13 @@ function buildRows() {
   rows.push({ kind: 'action', action: 'login', label: t('tui.settings.actionLogin'), help: t('tui.settings.actionLoginDesc') });
   rows.push({ kind: 'action', action: 'open', label: t('tui.settings.actionOpenDir'), help: t('tui.settings.actionOpenDirDesc') });
   rows.push({ kind: 'action', action: 'doctor', label: t('tui.settings.actionDoctor'), help: t('tui.settings.actionDoctorDesc') });
-  rows.push({ kind: 'action', action: 'reset', label: t('tui.settings.actionReset'), help: t('tui.settings.actionResetDesc') });
+  rows.push({
+    kind: 'action',
+    action: 'reset',
+    label: t('tui.settings.actionReset'),
+    help: t('tui.settings.actionResetDesc'),
+    danger: true,
+  });
   return rows;
 }
 
@@ -482,6 +488,7 @@ function settingsModel(rows, config) {
     current.rows.push({
       label: row.kind === 'field' ? shortLabel(row.label) : row.label,
       detail: row.kind === 'field' ? rowValue(config, row.field) : '',
+      color: row.danger ? color.danger : null,
       raw: row,
       index,
     });
@@ -520,9 +527,10 @@ async function settingsPage(config) {
 
   return screen.prompt({
     title: t('tui.app.menuSettings'),
-    // Saving has no shortcut of its own, so the line does not mention one either.
-    // 保存没有单独的快捷键，因此这一行也不提它。
+    // Saving has no shortcut of its own: confirming a field is the save.
+    // 保存没有独立快捷键：确认字段本身就是保存。
     hints: () => [t('tui.hint.settings')],
+    compactHints: () => [t('tui.hint.settingsCompact')],
     // Prompts are rendered with `(state, ctx)`; the page keeps its own state in the closure, so only
     // the geometry (`ctx`) is used here.
     //
@@ -531,11 +539,11 @@ async function settingsPage(config) {
       const width = Math.max(20, Math.floor(ctx.width) || 80);
       const room = Math.max(3, Math.floor(ctx.rows) || 3);
 
-      // The shared page builder owns section headings, row alignment and blank separators; this page
-      // only maps its flat row list into that model and pins the status line at the bottom.
+      // The shared page builder owns section headings, row alignment and blank separators. Position
+      // and help are list metadata at the top, so feedback never accumulates just above the footer.
       //
-      // 共享页面构建器负责分组标题、行对齐与空行；本页只把扁平行列表映射成模型，
-      // 并把状态行固定在底部。
+      // 共享页面构建器负责分组标题、行对齐与空行。位置和说明属于列表顶部的元信息，
+      // 不再堆积在页脚上方。
       const data = buildPageLayout(settingsModel(rows, config), width);
       const entry = data.entries.find((item) => rows.indexOf(item.row.raw) === state.cursor);
       const cursorLine = entry ? entry.line : 0;
@@ -559,9 +567,10 @@ async function settingsPage(config) {
       if (offset >= 0 && offset < shown.length) {
         shown[offset] = shown[offset].replace(/^  /, `${color.cursor(layout.glyphs().cursor)} `);
       }
-      while (shown.length + 2 < room) shown.push('');
-      shown.push('', color.muted(truncateTo([position, help].filter(Boolean).join(view.separator()), width)));
-      return shown;
+      const meta = color.muted(truncateTo([position, help].filter(Boolean).join(view.separator()), width));
+      const lines = [meta, '', ...shown];
+      while (lines.length < room) lines.push('');
+      return lines.slice(0, room);
     },
     onEscape(entry) {
       // Nothing is pending: every field was written when it was confirmed, so Esc is just "go back".
@@ -603,8 +612,8 @@ async function settingsPage(config) {
       return doctorReportPage(config);
     }
     if (row.action === 'open') {
-      if (view.openDir(config.outDir)) view.log(t('tui.app.opened', { dir: config.outDir }));
-      else view.log(t('tui.app.openFailed'));
+      if (view.openDir(config.outDir)) view.notice(t('tui.app.opened', { dir: config.outDir }), color.success);
+      else view.notice(t('tui.app.openFailed'), color.warning);
       return;
     }
     if (row.action === 'reset') {

@@ -193,6 +193,13 @@ function taskDetailLines(task, width, max) {
       failed: result.failed === undefined ? task.failed : result.failed,
     }),
   ];
+  if (result.accessRequired || task.accessRequired) {
+    summary.push(
+      color.warning(
+        t('tui.screen.taskAccess', { count: result.accessRequired || task.accessRequired || 0 })
+      )
+    );
+  }
   if (result.metaFailed) summary.push(t('tui.screen.taskMetaFailed', { count: result.metaFailed }));
   if (result.elapsedMs !== undefined) {
     summary.push(t('tui.screen.taskElapsed', { elapsed: formatDuration(result.elapsedMs / 1000) }));

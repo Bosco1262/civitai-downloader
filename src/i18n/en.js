@@ -5,10 +5,15 @@
  * Any key missing here falls back to the zh-CN entry (see src/i18n.js).
  * Multi-line usage() texts are stored as a single key each, keeping the
  * original layout; sample commands stay untranslated on purpose.
+ *
+ * 英文文案表，键名与 src/i18n/zh-CN.js 一一对应。
+ * 这里缺失的键回退到中文条目（见 src/i18n.js）。多行 usage() 文案各存为一个键，
+ * 保留原始排版；示例命令刻意不翻译。
  */
 
 module.exports = {
   // Common
+  // 通用
   'common.yes': 'Yes',
   'common.no': 'No',
   'common.cancelled': 'Cancelled',
@@ -25,6 +30,7 @@ module.exports = {
 
   // ---------------------------------------------------------------------------
   // cli.js
+  // cli.js：命令行入口
   // ---------------------------------------------------------------------------
   'cli.usage': `civitai-downloader
 
@@ -62,6 +68,7 @@ Tip: you can also run node cli.js <command> --help for help on a single command.
 
   // ---------------------------------------------------------------------------
   // login
+  // login：登录与会话
   // ---------------------------------------------------------------------------
   'loginFlow.openingPage': 'Opening the sign-in page: {url}',
   'loginFlow.gotoFailed': 'Could not open the sign-in page (you can navigate manually): {message}',
@@ -86,6 +93,7 @@ Tip: you can also run node cli.js <command> --help for help on a single command.
 
   // ---------------------------------------------------------------------------
   // list
+  // list：列出收藏集
   // ---------------------------------------------------------------------------
   'list.usage': `Usage: node cli.js list <collectionId|collectionURL> [options]
 
@@ -112,6 +120,7 @@ Options:
 
   // ---------------------------------------------------------------------------
   // download
+  // download：下载流程
   // ---------------------------------------------------------------------------
   'download.usage': `Usage: node cli.js download <collectionId|collectionURL|modelURL> [options]
 
@@ -138,6 +147,9 @@ Options:
   --model <URL|ID>    Download a single model (a model URL can also be passed as a positional argument)
   --models <ref,ref>  Download several single models (comma separated: model URL / model:<id> / version:<id>)
   --from-file <file>  Read targets from a file (one per line; blank lines and # comments are ignored)
+  --include-paid      Try paid/restricted versions (requires existing download access on this account)
+  --skip-paid         Skip paid/restricted versions (default for collection batches)
+  --paid-only         Process only paid/restricted versions
 
 Examples:
   node cli.js download 161131
@@ -153,6 +165,7 @@ Examples:
   'download.modelNoVersions': 'Model {modelId} has no available versions',
   'download.modelVersionNotFound': 'Version {versionId} not found in model {modelId}',
   'download.singleModel': 'Single model download: {name} (version {version})',
+  'download.paidAccessNotice': '{name} version {version} is paid/restricted; the current session will be tried and the tool never purchases or spends Buzz',
   'download.unrecognizedArg': 'Unrecognized argument: {value} (expected a collection ID/URL or a model URL)',
   'download.badCollectionItem': 'Unrecognized item in --collections: {value}',
   'download.badModelFlag': 'Unrecognized --model: {value}',
@@ -167,6 +180,7 @@ Examples:
 
   // ---------------------------------------------------------------------------
   // check
+  // check：检查更新
   // ---------------------------------------------------------------------------
   'check.usage': `Usage: node cli.js check <collectionId|collectionURL|model:<modelId>|modelURL> [more targets…] [options]
 
@@ -178,6 +192,9 @@ model:<id> / a model URL checks that model only.
 Options:
   --verify-files     Deep check: fetch online file hashes and verify local SHA256 (catches re-uploads/renames/additions/removals of the same version)
   --download         After checking, download only the changed items (version update / file change / missing locally)
+  --include-paid     Try paid/restricted changed versions
+  --skip-paid        Skip paid/restricted changed versions (default)
+  --paid-only        Download only paid/restricted changed versions
   --all              Check every collection that has a membership snapshot
   --models           Check every model of the library
   --json             Output the check report as JSON
@@ -211,6 +228,7 @@ Two modes:
 
   // ---------------------------------------------------------------------------
   // verify
+  // verify：校验本地文件
   // ---------------------------------------------------------------------------
   'verify.usage': `Usage: node cli.js verify [collectionId…|model:<modelId>…] [options]
 
@@ -244,6 +262,7 @@ Options:
 
   // ---------------------------------------------------------------------------
   // doctor
+  // doctor：环境体检
   // ---------------------------------------------------------------------------
   'doctor.usage': `Usage: node cli.js doctor [collectionId] [--json] [--deep]
 
@@ -325,6 +344,7 @@ Checks: Node version, config, curl, browser, debug port, cookies, writable direc
 
   // ---------------------------------------------------------------------------
   // pin
+  // pin：固定版本
   // ---------------------------------------------------------------------------
   'pin.usage': `Usage:
   node cli.js pin <modelId> [versionId]        Pin a version (omit versionId to pin the newest downloaded version)
@@ -347,6 +367,7 @@ Checks: Node version, config, curl, browser, debug port, cookies, writable direc
 
   // ---------------------------------------------------------------------------
   // models (model library: list / export / forget / pin / relayout)
+  // models（模型库：列表 / 导出 / 遗忘 / 固定 / 重排目录）
   // ---------------------------------------------------------------------------
   'models.usage': `Usage: node cli.js models [options]
 
@@ -416,6 +437,7 @@ Examples:
 
   // ---------------------------------------------------------------------------
   // runtime (error presentation)
+  // runtime（错误呈现）
   // ---------------------------------------------------------------------------
   'runtime.configWarning': 'Config notice: {message}',
   'runtime.fatalError': 'Error: {message}',
@@ -427,6 +449,7 @@ Examples:
 
   // ---------------------------------------------------------------------------
   // util.js (errors and formatting reused by other modules)
+  // util.js（错误与格式化，被其它模块复用）
   // ---------------------------------------------------------------------------
   'util.verifyCancelled': 'Verification cancelled',
   'util.hashWorkerExited': 'Hash worker exited unexpectedly (code {code})',
@@ -434,6 +457,7 @@ Examples:
 
   // ---------------------------------------------------------------------------
   // notify.js
+  // notify.js：系统通知
   // ---------------------------------------------------------------------------
   'notify.finished': 'Job finished',
   'notify.cancelledSummary': 'Cancelled: {done} done, {skipped} skipped, {failed} failed',
@@ -443,6 +467,7 @@ Examples:
 
   // ---------------------------------------------------------------------------
   // config.js
+  // config.js：配置读写
   // ---------------------------------------------------------------------------
   'config.intRange': '{key} in config.json must be an integer in range {range} (current: {value})',
   'config.hintSuffix': ' ({hint})',
@@ -471,6 +496,7 @@ Examples:
 
   // ---------------------------------------------------------------------------
   // browser.js
+  // browser.js：浏览器与会话
   // ---------------------------------------------------------------------------
   'browser.chromePathMissing': 'The file chromePath points to in config.json does not exist: {path}',
   'browser.notFound':
@@ -500,6 +526,7 @@ Examples:
 
   // ---------------------------------------------------------------------------
   // collection.js
+  // collection.js：收藏集枚举
   // ---------------------------------------------------------------------------
   'collection.challengeProbe':
     'The site requires human verification; complete it in the browser window and retry',
@@ -520,6 +547,7 @@ Examples:
 
   // ---------------------------------------------------------------------------
   // api.js
+  // api.js：站点接口
   // ---------------------------------------------------------------------------
   'api.requestFailed': 'Request failed ({reason}): {url}',
   'api.timeout': 'timed out',
@@ -537,6 +565,7 @@ Examples:
 
   // ---------------------------------------------------------------------------
   // storage.js
+  // storage.js：模型库与快照
   // ---------------------------------------------------------------------------
   'storage.stateCorrupt':
     'Cannot parse the file ({reason}): {file}\nBacked up as {backup}. ' +
@@ -555,6 +584,7 @@ Examples:
 
   // ---------------------------------------------------------------------------
   // downloader.js
+  // downloader.js：并发下载
   // ---------------------------------------------------------------------------
   'downloader.curlExitCode': '{bin} exited with code {code}',
   'downloader.curlLastError': ' (last attempt: {error})',
@@ -569,6 +599,9 @@ Examples:
     '  The complete part failed verification; deleting it and downloading again: {file}',
   'downloader.remoteChanged': '  The remote file changed (different ETag); discarding the old part and downloading again',
   'downloader.authFailed': 'Authentication failed (HTTP {status}); the session may have expired, run again: npm run login',
+  'downloader.paymentRequired': 'Download restricted (HTTP {status}): purchase or download access is required',
+  'downloader.accessFailed': 'No download access (HTTP {status}): check the signed-in account or site access',
+  'downloader.accessGated': 'The download endpoint returned a login/purchase page instead of a model file; confirm access on the site',
   'downloader.notFound404': 'HTTP 404: the download link is invalid or the file was removed',
   'downloader.rangeRejected': '  The server rejected the resume request (HTTP 416); discarding the part and downloading again',
   'downloader.rateLimited': '  Rate limited (HTTP 429); waiting 30 seconds before retrying',
@@ -583,6 +616,7 @@ Examples:
 
   // ---------------------------------------------------------------------------
   // job.js
+  // job.js：任务编排
   // ---------------------------------------------------------------------------
   'job.offlineNeedsPlan':
     'Offline mode requires a download plan (--resume or verify --repair); the collection cannot be enumerated',
@@ -612,8 +646,9 @@ Examples:
   'job.planLine': '  [plan] {name} / {file} ({size})',
   'job.dryRunDone': '--dry-run finished; nothing was downloaded',
   'job.nothingToDownload': 'Nothing to download (everything is done; add --force to download again)',
-  'job.summary': '{head} {done} done, {skipped} skipped, {failed} failed{metaFailed} (took {elapsed})',
+  'job.summary': '{head} {done} done, {skipped} skipped, {failed} failed{accessRequired}{metaFailed} (took {elapsed})',
   'job.summaryMetaSuffix': ', {count} metadata failures',
+  'job.summaryAccessSuffix': ', {count} access-required',
   'job.headDone': '=== Done ===',
   'job.headCancelled': '=== Cancelled ===',
   'job.insufficientSpace':
@@ -636,6 +671,10 @@ Examples:
   'job.cookiesRefreshed': 'Re-exported {count} cookies',
   'job.cancelNotice': 'Current download cancelled (downloaded .part files are kept and can be resumed)',
   'job.fileFailed': '  Failed: {file} -> {message}',
+  'job.fileAccessRequired': '  Access required: {file} -> {message}',
+  'job.paidSkipped': 'Skipped paid/restricted item {name} (use --include-paid to try it)',
+  'job.paidPlanLine': '  Paid/restricted: {name} (existing access required; the tool never purchases or spends Buzz)',
+  'job.itemAccessRequired': 'Skipped {name}: purchase or existing download access required',
   'job.fileVerified': '  Already exists and passed verification: {file}',
   'job.fileDeduped': '  Placed via content dedup: {file}',
   'job.fileDownloaded': '  Downloaded and verified: {file}',
@@ -646,6 +685,7 @@ Examples:
 
   // ---------------------------------------------------------------------------
   // updater.js
+  // updater.js：检查更新与重排
   // ---------------------------------------------------------------------------
   'updater.missingFile': 'missing {file}',
   'updater.sizeMismatch': 'size mismatch {file}',
@@ -708,9 +748,14 @@ Examples:
   // Cursor marks (▸), progress-bar glyphs (█░), checkboxes ([×]/[ ]), tag brackets
   // (e.g. [ OK ]) and separators (· / ｜ / spaces) stay in code; only user-readable
   // text lives here.
+  //
+  // TUI（终端交互界面，src/tui/**）
+  // 注意：光标符号（▸）、进度条字符（█░）、勾选框（[×]/[ ]）、标签括号（[ OK ] 等）
+  //       以及缩进/分隔符（· / ｜ / 空格）保留在代码里，文案表只放用户可读文字。
   // ---------------------------------------------------------------------------
 
   // app.js: fixed header / info panel / main menu
+  // app.js：固定页眉 / 信息面板 / 主菜单
   'tui.app.bannerTitle': 'civitai-downloader',
   'tui.app.loggedIn': 'exported (log in again if it reports expired)',
   'tui.app.notLoggedIn': 'not logged in',
@@ -722,10 +767,12 @@ Examples:
   'tui.app.menuTitle': 'Main menu',
   'tui.app.menuDownload': 'Download',
   'tui.app.menuDownloadDesc': 'Download models or collections: paste a link / ID, select the items, start',
+  'tui.app.menuTasks': 'Tasks',
+  'tui.app.menuTasksDesc': 'View active tasks, failures and recent results (Ctrl+T)',
   'tui.app.menuModels': 'Local model management',
   'tui.app.menuModelsDesc': 'Manage local files per model: update, verify, pin a version, delete records',
   'tui.app.menuCollections': 'Local collection management',
-  'tui.app.menuCollectionsDesc': 'Manage per collection: check for updates, re-download, reset member records',
+  'tui.app.menuCollectionsDesc': 'Manage per collection: check for updates, re-download, mark members for re-download',
   'tui.app.menuSettings': 'Settings',
   'tui.app.menuSettingsDesc': 'Login, download directory, concurrency, proxy and every other option',
   'tui.app.menuCheck': 'Check for updates',
@@ -733,7 +780,8 @@ Examples:
   'tui.app.menuVerify': 'Verify / repair local files',
   'tui.app.menuVerifyDesc': 'Verify file integrity against the library records; re-download only broken files',
   'tui.app.menuExit': 'Exit',
-  'tui.app.busyHint': 'The previous step is still running… (Ctrl+M shows the task view)',
+  'tui.app.busyHint': 'The previous step is still running… (Ctrl+T shows the task view)',
+  'tui.app.exitWithTasksConfirm': '{count} tasks are still running. Cancel them and exit?',
   'tui.app.downloadTitle': 'What do you want to download?',
   'tui.app.downloadModel': 'Download models',
   'tui.app.downloadModelDesc': 'Paste model links / model:<ID> / version:<ID>, one per line or comma separated',
@@ -749,10 +797,13 @@ Examples:
   'tui.app.goodbye': 'Goodbye.',
 
   // screen.js: dashboard / task view / log pane
+  // screen.js：仪表盘 / 任务视图 / 日志区
   'tui.screen.infoTitle': 'Dashboard',
   'tui.screen.infoSettings': 'Current settings',
   'tui.screen.infoTasks': 'Task overview',
   'tui.screen.infoIdle': 'idle | nothing running',
+  'tui.screen.infoCompactIdle': 'idle',
+  'tui.screen.infoActive': '{count} tasks',
   'tui.screen.infoProgress': 'Total',
   'tui.screen.infoDoneCount': '{done}/{total} done',
   'tui.screen.infoRunningCount': '{count} running',
@@ -768,6 +819,7 @@ Examples:
   'tui.screen.taskMore': '… {count} more tasks',
   'tui.screen.taskElapsed': 'elapsed {elapsed}',
   'tui.screen.taskCounts': '{done} done | {skipped} skipped | {failed} failed / {total} total',
+  'tui.screen.taskAccess': 'Access {count}',
   'tui.screen.statusRunning': 'running',
   'tui.screen.statusDone': 'done',
   'tui.screen.statusFailed': 'failed',
@@ -788,6 +840,7 @@ Examples:
   'tui.screen.taskNotRunning': 'That task already finished and cannot be cancelled',
   'tui.screen.taskQueueCancelled': 'Removed from the queue: {name}',
   'tui.screen.taskCancelRequested': 'Cancellation requested: {name}',
+  'tui.screen.taskCancelConfirm': 'Cancel task “{name}”? Downloaded parts are kept and can be resumed later.',
   'tui.screen.taskSkipRequested': 'Skip requested for the current model: {name}',
   'tui.screen.taskSkipNotRunning': 'Only a running download can be skipped',
   'tui.screen.taskNoSkip': 'This task has no download to skip',
@@ -800,7 +853,9 @@ Examples:
   'tui.screen.suspendUnsupported': 'Suspending is not supported on this platform (Ctrl+Z ignored)',
 
   // Footer: exactly one line per page, listing only the keys that work there
-  'tui.hint.main': '↑↓ Select | Enter Open | ? Help',
+  // 页脚：每个页面只有一行，只列这一页能用的键
+  'tui.hint.main': '↑↓ Select | Enter Open | Ctrl+T Tasks | ? Help',
+  'tui.hint.mainCompact': '↑↓ Select | Enter | ? Help',
   'tui.hint.menu': '↑↓ Select | Enter Confirm | Esc Back | ? Help',
   'tui.hint.confirm': '←→ Select | y/n Shortcut | Enter Confirm | Esc Back | ? Help',
   'tui.hint.text': 'Enter Submit | Esc Discard | ? Help',
@@ -809,15 +864,18 @@ Examples:
   'tui.hint.textPickReset':
     'Enter Submit | Esc Discard | Ctrl+O Pick folder | Ctrl+R Restore default | ? Help',
   'tui.hint.message': 'Esc Back | ? Help',
-  'tui.hint.settings': '↑↓ Select | Enter Edit/Run | Esc Back | ? Help',
+  'tui.hint.settings': '↑↓ Select | Enter Edit & save / Run | Esc Back | ? Help',
+  'tui.hint.settingsCompact': 'Enter Edit & save | Esc Back | ? Help',
   'tui.hint.picker': '↑↓ Select | Space Toggle | / Search | t/b/s Filter | Enter Confirm | Esc Back | ? Help',
   'tui.hint.pickerSearch': 'Type to search | Enter Ends input | Esc Clears | Backspace Delete',
   'tui.hint.pickerHelp': 'Any key returns to the list | Esc Cancels the selection',
   'tui.hint.downloadPlan': '↑↓ Select | Space Toggle | a/i All/Invert | n New only | v Versions | o Options | / Search | Enter Confirm | ? Help',
   'tui.hint.downloadConfirm': '↑↓ Select | Enter Edit/Start | Esc Back to plan | ? Help',
   'tui.hint.downloadVersion': '↑↓ Select | Space Toggle (multi) | Enter Use checked | p Pin | Esc Back | ? Help',
-  'tui.hint.receipt': 'Enter back to downloads | Esc back to main menu | ? Help',
-  'tui.hint.taskView': '↑↓ Select | Esc Back | ? Help',
+  'tui.hint.receipt': '↑↓ Select | Enter Run | Esc Back to downloads | ? Help',
+  'tui.hint.receiptCompact': '↑↓ Select | Enter Run | Esc Back | ?',
+  'tui.hint.taskView': '↑↓ Select | PgUp/PgDn Page | Esc Back | ? Help',
+  'tui.hint.taskViewCompact': '↑↓ | c Cancel | Esc | ?',
   'tui.hint.taskRunning': '↑↓ Select | c Cancel | s Skip current | x Clear | Esc Back | ? Help',
   'tui.hint.taskRunningNoSkip': '↑↓ Select | c Cancel | x Clear | Esc Back | ? Help',
   'tui.hint.taskQueued': '↑↓ Select | c Cancel queued | x Clear | Esc Back | ? Help',
@@ -826,14 +884,22 @@ Examples:
   'tui.hint.taskFinishedNoDir': '↑↓ Select | r Retry failed | x Clear | Esc Back | ? Help',
   'tui.hint.taskFinishedOnly': '↑↓ Select | x Clear | Esc Back | ? Help',
   'tui.hint.logView': '↑↓ / PgUp / PgDn scroll | Esc Back | ? Help',
+  'tui.hint.logViewCompact': '↑↓ Scroll | Esc | ?',
   'tui.hint.modelVersion': '↑↓ Select | Enter download this version | Esc Back | ? Help',
   'tui.hint.compact': '↑↓ Select | Enter | Esc | ?',
-  'tui.hint.workspace': 'Tab Switch region | Enter Run | Esc Back | ? Help',
+  'tui.hint.workspaceInput': 'Type then Enter Add | Tab Switch region | Esc Back | ? Help',
+  'tui.hint.workspace': '↑↓ Select | Space Toggle | / Search | t/b/d/p Filter | s Sort | a All | n Free new | c Clear | x Remove | Tab | ? Help',
+  'tui.hint.workspaceSearch': 'Type to filter | Enter Finish | Esc Clear | Backspace Delete',
+  'tui.hint.workspaceNext': 'Enter Confirm selection | Tab Back to list | Esc Back | ? Help',
+  'tui.hint.workspaceCompactInput': 'Enter Add | Tab | Esc | ?',
+  'tui.hint.workspaceCompactSelected': 'Space | Enter Ver | p Paid | / | Tab | Esc | ?',
+  'tui.hint.workspaceCompactNext': 'Enter Confirm | Tab | Esc | ?',
+  'tui.hint.workspaceCompactSearch': 'Enter Finish search | Esc Clear | Backspace | ?',
   'tui.workspace.stepSelect': 'Select',
   'tui.workspace.stepConfirm': 'Confirm',
   'tui.workspace.stepReceipt': 'Receipt',
   'tui.workspace.search': 'Input',
-  'tui.workspace.modelInputLabel': 'Model ID or model page URL (model: / version: supported)',
+  'tui.workspace.modelInputLabel': 'Model ID, model page URL or version:ID (comma-separate for batches)',
   'tui.workspace.modelEmpty': 'Enter a model ID or full URL, then press Enter to add it',
   'tui.workspace.modelTitle': 'Model title',
   'tui.workspace.collectionTitle': 'Collection title',
@@ -847,28 +913,66 @@ Examples:
   'tui.models.versionsDeleted': 'Deleted {count} version(s)',
   'tui.workspace.collectionEmptyPrompt': 'Enter a collection ID or collection URL, then press Enter to enumerate',
   'tui.workspace.busy': 'Working…',
+  'tui.workspace.resolving': 'Resolving model references…',
+  'tui.workspace.loadingVersions': 'Loading versions…',
+  'tui.workspace.position': 'item {index}/{total}',
   'tui.workspace.selected': 'Selected {count}/{total}',
+  'tui.workspace.selectionSummary': 'Selected {selected}/{visible} | {total} total | {size}{filters}',
+  'tui.workspace.filterSearch': 'search “{value}”',
+  'tui.workspace.filterDownloaded': 'downloaded only',
+  'tui.workspace.filterNew': 'new only',
+  'tui.workspace.sortName': 'by name',
+  'tui.workspace.sortSize': 'by size',
+  'tui.workspace.noMatches': 'No items match the current filters',
+  'tui.workspace.metaFailed': '{count} items failed to load metadata and are not in the plan: {names}',
+  'tui.access.paid': 'Paid',
+  'tui.access.paidFree': 'Paid/Free',
+  'tui.access.paidUntil': 'Paid until {date}',
+  'tui.access.paidExpired': 'Paid period ended',
+  'tui.access.early': 'Limited access',
+  'tui.access.earlyFree': 'Limited/Free',
+  'tui.access.earlyUntil': 'Limited access until {date}',
+  'tui.access.unavailable': 'Unavailable',
+  'tui.access.warning': '{count} items contain paid versions requiring download access on the current account',
+  'tui.workspace.accessFree': 'Free only',
+  'tui.workspace.accessPaid': 'Contains paid',
+  'tui.workspace.accessStats': 'Paid {selected}/{total}',
+  'tui.workspace.versionAccess': '{name} ({access})',
   'tui.workspace.empty': 'No downloadable models yet',
   'tui.workspace.next': 'Confirm selection',
   'tui.workspace.emptyInput': 'Enter a model ID or a full URL',
   'tui.workspace.invalidInput': 'Invalid format: enter a model ID or a full URL',
+  'tui.workspace.invalidInputBatch': 'Invalid format: {refs}',
   'tui.workspace.noResult': 'No downloadable version resolved',
+  'tui.workspace.noSelection': 'Nothing is selected yet; press Space to select an item before continuing',
   'tui.workspace.rowVersion': '{name} ({version})',
-  'tui.hint.workspaceConfirm': 'Tab Switch region | Enter Run | Esc Back to selection | ? Help',
+  'tui.hint.workspaceConfirmRows': '↑↓ Scroll list | Tab Actions | Esc Back to selection | ? Help',
+  'tui.hint.workspaceConfirmActions': '↑↓ Select action | Enter Run | Tab Back to list | Esc Back | ? Help',
+  'tui.hint.workspaceConfirmCompact': 'Tab Region | ↑↓ Select | Enter | Esc | ?',
   'tui.workspace.confirmNext': 'Start download',
   'tui.workspace.confirmBack': 'Back to selection',
+  'tui.workspace.confirmWork': 'This task',
+  'tui.workspace.confirmWorkValue': '{downloads} new | {verify} existing to verify | {size} total',
+  'tui.workspace.confirmFiles': 'File types',
+  'tui.workspace.confirmDisk': 'Free disk',
+  'tui.workspace.confirmAccess': 'Access',
+  'tui.workspace.confirmPaidHint': '{count} need existing access; no purchase or Buzz spending',
+  'tui.workspace.deleteTitle': 'Will delete',
   'tui.workspace.deleteSummary': 'Will delete {count} downloaded version(s) ({size})',
-  'tui.workspace.deleteDone': 'Deleted {count} version(s)',
+  'tui.workspace.deleteFinalConfirm': 'Final confirmation: permanently delete {count} downloaded version(s), {size} in total?',
 
   // view.js
+  // view.js：通用输出
   'tui.view.helpNoWait': '(this terminal cannot read keys, so the help page will not wait; press Enter to continue)',
   // view.js: decision echo left behind by a full-screen screen
+  // view.js：全屏界面退出后留下的决定回显
   'tui.view.decisionCancelled': 'Selection cancelled',
   'tui.view.decisionSelected': 'Selected: {name}',
   'tui.view.decisionPicked': '{count} items selected',
   'tui.view.nothingToCancel': 'Nothing to cancel right now',
 
   // select.js: sort labels / key hints / status text
+  // select.js：排序标签 / 按键提示 / 状态文案
   'tui.select.sortDefault': 'Default order',
   'tui.select.sortName': 'By name',
   'tui.select.sortSizeDesc': 'By size ↓',
@@ -877,6 +981,7 @@ Examples:
   'tui.select.statusUpdated': 'Update available',
   'tui.select.statusPinned': 'Version pinned',
   // select.js: header / columns / footer
+  // select.js：表头 / 列头 / 页脚
   'tui.select.filterSearchQuoted': 'Search: "{value}"',
   'tui.select.filterSearchOff': 'Search: off',
   'tui.select.filterType': 'Type: {value}',
@@ -895,6 +1000,7 @@ Examples:
   'tui.select.noMatches': 'No matching items (adjust the filters with / t b)',
   'tui.select.typing': 'Typing…',
   // select.js: action feedback
+  // select.js：操作反馈
   'tui.select.toggledOn': 'Selected',
   'tui.select.toggledOff': 'Deselected',
   'tui.select.allCleared': 'Selection cleared',
@@ -912,6 +1018,7 @@ Examples:
   'tui.select.selectorRenderFailed': 'Interactive selector failed to render ({error}); falling back to the simple prompt',
 
   // select.js: help overlay / single-select mode
+  // select.js：帮助浮层 / 单选模式
   'tui.select.helpOpen': 'Help opened; press any key to return',
   'tui.select.helpPage': 'Help: ↑/↓ keep working while the list is visible',
   'tui.select.helpMove': '↑/↓ or k/j move the cursor (the list scrolls along)',
@@ -929,6 +1036,7 @@ Examples:
   'tui.select.suspendUnsupported': 'Suspend is not supported on Windows; Ctrl+Z ignored',
 
   // run.js: download progress panel
+  // run.js：下载进度面板
   'tui.run.downloading': 'Downloading',
   'tui.run.counts': 'Done {ok} | Skipped {skipped} | Failed {failed} / {total} items',
   'tui.run.remaining': 'ETA {eta}',
@@ -943,6 +1051,7 @@ Examples:
   'tui.run.skipNotice': 'Skip requested; the current model will be skipped (downloaded parts are kept)…',
 
   // download.js: filtering / selection
+  // download.js：筛选 / 勾选
   'tui.download.prefilterHint': 'Available / filter in the full-screen list with / search, t type, b base model and s sort instead of step-by-step prompts',
   'tui.download.prefilterSummary': '{count} items | {size} in total {done}',
   'tui.download.prefilterDone': '· {count} already done',
@@ -965,6 +1074,7 @@ Examples:
   'tui.download.selectTitle': 'Select items to download ({count} items, {size} total)',
   'tui.download.noneSelected': 'No items selected',
   // download.js: version picking
+  // download.js：版本选择
   'tui.download.versionListFailed': 'Failed to fetch the version list (keeping the default version): {name} -> {error}',
   'tui.download.singleVersionOnly': 'Every selected model has only one version; nothing to choose',
   'tui.download.multiVersionNotice': '{count} models have multiple versions; choose one by one (default = the collection version)',
@@ -975,6 +1085,7 @@ Examples:
   'tui.download.pinConfirm': 'You picked versions for {count} models manually; pin them (so future downloads stop following new releases)?',
   'tui.download.pinMarked': 'Marked as pinned; this is written to the completion records once the download finishes',
   // download.js: download options
+  // download.js：下载选项
   'tui.download.outDirPrompt': 'Output directory (relative paths are resolved against the project root: {root})',
   'tui.download.notEmpty': 'Cannot be empty',
   'tui.download.lowSpace': 'Warning: the plan needs {planned}, but the disk holding {dir} has only {free} left',
@@ -984,6 +1095,7 @@ Examples:
   'tui.download.jobsThree': '3',
   'tui.download.startConfirm': 'Start downloading {count} items, {size} total → {dir}?',
   // download.js: main flow
+  // download.js：主流程
   'tui.download.collectionIdPrompt': 'Collection ID or collection page URL',
   'tui.download.enumerating': 'Enumerating the items of collection {collectionId}…',
   'tui.download.connectingBrowser': 'Connecting to / launching the browser (the first launch is slow, please wait)…',
@@ -1017,10 +1129,12 @@ Examples:
   'tui.download.summaryCancelled': 'Cancelled: {done} done, {skipped} skipped, {failed} failed (downloaded files are kept and can be resumed)',
   'tui.download.summaryDone': 'Finished: {done} done, {skipped} skipped, {failed} failed',
   'tui.download.summaryDoneMeta': 'Finished: {done} done, {skipped} skipped, {failed} failed, {metaFailed} metadata failures',
+  'tui.download.summaryAccess': 'Finished: {done} done, {skipped} skipped, {accessRequired} access-required, {failed} failed',
   'tui.download.elapsed': 'Elapsed {elapsed}; log file: {file}',
   'tui.download.openDirConfirm': 'Open the download directory?',
   'tui.download.opened': 'Opened: {dir}',
   // download.js: shell plan / confirm / receipt
+  // download.js：外壳计划 / 确认 / 回执
   'tui.download.statusNew': 'Not downloaded',
   'tui.download.statusManual': 'Manual',
   'tui.download.statusPinConflict': 'Pinned v{pinned} (plan v{plan})',
@@ -1061,19 +1175,23 @@ Examples:
   'tui.download.receiptMissing': 'The task does not exist or has already been cleared',
   'tui.download.receiptSummary': '{name} | {count} items | {size} → {dir} | concurrency {jobs}',
   'tui.download.receiptQueued': 'Queued (position {position}, {waiting} in the queue); it starts automatically when the previous task ends',
-  'tui.download.receiptRunning': 'Running: progress and results are in the Ctrl+M task view',
-  'tui.download.receiptDone': 'Finished: results are in the Ctrl+M task view',
-  'tui.download.receiptCancelled': 'Cancelled: results are in the Ctrl+M task view',
+  'tui.download.receiptRunning': 'Running: progress and results are in the Ctrl+T task view',
+  'tui.download.receiptDone': 'Finished: results are in the Ctrl+T task view',
+  'tui.download.receiptCancelled': 'Cancelled: results are in the Ctrl+T task view',
   'tui.download.receiptFailed': 'Failed to start: {error}',
-  'tui.download.receiptHint': 'The task keeps running regardless of this page. Ctrl+M opens the task view; Enter goes back to downloads, Esc goes back to the main menu.',
-  'tui.download.taskFailedNotice': 'Download failed: {error} | Ctrl+M opens the task view',
-  'tui.download.viewTasksHint': ' | Ctrl+M opens the task view',
+  'tui.download.receiptHint': 'The task keeps running regardless of this page. Open the task view below, or continue adding downloads.',
+  'tui.download.receiptViewTask': 'View task progress and result',
+  'tui.download.receiptContinue': 'Continue downloading',
+  'tui.download.receiptMain': 'Back to main menu',
+  'tui.download.taskFailedNotice': 'Download failed: {error} | Ctrl+T opens the task view',
+  'tui.download.viewTasksHint': ' | Ctrl+T opens the task view',
   'tui.download.retryName': '{name} (retry)',
   'tui.download.postProcessFailed': 'Post-download step failed: {error}',
   'tui.download.snapshotFailed': 'Failed to write the collection snapshot: {error}',
   'tui.download.planWriteFailed': 'Failed to write the plan file: {error}',
 
   // check.js
+  // check.js：TUI 检查流程
   'tui.check.noRecords': 'No collection membership snapshot yet (run node cli.js list <collectionId> or download once)',
   'tui.check.collectionLabel': 'Collection {id}',
   'tui.check.completionRecords': '{count} members',
@@ -1104,6 +1222,7 @@ Examples:
   'tui.check.selectedModel': 'Model selected: {id}',
 
   // check.js: check report pages
+  // check.js：检查报告页
   'tui.check.report.titleCollection': 'Check report | collection {id}',
   'tui.check.report.titleModel': 'Check report | {name}',
   'tui.check.report.listTitle': 'Check reports',
@@ -1154,6 +1273,7 @@ Examples:
   'tui.check.report.allTargets': 'Check reports ({count} targets)',
 
   // login.js
+  // login.js：TUI 登录流程
   'tui.login.title': 'Log in / check session ({site})',
   'tui.login.modeLogin': 'Log in / refresh login',
   'tui.login.modeLoginDesc': 'Open the browser to log in and save the session',
@@ -1165,6 +1285,7 @@ Examples:
   'tui.login.done': 'Login flow finished; you can go back to the main menu',
 
   // manage.js (collection members and changes)
+  // manage.js（收藏集成员与变化）
   'tui.manage.cancelled': 'Cancelled',
   'tui.manage.back': 'Back',
   'tui.manage.collectionLabel': 'Collection {id}',
@@ -1187,11 +1308,12 @@ Examples:
   'tui.manage.noChanges': 'No changes made',
   'tui.manage.nameSeparator': ', ',
   'tui.manage.actionPrompt': 'What do you want to do with collection {collectionId}?',
-  'tui.manage.resetAction': 'Reset a model for re-download',
-  'tui.manage.resetActionDesc': 'After the record is deleted the model is downloaded again next time',
-  'tui.manage.resetPick': 'Choose the models whose records should be reset (Space to toggle)',
-  'tui.manage.resetConfirm': 'Reset the records of {count} models for re-download?',
-  'tui.manage.resetDone': 'Reset {count} model records: {names}',
+  'tui.manage.cancel': 'Cancel',
+  'tui.manage.resetAction': 'Mark selected members for re-download',
+  'tui.manage.resetActionDesc': 'Updates download records only; downloaded files are kept',
+  'tui.manage.resetPick': 'Choose the models to mark for re-download (Space to toggle)',
+  'tui.manage.resetConfirm': 'Mark {count} models for re-download? No local files will be deleted.',
+  'tui.manage.resetDone': 'Marked {count} models for re-download: {names}',
   'tui.manage.resetEmpty': 'Collection {collectionId} has no recorded model',
   'tui.manage.pinnedMark': 'pinned',
   'tui.manage.noVersionId': 'This record has no version ID; it cannot be pinned',
@@ -1213,6 +1335,7 @@ Examples:
   'tui.manage.repairFailed': 'Some files failed to repair; try again later',
 
   // manage.js: collection snapshot page
+  // manage.js：收藏集快照页
   'tui.manage.snapshotMissing': 'Collection {id} has no membership snapshot yet',
   'tui.manage.snapshot.factId': 'Collection ID',
   'tui.manage.snapshot.factMembers': 'Members',
@@ -1227,10 +1350,10 @@ Examples:
   'tui.manage.snapshot.emptyAdded': 'No members were added',
   'tui.manage.snapshot.emptyRemoved': 'No members were removed',
   'tui.manage.snapshot.emptyChanged': 'No version changes',
-  'tui.manage.resetChanged': 'Reset records of the changes',
-  'tui.manage.resetChangedDesc': 'Resets added and version-changed entries only; the next download fetches them again (files are kept)',
-  'tui.manage.resetChangedConfirm': 'Reset {count} changed records (files are kept)?',
-  'tui.manage.resetChangedDone': 'Reset {count} changed records',
+  'tui.manage.resetChanged': 'Mark changes for re-download',
+  'tui.manage.resetChangedDesc': 'Updates added and version-changed records only; downloaded files are kept',
+  'tui.manage.resetChangedConfirm': 'Mark {count} changed records for re-download? No local files will be deleted.',
+  'tui.manage.resetChangedDone': 'Marked {count} changed records for re-download',
   'tui.manage.resetChangedEmpty': 'There is nothing to reset',
   'tui.manage.membersAction': 'View member list',
   'tui.manage.membersActionDesc': 'Searchable / sortable; Enter opens the model page when a local record exists',
@@ -1238,6 +1361,7 @@ Examples:
   'tui.manage.memberNoRecord': 'Member {modelId} has no local record yet',
 
   // models.js (model library: one record per model)
+  // models.js（模型库：一模型一记录）
   'tui.models.menuTitle': 'Local model management',
   'tui.models.menuCheck': 'Check every model for updates',
   'tui.models.menuCheckDesc': 'One or all models; quick/deep comparison against online versions, then download changes',
@@ -1269,13 +1393,21 @@ Examples:
   'tui.models.pinPick': 'Choose the model to work on',
   'tui.models.pinVersionPick': 'Which version should be pinned?',
   'tui.models.forgetPick': 'Choose the models whose records should be deleted (Space to toggle)',
-  'tui.models.forgetConfirm': 'Delete {count} model records?',
-  'tui.models.forgetFilesConfirm': 'Also delete the files listed in these records? (irreversible; No = records only)',
+  'tui.models.forgetModeTitle': 'What should happen to the records of {count} models?',
+  'tui.models.forgetCancelDesc': 'Keep the library and all files unchanged',
+  'tui.models.forgetRecordsOnly': 'Delete records only',
+  'tui.models.forgetRecordsOnlyDesc': 'Keep files on disk, but stop managing them in this tool',
+  'tui.models.forgetWithFiles': 'Delete records and files',
+  'tui.models.forgetWithFilesDesc': 'Permanently delete local files; a final confirmation follows',
+  'tui.models.forgetFinalConfirm': 'Final confirmation: delete {count} model records and their files ({size})? This cannot be undone.',
+  'tui.models.forgetDoneRecords': 'Deleted {count} model records',
+  'tui.models.forgetDoneFiles': 'Deleted {count} model records and their files',
   'tui.models.filterCollection': 'Filter by collection (snapshot members)',
   'tui.models.allCollections': 'All models (no filter)',
   'tui.models.collectionItem': 'Collection {id} ({count} items)',
 
   // models.js: source picker / browser / detail page
+  // models.js：来源选择 / 浏览页 / 详情页
   'tui.models.sourcePrompt': 'Where do the models come from?',
   'tui.models.sourcePaste': 'Paste model URLs / references',
   'tui.models.sourcePasteDesc': 'Supports model:<ID>, version:<ID> and model page URLs; several lines or comma separated',
@@ -1312,11 +1444,12 @@ Examples:
   'tui.models.pageAuthor': 'by {author}',
   'tui.models.pageDownloads': '{count} downloads',
   'tui.models.pageVersions': 'Versions ({count})',
-  'tui.models.pageVersionsSelected': 'Versions (selected {selected}/{total})',
-  'tui.hint.downloadVersionMulti': 'Space Toggle | Enter Use selected | Esc Back | ? Help',
+  'tui.models.pageVersionsSelected': 'Versions (selected {selected}/{total}, {size})',
+  'tui.hint.downloadVersionMulti': 'Space Toggle | Enter Apply (none = skip this model) | Esc Back | ? Help',
   'tui.models.pageDownloaded': '{count} downloaded',
 
   // models.js: model detail report page
+  // models.js：模型详情报告页
   'tui.models.factBaseModel': 'Base model',
   'tui.models.factDir': 'Directory',
   'tui.models.versionCountDetail': '{count} total ({recorded} recorded)',
@@ -1336,6 +1469,7 @@ Examples:
   'tui.models.versionActionOpenDir': 'Open this version\u2019s folder',
 
   // pages.js: shared interaction (folder picker / multi-select help / re-download choice / fact blocks)
+  // pages.js：公共交互（目录选择 / 多选说明 / 重下确认 / 信息块）
   'tui.pages.pickUnavailable': 'No folder dialog is available here; type the path instead',
   'tui.pages.invalidValue': 'Invalid input',
   'tui.pages.listPosition': 'item {index} / {total}',
@@ -1348,6 +1482,7 @@ Examples:
   'tui.pages.redownloadForceDesc': 'Overwrite local files and verify/download again; repairs broken files',
 
   // pages.js: help page (main menu → Help / shortcuts)
+  // pages.js：帮助页（主菜单「帮助 / 快捷键」）
   'tui.help.title': 'Help / shortcuts',
   'tui.help.shortTitle': 'Help',
   'tui.help.version': 'Version {version}',
@@ -1365,16 +1500,16 @@ Examples:
   'tui.help.generalQuickSelect': 'Jump to row n (with Shift it toggles instead)',
   'tui.help.generalConfirm': 'Select / confirm and move on to the next screen',
   'tui.help.generalBack': 'Go back one level (no effect in the main menu; use Ctrl+C to quit)',
-  'tui.help.generalTasks': 'Open or close the task view (Ctrl+M)',
+  'tui.help.generalTasks': 'Open or close the task view (Ctrl+T; the main menu also has a Tasks entry)',
   'tui.help.generalLog': 'Open this session\u2019s log (Ctrl+L; Esc goes back)',
   'tui.help.generalQuit': 'Quit the program immediately',
-  'tui.help.generalCancelTask': 'Cancel the selected task in the task view',
   'tui.help.generalHelp': 'Open this key reference inside a list',
-  'tui.help.runSkip': 'Skip the current model (downloaded parts are kept)',
-  'tui.help.runCancel': 'Cancel this download (resume it later)',
+  'tui.help.runSkip': 'In the task view, skip the current model (downloaded parts are kept)',
+  'tui.help.runCancel': 'In the task view, cancel this download (resume it later)',
   'tui.help.footer': 'Press any key to return',
 
   // settings.js
+  // settings.js：TUI 设置页
   'tui.settings.site': 'Site URL (log in again after changing it)',
   'tui.settings.invalidSite': 'Must start with http(s)://',
   'tui.settings.outDir': 'Download directory (relative paths are resolved against the project root: {root})',
@@ -1451,12 +1586,20 @@ Examples:
     'Site changed: the Chrome profile switches to a separate directory for the new site; please log in again (main menu → Log in / refresh login)',
 
   // report.js: shared report page
+  // report.js：共享报告页
   'tui.report.actions': 'Actions',
   'tui.report.empty': '(none)',
   'tui.report.fromTo': '{from} → {to}',
-  'tui.hint.report': '↑↓ select | Enter run | Esc back | ? help',
+  'tui.hint.report': '↑↓ scroll / select | Tab switch region | Enter run | Esc back | ? help',
+  'tui.hint.reportBody': '↑↓ / PgUp / PgDn scroll content | Tab actions | Esc back | ? help',
+  'tui.hint.reportRows': '↑↓ select row | Enter open | Tab switch region | Esc back | ? help',
+  'tui.hint.reportActions': '↑↓ select action | Enter run | Tab back to content | Esc back | ? help',
+  'tui.hint.reportBodyCompact': '↑↓ Scroll | Tab | Esc | ?',
+  'tui.hint.reportRowsCompact': '↑↓ Select | Enter | Tab | Esc | ?',
+  'tui.hint.reportActionsCompact': '↑↓ Action | Enter | Tab | Esc | ?',
 
   // models.js: verify report page
+  // models.js：校验报告页
   'tui.verify.report.title': 'Verification report',
   'tui.verify.report.factScope': 'Scope',
   'tui.verify.report.factModels': 'Models',
@@ -1475,6 +1618,7 @@ Examples:
   'tui.verify.report.actionDeepDesc': 'Hashes local files; catches a re-uploaded version',
 
   // settings.js: environment check report page
+  // settings.js：环境体检报告页
   'tui.doctor.report.title': 'Environment check',
   'tui.doctor.report.collecting': 'Checking the environment…',
   'tui.doctor.report.factTotal': 'Checks',

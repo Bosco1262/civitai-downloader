@@ -19,6 +19,7 @@ const view = require('../view');
 const screen = require('../screen');
 const list = require('./list');
 const { color } = require('../tokens');
+const { accessLabel } = require('./accessText');
 
 const { displayWidth, truncateTo } = layout;
 
@@ -53,10 +54,13 @@ async function showVersionSelectionPage(opts = {}) {
       const room = Math.max(3, Math.floor(ctx.rows) || 3);
       const lines = [
         color.muted(
-          t('tui.versionSelection.selected', {
+          `${t('tui.versionSelection.selected', {
             count: state.selected.size,
             total: rows.length,
-          })
+          })} ${layout.glyphs().separator} ${t('tui.pages.listPosition', {
+            index: Math.min(rows.length, state.cursor + 1),
+            total: rows.length,
+          })}`
         ),
         '',
       ];
@@ -70,16 +74,14 @@ async function showVersionSelectionPage(opts = {}) {
         const marker = active ? color.cursor(layout.glyphs().cursor) : ' ';
         const box = view.checkbox(state.selected.has(id));
         const label = view.padTo(String(row.name || id), nameWidth);
-        const rest = describe(row);
+        const access = accessLabel(row.access);
+        const rest = [describe(row), access].filter(Boolean).join(` ${layout.glyphs().bullet} `);
         const lock = row.pinned ? ` ${color.warning(t('tui.versionSelection.pinned'))}` : '';
         lines.push(
           `${marker} ${box} ${active ? color.emphasis(label) : label}  ${color.muted(
             truncateTo(rest, Math.max(8, width - nameWidth - 4))
           )}${lock}`
         );
-      }
-      if (rows.length > win.end - win.start) {
-        lines.push(color.muted(t('tui.pages.listPosition', { index: state.cursor + 1, total: rows.length })));
       }
       return lines;
     },

@@ -21,7 +21,14 @@ const { writeJson, formatBytes, mapPool } = require('../../util');
 const { dataPaths, readLibrary, getVersion, writeCollection } = require('../../storage');
 const { ensureBrowser } = require('../../browser');
 const { fetchCollectionItems } = require('../../collection');
-const { buildPlan, fetchModelDetail, extractFiles, versionToItem } = require('../../api');
+const {
+  buildPlan,
+  buildPlanFromModels,
+  fetchModelDetail,
+  extractFiles,
+  versionToItem,
+} = require('../../api');
+const { classifyVersionAccess, summarizeAccess } = require('../../access');
 const { resolveOutDir } = require('../../config');
 const { parseCollectionId } = require('../../urls');
 const { createSiteLimiter } = require('../../runtime');
@@ -39,10 +46,11 @@ const { present } = require('../shell/present');
 const { showPlanWorkspace } = require('../ui/planWorkspace');
 const steps = require('../ui/steps');
 const list = require('../ui/list');
-const { buildPageLayout } = require('../ui/page');
+const { buildPageLayout, sectionHeading } = require('../ui/page');
 const { deleteVersions } = require('../core/versionDelete');
 const layout = require('../core/layout');
 const { color, glyph, format } = require('../ui/tokens');
+const { accessLabel } = require('../ui/accessText');
 
 /**
  * Rows per screen in the full-screen picker (shrinks when the terminal is short).
@@ -1300,65 +1308,93 @@ async function confirmPage(config, data) {
  * 回执页：任务已提交；进度和结果都在任务视图。
  */
 async function receiptPage(taskId, opts = {}) {
+  let cursor = 0;
+  const labels = [
+    t('tui.download.receiptViewTask'),
+    t('tui.download.receiptContinue'),
+    t('tui.download.receiptMain'),
+  ];
   return screen.prompt({
     title: t('tui.download.receiptTitle'),
     crumbPath: opts.crumbPath,
     steps: downloadStepFlow(2),
     hints: () => [t('tui.hint.receipt')],
+    compactHints: () => [t('tui.hint.receiptCompact')],
     render(_state, ctx) {
       const task = tasks.getTask(taskId);
       const width = Math.max(20, Math.floor(ctx.width) || 80);
+      const room = Math.max(1, Math.floor(ctx.rows) || 3);
       const lines = [];
       if (!task) {
         lines.push(color.danger(t('tui.download.receiptMissing')));
-        return lines;
-      }
-      const failed = task.status === tasks.FAILED;
-      lines.push(
-        failed
-          ? color.danger(t('tui.download.receiptFailedTitle'))
-          : color.success(t('tui.download.receiptJoined'))
-      );
-      lines.push('');
-      lines.push(
-        t('tui.download.receiptSummary', {
-          name: view.truncateTo(task.name || task.id, Math.max(16, width - 12)),
-          count: task.total,
-          size: formatBytes(task.totalBytes),
-          dir: view.truncateTo(task.outDir || '-', Math.max(16, width - 16)),
-          jobs: task.jobs,
-        })
-      );
-      lines.push('');
-      if (failed) {
-        lines.push(color.danger(t('tui.download.receiptFailed', { error: (task.result && task.result.error) || '' })));
-      } else if (task.status === tasks.QUEUED) {
-        lines.push(
-          color.warning(
-            t('tui.download.receiptQueued', {
-              position: tasks.queuePosition(taskId),
-              waiting: queuedDownloads(),
-            })
-          )
-        );
-      } else if (task.status === tasks.RUNNING) {
-        lines.push(color.success(t('tui.download.receiptRunning')));
-      } else if (task.status === tasks.DONE) {
-        lines.push(color.success(t('tui.download.receiptDone')));
       } else {
-        lines.push(color.warning(t('tui.download.receiptCancelled')));
+        const failed = task.status === tasks.FAILED;
+        lines.push(
+          failed
+            ? color.danger(t('tui.download.receiptFailedTitle'))
+            : color.success(t('tui.download.receiptJoined'))
+        );
+        lines.push('');
+        lines.push(
+          t('tui.download.receiptSummary', {
+            name: view.truncateTo(task.name || task.id, Math.max(16, width - 12)),
+            count: task.total,
+            size: formatBytes(task.totalBytes),
+            dir: view.truncateTo(task.outDir || '-', Math.max(16, width - 16)),
+            jobs: task.jobs,
+          })
+        );
+        lines.push('');
+        if (failed) {
+          lines.push(
+            color.danger(t('tui.download.receiptFailed', { error: (task.result && task.result.error) || '' }))
+          );
+        } else if (task.status === tasks.QUEUED) {
+          lines.push(
+            color.warning(
+              t('tui.download.receiptQueued', {
+                position: tasks.queuePosition(taskId),
+                waiting: queuedDownloads(),
+              })
+            )
+          );
+        } else if (task.status === tasks.RUNNING) {
+          lines.push(color.success(t('tui.download.receiptRunning')));
+        } else if (task.status === tasks.DONE) {
+          lines.push(color.success(t('tui.download.receiptDone')));
+        } else {
+          lines.push(color.muted(t('tui.download.receiptCancelled')));
+        }
+        lines.push('');
+        lines.push(color.muted(t('tui.download.receiptHint')));
       }
-      lines.push('');
-      lines.push(color.muted(t('tui.download.receiptHint')));
-      return lines;
+
+      const actionWidth = labels.reduce((max, label) => Math.max(max, layout.displayWidth(label)), 0);
+      const actionLines = labels.map((label, index) => {
+        const mark = index === cursor ? color.cursor(layout.glyphs().cursor) : ' ';
+        const text = layout.padTo(label, actionWidth);
+        return `${mark} ${index === cursor ? color.emphasis(text) : text}`;
+      });
+      const actionBlock = [sectionHeading(t('tui.report.actions'), width), ...actionLines];
+      const contentRoom = Math.max(1, room - actionBlock.length);
+      return [...lines.slice(0, contentRoom), ...actionBlock].slice(0, room);
     },
-    onKey(text, key, entry) {
-      if (key && key.name === 'return') entry.settle('download');
+    async onKey(text, key, entry) {
+      const name = key && key.name;
+      if (name === 'up') cursor = (cursor + labels.length - 1) % labels.length;
+      else if (name === 'down') cursor = (cursor + 1) % labels.length;
+      else if (name === 'home') cursor = 0;
+      else if (name === 'end') cursor = labels.length - 1;
+      else if (name === 'return') {
+        if (cursor === 0) screen.toggleTaskView(true);
+        else if (cursor === 1) entry.settle('download');
+        else entry.settle('main');
+      }
     },
     onEscape(entry) {
-      // Esc must leave the download submenu; it never cancels the background task.
-      // Esc 返回主菜单；它不会取消后台任务。
-      entry.settle('main');
+      // Esc returns one level and never cancels the background task.
+      // Esc 只返回上一级，不会取消后台任务。
+      entry.settle('download');
       return true;
     },
   });
@@ -1393,16 +1429,20 @@ async function resolveCollectionPlan(config, collectionId) {
     view.log(t('tui.download.snapshotFailed', { error: e.message }));
   }
 
-  // The snapshot above records the collection's own versions; the download plan follows the pins.
-  // 上面的快照记录收藏集自己的版本；下面的下载计划跟随固定版本。
-  const pinnedCount = applyPinsToItems(readLibrary(config, { allowCorrupt: true }).entries, items);
-  if (pinnedCount) view.log(t('tui.download.pinsApplied', { count: pinnedCount }));
-
+  /*
+   * The snapshot above records the collection's own versions; the download plan now follows the
+   * model: pinned version first, otherwise the newest one. Every member's detail also brings all
+   * its versions, so the row gets a complete badge without an extra request.
+   *
+   * 上面的快照记录收藏集自己的版本；下面的下载计划改为跟随模型：固定版本优先，否则用最新版本。
+   * 每个成员的详情同时带回它的所有版本，行徽标因此完整，且不需要额外请求。
+   */
   view.log(t('tui.download.fetchMeta', { count: items.length, concurrency: config.metaConcurrency }));
-  const { plan, totalBytes, failed } = await buildPlan(config.site, items, config.userAgent, {
+  const { plan, totalBytes, failed } = await buildPlanFromModels(config.site, items, config.userAgent, {
     concurrency: config.metaConcurrency,
     fileTypes: config.fileTypes,
     primaryOnly: config.primaryOnly,
+    entries: readLibrary(config, { allowCorrupt: true }).entries,
     onLog: view.log,
   });
   if (failed) view.log(t('tui.download.metaFailed', { count: failed }));
@@ -1474,7 +1514,11 @@ async function downloadCollectionShell(config, opts = {}) {
  */
 function workspaceRowLabel(item) {
   const version = item.versionName || item.versionId || '';
-  return version ? t('tui.workspace.rowVersion', { name: item.name || item.modelId, version }) : String(item.name || item.modelId || '');
+  const base = version
+    ? t('tui.workspace.rowVersion', { name: item.name || item.modelId, version })
+    : String(item.name || item.modelId || '');
+  const badge = accessLabel(item.access);
+  return badge ? `${base} [${badge}]` : base;
 }
 
 /**
@@ -1510,92 +1554,175 @@ function downloadStepFlow(index) {
 async function workspaceConfirmPage(config, data) {
   const deletions = Array.isArray(data.deletions) ? data.deletions : [];
   const deletionBytes = deletions.reduce((sum, item) => sum + (Number(item.totalBytes) || 0), 0);
-  let region = 'rows';
-  let cursor = 0;
-  let entries = [];
-  let actionStart = 0;
-  const rows = data.chosen;
+  const rows = Array.isArray(data.chosen) ? data.chosen : [];
+  const totalBytes = rows.reduce((sum, item) => sum + (Number(item.totalBytes) || 0), 0);
+  const verifyCount = Math.min(rows.length, Math.max(0, Number(data.verifyCount) || 0));
+  const downloadCount = Math.max(0, rows.length - verifyCount);
+  const restrictedRows = rows.filter((row) => row.access && row.access.requiresEntitlement);
+  const free = data.outDir ? freeSpaceBytes(data.outDir) : null;
+  const lowSpace = free !== null && free < totalBytes;
+  const fileTypes =
+    Array.isArray(config.fileTypes) && config.fileTypes.length ? config.fileTypes.join(', ') : t('common.unknown');
+  const regionOrder = rows.length ? ['rows', 'actions'] : ['actions'];
+  let region = rows.length ? 'rows' : 'actions';
+  let rowCursor = 0;
+  let actionCursor = 0;
+  let scroll = 0;
+
+  const summaryFacts = () => {
+    const facts = [
+      { label: t('tui.download.optionDir'), value: String(data.outDir || '') },
+      { label: t('tui.download.optionJobs'), value: String(data.jobs) },
+      {
+        label: t('tui.workspace.confirmWork'),
+        value: t('tui.workspace.confirmWorkValue', {
+          downloads: downloadCount,
+          verify: verifyCount,
+          size: formatBytes(totalBytes),
+        }),
+      },
+      { label: t('tui.workspace.confirmFiles'), value: fileTypes },
+      {
+        label: t('tui.workspace.confirmDisk'),
+        value: free === null ? t('tui.download.freeUnknown') : formatBytes(free),
+        color: lowSpace ? color.warning : null,
+      },
+    ];
+    if (restrictedRows.length) {
+      facts.push({
+        label: t('tui.workspace.confirmAccess'),
+        value: t('tui.workspace.confirmPaidHint', { count: restrictedRows.length }),
+        color: color.warning,
+      });
+    }
+    if (deletions.length) {
+      facts.push({
+        label: t('tui.workspace.deleteTitle'),
+        value: t('tui.workspace.deleteSummary', { count: deletions.length, size: formatBytes(deletionBytes) }),
+        color: color.danger,
+      });
+    }
+    return facts;
+  };
+
+  const listSections = () => {
+    const sections = [
+      {
+        title: t('tui.workspace.selected', { count: rows.length, total: rows.length + deletions.length }),
+        rows: rows.map((row) => ({
+          label: workspaceRowLabel(row),
+          detail: [formatBytes(Number(row.totalBytes) || 0), row.type, row.modelId ? `#${row.modelId}` : '']
+            .filter(Boolean)
+            .join(` ${glyph.bullet} `),
+          raw: row,
+        })),
+        emptyText: t('tui.workspace.empty'),
+        onEnter: () => {},
+      },
+    ];
+    if (deletions.length) {
+      sections.push({
+        title: t('tui.workspace.deleteTitle'),
+        rows: deletions.map((row) => ({
+          label: workspaceRowLabel(row),
+          detail: [formatBytes(Number(row.totalBytes) || 0), row.modelId ? `#${row.modelId}` : '']
+            .filter(Boolean)
+            .join(` ${glyph.bullet} `),
+          color: color.danger,
+          raw: row,
+        })),
+      });
+    }
+    return sections;
+  };
 
   return screen.prompt({
     title: t('tui.download.confirmTitle'),
     crumbPath: data.crumbPath,
     steps: downloadStepFlow(1),
-    hints: () => [t('tui.hint.workspaceConfirm')],
-    render(_state, ctx) {
+    hints: () => [region === 'rows' ? t('tui.hint.workspaceConfirmRows') : t('tui.hint.workspaceConfirmActions')],
+    compactHints: () => [t('tui.hint.workspaceConfirmCompact')],
+    render(_promptState, ctx) {
       const width = Math.max(20, Math.floor(ctx.width) || 80);
-      const page = buildPageLayout(
-        {
-          summary: [
-            { label: t('tui.download.optionDir'), value: data.outDir },
-            { label: t('tui.download.optionJobs'), value: String(data.jobs) },
-          ],
-          sections: [
-            {
-              title: t('tui.workspace.selected', {
-                count: rows.length,
-                total: Math.max(rows.length, deletions.length + rows.length),
-              }),
-              rows: rows.map((row) => ({
-                label: workspaceRowLabel(row),
-                detail: String(row.modelId || ''),
-                raw: row,
-              })),
-              onEnter: () => {},
-            },
-          ],
-          actions: [
-            { label: t('tui.workspace.confirmNext'), run: () => {} },
-            { label: t('tui.workspace.confirmBack'), run: () => {} },
-          ],
-          status: deletions.length
-            ? t('tui.workspace.deleteSummary', { count: deletions.length, size: formatBytes(deletionBytes) })
-            : '',
-        },
+      const room = Math.max(1, Math.floor(ctx.rows) || 3);
+      const summaryLines = buildPageLayout(
+        { summary: summaryFacts(), sections: [], actions: [] },
         width
-      );
-      entries = page.entries;
-      actionStart = entries.findIndex((entry) => entry.kind === 'action');
-      if (actionStart < 0) actionStart = 0;
-      cursor = Math.max(0, Math.min(entries.length - 1, cursor));
-      if (region === 'rows') cursor = Math.min(cursor, Math.max(0, actionStart - 1));
-      else cursor = Math.max(actionStart, cursor);
+      ).lines;
+      const listLayout = buildPageLayout({ summary: [], sections: listSections(), actions: [] }, width);
+      const listLines = listLayout.lines;
 
-      const lines = page.lines.slice();
-      const entry = entries[cursor];
-      if (entry) {
-        lines[entry.line] = lines[entry.line].replace(/^  /, `${color.cursor(layout.glyphs().cursor)} `);
-      }
-      return lines;
-    },
-    onKey(text, key, entry) {
-      const name = key && key.name;
-      const rowCount = Math.max(0, actionStart);
-      if (name === 'tab') {
-        if (region === 'rows') {
-          region = 'start';
-          cursor = actionStart;
-        } else {
-          region = 'rows';
-          cursor = 0;
+      const actions = [t('tui.workspace.confirmNext'), t('tui.workspace.confirmBack')];
+      const actionWidth = actions.reduce((max, label) => Math.max(max, layout.displayWidth(label)), 0);
+      const actionRows = actions.map((label, index) => {
+        const paint = index === 0
+          ? (text) => (region === 'actions' && actionCursor === index ? color.cursor(text) : text)
+          : (text) => text;
+        const mark = region === 'actions' && actionCursor === index
+          ? color.cursor(layout.glyphs().cursor)
+          : ' ';
+        return `${mark} ${paint(layout.padTo(label, actionWidth))}`;
+      });
+      const fullActionBlock = [sectionHeading(t('tui.report.actions'), width), ...actionRows];
+      const actionBlock = room >= 5 ? fullActionBlock : actionRows.slice(0, Math.max(1, room - 1));
+      const summaryRoom = Math.max(0, Math.min(summaryLines.length, room - actionBlock.length - 1));
+      const shownSummary = summaryLines.slice(0, summaryRoom);
+      const listRoom = Math.max(0, room - shownSummary.length - actionBlock.length);
+      const listEntries = listLayout.entries.filter((entry) => entry.kind === 'row' && entry.sectionIndex === 0);
+      rowCursor = Math.max(0, Math.min(listEntries.length - 1, rowCursor));
+      const selectedLine = listEntries[rowCursor] ? listEntries[rowCursor].line : 0;
+      let shownList = [];
+      if (listRoom > 0) {
+        const win = list.windowOf(listLines.length, selectedLine, listRoom, scroll);
+        scroll = win.start;
+        shownList = listLines.slice(scroll, scroll + listRoom).slice();
+        if (region === 'rows' && listEntries.length) {
+          const local = selectedLine - scroll;
+          if (local >= 0 && local < shownList.length) {
+            shownList[local] = shownList[local].replace(/^  /, `${color.cursor(layout.glyphs().cursor)} `);
+          }
         }
+      }
+      return [...shownSummary, ...shownList, ...actionBlock];
+    },
+    async onKey(text, key, entry) {
+      const name = key && key.name;
+      if (name === 'tab') {
+        const index = regionOrder.indexOf(region);
+        region = regionOrder[(index + 1) % regionOrder.length] || 'actions';
         return;
       }
       if (name === 'up' || name === 'down') {
         const delta = name === 'up' ? -1 : 1;
-        if (region === 'rows') cursor = list.moveCursor(cursor, delta, rowCount, 'table');
-        else {
-          const count = Math.max(1, entries.length - actionStart);
-          const local = Math.max(0, cursor - actionStart);
-          cursor = actionStart + list.moveCursor(local, delta, count, 'table');
-        }
+        if (region === 'rows' && rows.length) rowCursor = list.moveCursor(rowCursor, delta, rows.length, 'table');
+        else if (region === 'actions') actionCursor = list.moveCursor(actionCursor, delta, 2, 'table');
         return;
       }
-      if (name !== 'return') return;
-      // Enter in the list only navigates rows; it must not start or move focus.
-      // 列表区的 Enter 只用于列表本身，不开始下载，也不切换焦点。
-      if (region === 'rows') return;
-      if (cursor === actionStart) entry.settle(true);
-      else entry.settle('back');
+      if (region === 'rows') {
+        if (name === 'home') rowCursor = 0;
+        else if (name === 'end') rowCursor = Math.max(0, rows.length - 1);
+        else if (name === 'pageup') rowCursor = list.pageCursor(rowCursor, -1, rows.length, 10, 'table');
+        else if (name === 'pagedown') rowCursor = list.pageCursor(rowCursor, 1, rows.length, 10, 'table');
+        return;
+      }
+      if (name === 'home') actionCursor = 0;
+      else if (name === 'end') actionCursor = 1;
+      else if (name !== 'return') return;
+      if (actionCursor === 1) {
+        entry.settle('back');
+        return;
+      }
+      if (deletions.length) {
+        const confirmed = await pages.promptConfirm(
+          t('tui.workspace.deleteFinalConfirm', {
+            count: deletions.length,
+            size: formatBytes(deletionBytes),
+          }),
+          { danger: true, initial: false }
+        );
+        if (!confirmed) return;
+      }
+      entry.settle(true);
     },
     onEscape(entry) {
       // Back and Esc return to the selection page; Esc there returns to the download submenu.
@@ -1616,7 +1743,7 @@ async function workspaceConfirmPage(config, data) {
  * @param {Array<object>} plan
  * @returns {Array<object>}
  */
-function groupPlanRows(plan) {
+function groupPlanRows(plan, entries = {}) {
   const groups = new Map();
   for (const item of Array.isArray(plan) ? plan : []) {
     if (!item || item.error) continue;
@@ -1639,14 +1766,114 @@ function groupPlanRows(plan) {
     }
   }
   for (const group of groups.values()) {
-    const names = group.versions.map((version) => version.versionName || version.versionId).filter(Boolean);
+    /*
+     * The badge summarizes every known version of this model; the default selection follows the
+     * row's default version only. Keeping the two apart is what makes "mixed badge + checked row"
+     * (model has paid versions, this row downloads a free one) a legal combination.
+     *
+     * 徽标按这个模型**全部已知版本**汇总；默认勾选只看本行的默认版本。
+     * 两件事解耦，才让「[付费/免费] + 已勾选」（模型有付费版本，而本行下的是免费版）成为合法组合。
+     */
+    const modelWide = group.versions
+      .map((version) => version.modelAccess)
+      .find((summary) => summary && typeof summary === 'object');
+    const counts = modelWide || summarizeAccess(group.versions.map((version) => version.access));
+    const defaultVersion = group.versions[0];
+    const defaultRestricted = !!(
+      defaultVersion &&
+      defaultVersion.access &&
+      defaultVersion.access.requiresEntitlement
+    );
+    const names = group.versions
+      .map((version) => {
+        const label = version.access ? accessLabel(version.access) : '';
+        const name = version.versionName || version.versionId;
+        /*
+         * Only a mixed row needs per-version labels: a pure row's badge already covers every one
+         * of its versions, so repeating "(paid)" there would only eat the right column.
+         *
+         * 只有混合行才给单个版本加标签：纯付费/纯免费的徽标已经说明整行状态，
+         * 再给每个版本重复「（付费）」只会白占右列宽度。
+         */
+        const needsLabel = !!label && counts.mixed === true;
+        return needsLabel ? t('tui.workspace.versionAccess', { name, access: label }) : name;
+      })
+      .filter(Boolean);
     group.versionName = names.join('/');
-    group.versionId = group.versions[0] && group.versions[0].versionId;
-    // Left column already shows the model name; the right column is the version/status detail.
-    // 左列已经显示模型名；右列只放版本/状态说明。
-    group.detail = group.versionName;
+    group.versionId = defaultVersion && defaultVersion.versionId;
+    group.downloaded = group.versions.length > 0 && group.versions.every((item) => stateMatches(item, entries));
+    /*
+     * Complete access breakdown of this row, kept on purpose: the badge below only reads `access`
+     * (kind + mixed) and no production code reads these counts — only the tests do. Removing it
+     * would not change a single pixel, but keeping it answers "why is this row [paid/free]?"
+     * without fetching the model again.
+     *
+     * 整行访问状态的完整计数，故意原样保留：下面的徽标只读 `access`（kind + mixed），
+     * 生产代码没有任何地方读这些计数，只有测试读。删掉它界面上不会有任何变化，
+     * 但保留下来就能不重新拉接口回答「这一行为什么是 [付费/免费]」。
+     */
+    group.accessCounts = counts;
+    group.access =
+      counts.restricted > 0
+        ? {
+          kind: counts.early > 0 && counts.paid === 0 ? 'early-access' : 'paid',
+          mixed: counts.free > 0,
+          requiresEntitlement: true,
+          defaultSelected: !defaultRestricted,
+        }
+        : null;
+    /*
+     * One model can carry versions on different base models: show the deduplicated list, and let
+     * the `b` filter match "contains this value" instead of "the whole cell equals this value".
+     *
+     * 同一个模型可能有不同基础模型的版本：显示去重后的列表，`b` 筛选也改为「包含即命中」，
+     * 而不是「整格等于所选值」。
+     */
+    group.baseModels = [
+      ...new Set(group.versions.map((version) => version.baseModel).filter(Boolean)),
+    ];
+    group.baseModel = group.baseModels.join(' / ');
+    /*
+     * Left column already shows the model name; the right column starts with the version list,
+     * because `rowLine()` truncates the tail: the version name must survive narrow terminals.
+     *
+     * 左列已经显示模型名；右列以版本清单开头：`rowLine()` 截断尾部，
+     * 版本名必须能在窄终端下保住。
+     */
+    group.detail = [
+      group.versionName,
+      group.downloaded ? t('tui.download.statusDownloaded') : null,
+      group.baseModel || null,
+      formatBytes(group.totalBytes),
+    ]
+      .filter(Boolean)
+      .join(` ${glyph.bullet} `);
   }
   return [...groups.values()];
+}
+
+/**
+ * Cursor row when the version page opens: the first checked version, else the first (newest) row.
+ *
+ * `versions` is already ordered newest-first by `versionRows`; row 0 is the default version, so a
+ * row with nothing checked opens on it and one Space selects it.
+ *
+ *
+ * 打开版本页时的光标行：第一个已勾选的版本，没有勾选则停在第 0 行（最新版本）。
+ *
+ * `versions` 已由 `versionRows` 按时间倒序排好，第 0 行就是默认版本：
+ * 未勾选的行因此停在默认版本上，按一次空格即可勾选。
+ *
+ * @param {Array<object>} versions
+ * @param {Array<string|number>} checkedIds
+ * @returns {number}
+ */
+function versionCursor(versions, checkedIds) {
+  const list = Array.isArray(versions) ? versions : [];
+  const ids = new Set((Array.isArray(checkedIds) ? checkedIds : []).map(String));
+  if (!ids.size) return 0;
+  const index = list.findIndex((entry) => ids.has(String(entry.modelId)));
+  return index >= 0 ? index : 0;
 }
 
 /**
@@ -1658,14 +1885,27 @@ async function runDownloadWorkspace(config, opts = {}) {
   // Failed collection entries stay visible in the source report but must never enter a plan.
   // 收藏集里失败的条目可以留在来源报告里，但绝不能进入下载计划。
   const workspacePlan = selectablePlan(plan);
+  const failedNames = plan
+    .filter((item) => item && item.error)
+    .map((item) => item.name || String(item.modelId || ''))
+    .filter(Boolean);
   const entries = opts.entries || readLibrary(config, { allowCorrupt: true }).entries;
-  const groups = groupPlanRows(workspacePlan);
-  const selected = new Set(groups.map((group) => String(group.modelId)));
+  const groups = groupPlanRows(workspacePlan, entries);
+  /*
+   * One rule for every entry: a row is pre-checked when its own default version needs no
+   * entitlement. There is no per-entry "select everything" switch any more.
+   *
+   * 所有入口同一条规则：本行默认版本不需要权限就默认勾选，不再有「某个入口全勾」的开关。
+   */
+  const selected = new Set(
+    groups
+      .filter((group) => !group.access || group.access.defaultSelected !== false)
+      .map((group) => String(group.modelId))
+  );
 
   let workspaceRows = groups;
   let workspaceSelected = selected;
   let chosen = [];
-  let deletions = [];
 
   for (;;) {
     const workspace = await showPlanWorkspace({
@@ -1676,33 +1916,50 @@ async function runDownloadWorkspace(config, opts = {}) {
       resultLabel: opts.resultLabel,
       emptyText: opts.emptyText,
       nextLabel: t('tui.workspace.next'),
+      metaFailed: failedNames,
       rows: workspaceRows,
       selected: workspaceSelected,
       idOf: (row) => String(row.modelId),
       resolveInput:
         typeof opts.resolveInput === 'function'
-          ? async (raw) => groupPlanRows(await opts.resolveInput(raw))
+          ? async (raw) => groupPlanRows(await opts.resolveInput(raw), entries)
           : undefined,
-      openRow: async (row, _state, context = {}) => {
+      openRow: async (row, workspaceState, context = {}) => {
         const models = require('./models');
         const detail = await fetchModelDetail(config.site, row.modelId, config.userAgent);
         const versions = models.versionRows(config, detail).filter((entry) => entry.fileCount > 0);
         if (!versions.length) return null;
         const currentIds = (row.versions || []).map((version) => String(version.versionId));
-        const firstId = currentIds[0] || row.versionId;
-        const initialCursor = Math.max(
-          0,
-          versions.findIndex((entry) => String(entry.modelId) === String(firstId))
-        );
+        /*
+         * The version page mirrors the workspace row: a checked row opens with its own versions
+         * checked, an unchecked row opens with nothing checked (the cursor still rests on the
+         * row's default version, so Space selects it right away).
+         *
+         * 版本页与工作台行的勾选保持一致：已勾选的行带出它自己的版本，未勾选的行进去一个都不勾
+         * （光标仍停在默认版本上，直接按空格即可勾选）。
+         */
+        const checked = !workspaceState || !workspaceState.selected
+          ? true
+          : workspaceState.selected.has(String(row.modelId));
+        const checkedIds = checked ? currentIds : [];
+        const initialCursor = versionCursor(versions, checkedIds);
         const pickedIds = await require('../ui/versionPage').showVersionPage(
           detail,
           versions,
           initialCursor,
           models.describeVersion,
-          { multi: true, selected: currentIds, steps: context.steps }
+          { multi: true, selected: checked ? currentIds : [], steps: context.steps }
         );
         if (!pickedIds) return null;
         const picked = new Set((Array.isArray(pickedIds) ? pickedIds : [pickedIds]).map(String));
+        // The whole-model access summary costs nothing here: the detail response is already in hand.
+        // 整个模型的访问汇总在这里是白拿的：详情响应已经在手上。
+        const modelAccess = summarizeAccess(
+          (detail.modelVersions || []).map((version) => classifyVersionAccess(version, detail))
+        );
+        const known = new Map(
+          (row.versions || []).map((version) => [String(version.versionId), version])
+        );
         const items = versions
           .filter((entry) => picked.has(String(entry.modelId)))
           .map((entry) => {
@@ -1713,9 +1970,19 @@ async function runDownloadWorkspace(config, opts = {}) {
             const item = versionToItem(config.site, version, {
               fileTypes: config.fileTypes,
               primaryOnly: config.primaryOnly,
+              model: detail,
             });
+            const previous = known.get(String(version.id));
             return {
               ...item,
+              /*
+               * A version the plan already knew keeps the access it was planned with; the others
+               * use what `versionRows` just classified from the model detail.
+               *
+               * 计划里已有的版本沿用建计划时的 access，其余版本用 `versionRows` 刚算出的结果。
+               */
+              access: (previous && previous.access) || entry.access || item.access,
+              modelAccess,
               modelId: row.modelId,
               name: detail.name || row.name,
               type: detail.type || row.type,
@@ -1724,7 +1991,7 @@ async function runDownloadWorkspace(config, opts = {}) {
             };
           })
           .filter(Boolean);
-        return groupPlanRows(items);
+        return groupPlanRows(items, entries);
       },
     });
     // Esc on the selection page leaves the download flow and returns to its submenu.
@@ -1736,20 +2003,15 @@ async function runDownloadWorkspace(config, opts = {}) {
     chosen = workspace.rows
       .filter((row) => workspace.selected.has(String(row.modelId)))
       .flatMap((row) => row.versions || [row]);
-    const chosenKeys = new Set(chosen.map(planRowKey));
-    deletions = workspacePlan.filter((row) => {
-      if (chosenKeys.has(planRowKey(row)) || !recordedOf(entries, row)) return false;
-      const entry = entries[String(row.modelId)];
-      return !(
-        entry &&
-        entry.pinnedVersionId !== undefined &&
-        entry.pinnedVersionId !== null &&
-        String(entry.pinnedVersionId) === String(row.versionId)
-      );
-    });
+    // A download plan only chooses what this task downloads. Unchecking a row never means "delete
+    // the local version"; destructive cleanup is an explicit action in local version management.
+    //
+    // 下载计划只决定本次下载什么。取消勾选不表示删除本地版本；删除只属于本地版本管理里的显式操作。
+    const verifyCount = chosen.filter((row) => recordedOf(entries, row)).length;
     const confirmed = await workspaceConfirmPage(config, {
       chosen,
-      deletions,
+      deletions: [],
+      verifyCount,
       crumbPath: opts.crumbPath,
       outDir: opts.outDir || resolveOutDir(config, config.outDir),
       jobs: opts.jobs || config.jobs,
@@ -1771,14 +2033,6 @@ async function runDownloadWorkspace(config, opts = {}) {
     totalBytes: chosen.reduce((sum, item) => sum + (Number(item.totalBytes) || 0), 0),
     jobs: opts.jobs || config.jobs,
     attempts: config.downloadAttempts,
-    onComplete: async (summary) => {
-      if (!deletions.length) return;
-      // Never delete a kept version when the replacement task failed or was cancelled.
-      // 替换任务失败或取消时，绝不删除用户保留的旧版本。
-      if (summary && (summary.cancelled || summary.error || Number(summary.failed) > 0)) return;
-      const count = deletePlanVersions(config, deletions);
-      if (count) view.notice(t('tui.workspace.deleteDone', { count }), color.success);
-    },
   });
   const receipt = await receiptPage(started.taskId, { crumbPath: opts.crumbPath });
   return receipt === 'main' ? 'main' : true;
@@ -1798,6 +2052,7 @@ module.exports = {
   versionChoiceRows,
   selectablePlan,
   groupPlanRows,
+  versionCursor,
   deletePlanVersions,
   workspaceConfirmPage,
   receiptPage,

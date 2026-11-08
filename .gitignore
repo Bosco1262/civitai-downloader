@@ -1,6 +1,12 @@
 node_modules/
 .data/
 config.json
+# Backups written by backupFile() (e.g. config.json.corrupt-1699999999999) are local history,
+# never source: they contain one machine's absolute paths and a broken snapshot of the config.
+#
+# backupFile() 写出的备份（如 config.json.corrupt-1699999999999）只是本机历史，不是源码：
+# 里面是某台机器的绝对路径与坏掉的配置快照。
+config.json.*
 downloads/
 *.part
 *.log

@@ -255,6 +255,11 @@ async function main(config, args) {
       force: false,
       jobs: config.jobs,
       attempts: config.downloadAttempts,
+      paidPolicy: args.flags['include-paid']
+        ? 'include'
+        : args.flags['paid-only']
+          ? 'only'
+          : 'skip',
     });
     if (summary.error || summary.failed) failed++;
   }

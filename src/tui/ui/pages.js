@@ -230,8 +230,13 @@ function shellMenu(message, choices, options) {
     render(state, ctx) {
       const lines = heading(message, ctx.width);
       lines.push('');
-      const room = Math.max(1, ctx.rows - lines.length);
-      const win = windowOf(items.length, state.cursor, room, state.windowStart);
+      let room = Math.max(1, ctx.rows - lines.length);
+      let win = windowOf(items.length, state.cursor, room, state.windowStart);
+      if (win.end - win.start < items.length && room > 1) {
+        room -= 1;
+        win = windowOf(items.length, state.cursor, room, state.windowStart);
+        lines.push(colors.dim(t('tui.pages.listPosition', { index: win.cursor + 1, total: items.length })));
+      }
       state.windowStart = win.start;
       state.cursor = win.cursor;
       items.slice(win.start, win.end).forEach((item, index) => {
@@ -243,9 +248,6 @@ function shellMenu(message, choices, options) {
           })
         );
       });
-      if (win.end - win.start < items.length) {
-        lines.push(colors.dim(t('tui.pages.listPosition', { index: win.cursor + 1, total: items.length })));
-      }
       return lines;
     },
     onKey(text, key, entry) {
@@ -259,7 +261,7 @@ function shellMenu(message, choices, options) {
       else if (key.name === 'pageup') state.cursor = list.pageCursor(state.cursor, -1, items.length, 10, 'menu');
       else if (key.name === 'pagedown') state.cursor = list.pageCursor(state.cursor, 1, items.length, 10, 'menu');
       else if (key.name === 'return') entry.settle(items[state.cursor] ? items[state.cursor].value : null);
-      else if (/^[1-9]$/.test(text) && Number(text) <= items.length) entry.settle(items[Number(text) - 1].value);
+      else if (/^[1-9]$/.test(text) && Number(text) <= items.length) state.cursor = Number(text) - 1;
       else return;
       entry.state = state;
     },
@@ -790,13 +792,23 @@ async function pickOne(items, opts = {}) {
   const ids = list.map((item, index) => rowId(item, index, opts));
 
   if (canPick()) {
+    const previous = opts.pickerState || {};
     const answer = await selectItems(list, {
       mode: 'single',
       title: opts.title || opts.message,
       describe: opts.describe,
       state: opts.state,
       label,
-      initialCursor: Number.isFinite(opts.initialCursor) ? opts.initialCursor : 0,
+      initialCursor: Number.isFinite(opts.initialCursor)
+        ? opts.initialCursor
+        : Number.isFinite(previous.cursor)
+          ? previous.cursor
+          : 0,
+      windowStart: previous.windowStart,
+      search: previous.search,
+      type: previous.type,
+      baseModel: previous.baseModel,
+      sort: previous.sort,
       onLog,
       onEnter: opts.onEnter,
       minHeight: 6,
@@ -805,6 +817,7 @@ async function pickOne(items, opts = {}) {
       view.decision('tui.view.decisionCancelled');
       return null;
     }
+    if (typeof opts.onPickerState === 'function' && answer.state) opts.onPickerState(answer.state);
     const wanted = String([...answer.selected][0]);
     const chosen = list[ids.indexOf(wanted)] || null;
     const decidedParams = typeof opts.decidedParams === 'function' ? opts.decidedParams(chosen) : null;
@@ -946,7 +959,7 @@ const HELP_SECTIONS = [
       ['PgUp/PgDn', 'tui.help.generalPage'],
       ['Enter', 'tui.help.generalConfirm'],
       ['Esc', 'tui.help.generalBack'],
-      ['Ctrl+M', 'tui.help.generalTasks'],
+      ['Ctrl+T', 'tui.help.generalTasks'],
       ['Ctrl+L', 'tui.help.generalLog'],
       ['Ctrl+C', 'tui.help.generalQuit'],
       ['?', 'tui.help.generalHelp'],
@@ -967,8 +980,7 @@ const HELP_SECTIONS = [
     titleKey: 'tui.help.sectionDownload',
     items: [
       ['s', 'tui.help.runSkip'],
-      ['Esc', 'tui.help.runCancel'],
-      ['c', 'tui.help.generalCancelTask'],
+      ['c', 'tui.help.runCancel'],
     ],
   },
 ];

@@ -27,8 +27,9 @@ const { runDownloadJob } = require('../src/job');
 const { checkUpdates, changedItems, summarize, reportLines } = require('../src/updater');
 const { readLibrary, readCollection, getVersion, versionIds } = require('../src/storage');
 const { validateConfig, DEFAULTS } = require('../src/config');
-const { configureApi } = require('../src/api');
+const { configureApi, buildPlanFromModels, clearModelDetailCache } = require('../src/api');
 const { verifyModels } = require('../src/commands/verify');
+const { AccessRequiredError } = require('../src/errors');
 
 const FILE_A = Buffer.from('AAAA-content-of-model-a\n'.repeat(64));
 const FILE_B = Buffer.from('BBBB-content-of-model-b\n'.repeat(64));
@@ -56,14 +57,23 @@ function makeEnv() {
 }
 
 /**
- * Mock site: /api/v1/model-versions/:id
- * mock 站点：/api/v1/model-versions/:id
+ * Mock site: /api/v1/model-versions/:id and /api/v1/models/:id.
+ * Both endpoints are exposed so a test can prove which one a flow uses.
+ *
+ * mock 站点：/api/v1/model-versions/:id 与 /api/v1/models/:id。
+ * 两个端点都暴露，测试因此可以验证某个流程到底用了哪一个。
  */
-function startSite(versionMap) {
+function startSite(versionMap, modelMap = {}) {
   return new Promise((resolve) => {
     const state = { requested: [] };
     const server = http.createServer((req, res) => {
       state.requested.push(req.url);
+      const model = /\/api\/v1\/models\/(\d+)/.exec(req.url);
+      if (model && modelMap[model[1]]) {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify(modelMap[model[1]]));
+        return;
+      }
       const m = /\/api\/v1\/model-versions\/(\d+)/.exec(req.url);
       if (m && versionMap[m[1]]) {
         res.writeHead(200, { 'content-type': 'application/json' });
@@ -190,6 +200,54 @@ test('集成：首次下载写入模型库与收藏集快照（含 fileId / 下�
   const { snapshot } = readCollection(config, '777');
   assert.equal(snapshot.items.length, 2, '枚举后写入成员快照');
   assert.equal(snapshot.changes.added.length, 0, '首次快照没有变化可比');
+});
+
+test('集成：付费版本可跳过，尝试时无权限记为 accessRequired 而不是 failed', async (t) => {
+  const config = makeEnv();
+  const paid = versionFor(1001, 'Paid Model', 11, 'paid.safetensors', FILE_A.length, SHA_A);
+  paid.paidAccess = { permanent: true, endsAt: null };
+  const site = await startSite({ 1001: paid });
+  t.after(() => site.close());
+  config.site = site.site;
+  configureApi({ retries: 0, requestTimeoutMs: 5000, apiRateLimit: 0 });
+  const items = [{ modelId: 101, name: 'Paid Model', type: 'LORA', baseModel: 'SDXL', versionId: 1001 }];
+
+  const counters = { enumerate: 0, download: 0 };
+  const skipped = await runDownloadJob(
+    config,
+    {
+      collectionId: 'paid-skip',
+      items,
+      outDir: config.outDir,
+      jobs: 1,
+      paidPolicy: 'skip',
+      deps: makeDeps({ items, contentById: makeContent(), counters }),
+    },
+    { log: () => {} }
+  );
+  assert.equal(skipped.skipped, 1);
+  assert.equal(counters.download, 0, '默认跳过付费项时不应发起下载');
+
+  const blocked = makeDeps({ items, contentById: makeContent(), counters });
+  blocked.downloadFile = async () => {
+    throw new AccessRequiredError('purchase required', { status: 402, reason: 'payment' });
+  };
+  const summary = await runDownloadJob(
+    config,
+    {
+      collectionId: 'paid-include',
+      items,
+      outDir: config.outDir,
+      jobs: 1,
+      paidPolicy: 'include',
+      deps: blocked,
+    },
+    { log: () => {} }
+  );
+  assert.equal(summary.accessRequired, 1);
+  assert.equal(summary.failed, 0, '无下载权限不应计入网络失败');
+  assert.equal(summary.done, 0);
+  assert.equal(Object.keys(readLibrary(config).entries).length, 0, '无权限时不应写入完成记录');
 });
 
 test('集成：第二次运行惰性跳过，且不再请求元数据', async (t) => {
@@ -396,6 +454,51 @@ test('集成：本地文件被删除 → check 报缺失，verify 报损坏，�
   const repaired = getVersion(after['101'], 1001);
   assert.equal(repaired.files.length, 1, '修复后清单不应丢文件');
   assert.deepEqual(versionIds(after['101']), ['1001']);
+});
+
+test('集成：收藏集计划改走 /models/:id，默认最新版本、固定版本优先', async (t) => {
+  const config = makeEnv();
+  const older = versionFor(1001, 'Model A', 11, 'model-a.safetensors', FILE_A.length, SHA_A, 'v1');
+  older.publishedAt = '2026-10-01T00:00:00.000Z';
+  const newer = versionFor(2001, 'Model A', 21, 'model-a-v2.safetensors', FILE_B.length, SHA_B, 'v2');
+  newer.publishedAt = '2026-11-01T00:00:00.000Z';
+  const site = await startSite(
+    {},
+    { 101: { id: 101, name: 'Model A', type: 'LORA', modelVersions: [older, newer] } }
+  );
+  t.after(() => site.close());
+  config.site = site.site;
+  configureApi({ retries: 0, requestTimeoutMs: 5000, apiRateLimit: 0 });
+  clearModelDetailCache();
+
+  const items = [{ modelId: 101, name: 'Model A', type: 'LORA', baseModel: 'SDXL', versionId: 1001 }];
+  const latest = await buildPlanFromModels(config.site, items, 'ua', { entries: {} });
+  assert.equal(latest.failed, 0);
+  assert.equal(latest.plan[0].versionId, 2001, '登记的是旧版本，计划改用最新版本');
+  assert.equal(latest.plan[0].versionName, 'v2');
+  assert.equal(latest.plan[0].modelAccess.mixed, false);
+  assert.deepEqual(site.state.requested, ['/api/v1/models/101'], '成员元数据只请求模型详情，不请求版本接口');
+
+  // Asking again in the same session hits the cache instead of the network.
+  // 同一会话内再要一次：命中缓存，不再发请求
+  site.state.requested.length = 0;
+  const cached = await buildPlanFromModels(config.site, items, 'ua', { entries: {} });
+  assert.equal(cached.plan[0].versionId, 2001);
+  assert.deepEqual(site.state.requested, [], '模型详情应命中会话缓存');
+
+  // A pinned version wins even when it is not the newest one.
+  // 固定版本优先（即使它不是最新版本）
+  const pinned = await buildPlanFromModels(config.site, items, 'ua', {
+    entries: { 101: { pinnedVersionId: 1001 } },
+  });
+  assert.equal(pinned.plan[0].versionId, 1001);
+
+  // A member whose model cannot be loaded carries `error` and stays out of the plan.
+  // 成员模型拉取失败：带 error、不进计划，语义与 buildPlan 一致
+  const failed = await buildPlanFromModels(config.site, [{ modelId: 999, name: 'Missing' }], 'ua', {});
+  assert.equal(failed.failed, 1);
+  assert.ok(failed.plan[0].error);
+  assert.equal(failed.totalBytes, 0);
 });
 
 test('集成：取消时保存断点清单，--resume 可继续', async (t) => {

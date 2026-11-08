@@ -24,7 +24,7 @@ const pages = require('../ui/pages');
 const screen = require('../shell/screen');
 const { present } = require('../shell/present');
 const reportPage = require('../ui/report');
-const { color } = require('../ui/tokens');
+const { color, format } = require('../ui/tokens');
 
 /**
  * One picker row per known collection.
@@ -93,7 +93,7 @@ async function resetModels(config, collectionId) {
   const entries = readLibrary(config, { allowCorrupt: true }).entries;
   const members = snapshot ? snapshot.items.filter((it) => entries[it.modelId]) : [];
   if (!members.length) {
-    view.log(t('tui.manage.resetEmpty', { collectionId }));
+    view.notice(t('tui.manage.resetEmpty', { collectionId }), color.warning);
     return;
   }
 
@@ -119,7 +119,7 @@ async function resetModels(config, collectionId) {
   if (chosen === null) return;
   const chosenIds = chosen.map((row) => String(row.modelId));
   if (!chosenIds.length) {
-    view.log(t('tui.manage.noChanges'));
+    view.notice(t('tui.manage.noChanges'), color.warning);
     return;
   }
 
@@ -215,7 +215,13 @@ async function openMembers(config, collectionId) {
     view.notice(t('tui.manage.memberNoRecord', { modelId: chosen.modelId }), color.warning);
     return null;
   }
-  return require('./models').modelActions(config, chosen.modelId);
+  return require('./models').modelActions(config, chosen.modelId, {
+    crumbPath: [
+      t('tui.app.menuCollections'),
+      t('tui.manage.collectionLabel', { id: collectionId }),
+      t('tui.manage.membersAction'),
+    ],
+  });
 }
 
 /**
@@ -233,11 +239,13 @@ function snapshotReportModel(config, collectionId) {
     { label: t('tui.manage.snapshot.factMembers'), value: String(snapshot.items.length) },
     {
       label: t('tui.manage.snapshot.factFetchedAt'),
-      value: snapshot.fetchedAt || t('tui.manage.unknownTime'),
+      value: snapshot.fetchedAt ? format.dateTime(snapshot.fetchedAt) : t('tui.manage.unknownTime'),
     },
     {
       label: t('tui.manage.snapshot.factPrevious'),
-      value: changes.previousFetchedAt || t('tui.manage.firstSnapshot'),
+      value: changes.previousFetchedAt
+        ? format.dateTime(changes.previousFetchedAt)
+        : t('tui.manage.firstSnapshot'),
     },
     { label: t('tui.manage.snapshot.factChanges'), value: String(total) },
   ];
@@ -306,8 +314,14 @@ function snapshotReportModel(config, collectionId) {
         run: () => require('./download').downloadFlow(config, { collectionId: String(collectionId) }),
       },
       {
+        label: t('tui.manage.membersAction'),
+        description: t('tui.manage.membersActionDesc'),
+        run: () => openMembers(config, collectionId),
+      },
+      {
         label: t('tui.manage.resetChanged'),
         description: t('tui.manage.resetChangedDesc'),
+        danger: true,
         run: async () => {
           if (!total) {
             view.notice(t('tui.manage.resetChangedEmpty'), color.warning);
@@ -326,12 +340,8 @@ function snapshotReportModel(config, collectionId) {
       {
         label: t('tui.manage.resetAction'),
         description: t('tui.manage.resetActionDesc'),
+        danger: true,
         run: () => resetModels(config, collectionId),
-      },
-      {
-        label: t('tui.manage.membersAction'),
-        description: t('tui.manage.membersActionDesc'),
-        run: () => openMembers(config, collectionId),
       },
       { label: t('tui.manage.back'), run: () => reportPage.BACK },
     ],
@@ -438,22 +448,29 @@ async function collectionsFlow(config) {
     ]);
     return;
   }
-  const chosen = await pages.pickOne(rows, {
-    message: t('tui.manage.pickCollection'),
-    title: t('tui.app.menuCollections'),
-    describe: (row) =>
-      [
-        row.type,
-        row.fetchedAt ? String(row.fetchedAt) : t('tui.manage.unknownTime'),
-        row.changes ? t('tui.check.changesShort', { count: row.changes }) : t('tui.check.noChangesShort'),
-      ].join(view.separator()),
-    idOf: (row) => row.modelId,
-    label: (row) => row.name,
-    decidedMessage: 'tui.check.selected',
-    decidedParams: (row) => ({ id: row && row.modelId }),
-  });
-  if (!chosen) return;
-  return collectionActions(config, String(chosen.modelId));
+  let pickerState = null;
+  for (;;) {
+    const chosen = await pages.pickOne(rows, {
+      message: t('tui.manage.pickCollection'),
+      title: t('tui.app.menuCollections'),
+      describe: (row) =>
+        [
+          row.type,
+          row.fetchedAt ? format.dateTime(row.fetchedAt) : t('tui.manage.unknownTime'),
+          row.changes ? t('tui.check.changesShort', { count: row.changes }) : t('tui.check.noChangesShort'),
+        ].join(view.separator()),
+      idOf: (row) => row.modelId,
+      label: (row) => row.name,
+      pickerState,
+      onPickerState: (next) => {
+        pickerState = next;
+      },
+      decidedMessage: 'tui.check.selected',
+      decidedParams: (row) => ({ id: row && row.modelId }),
+    });
+    if (!chosen) return;
+    await collectionActions(config, String(chosen.modelId));
+  }
 }
 
 /**

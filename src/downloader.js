@@ -27,7 +27,14 @@ const fs = require('fs');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 const { log, sleep, formatBytes, sha256File, readJson, writeJsonAtomic } = require('./util');
-const { CancelError, AuthError, NotFoundError, DownloadError, CANCEL_MESSAGE } = require('./errors');
+const {
+  CancelError,
+  AuthError,
+  AccessRequiredError,
+  NotFoundError,
+  DownloadError,
+  CANCEL_MESSAGE,
+} = require('./errors');
 const { t } = require('./i18n');
 
 const ATTEMPTS = 5;
@@ -174,7 +181,7 @@ function buildAria2Args(opts) {
  */
 function parseAria2HttpCode(text) {
   const s = String(text || '');
-  const named = /\b(401|403|404|416|429)\b/.exec(s);
+  const named = /\b(401|402|403|404|416|429)\b/.exec(s);
   if (named) return Number(named[1]);
   const server = /\b(5\d\d)\b/.exec(s);
   if (server) return Number(server[1]);
@@ -346,6 +353,24 @@ function runCurl(opts) {
  * Parse the response headers dumped by curl -D and keep the last response (the one after a followed 307).
  * 解析 curl -D 导出的响应头，取最后一次响应（跟随 307 之后的那个）。
  */
+/**
+ * Whether a downloaded payload is an HTML login/purchase page rather than model data.
+ * 判断下载内容是否是登录/购买 HTML 页面，而不是模型数据。
+ */
+function looksLikeHtml(part, contentType) {
+  if (/text\/html|application\/xhtml/i.test(String(contentType || ''))) return true;
+  try {
+    const fd = fs.openSync(part, 'r');
+    const buffer = Buffer.alloc(512);
+    const read = fs.readSync(fd, buffer, 0, buffer.length, 0);
+    fs.closeSync(fd);
+    const head = buffer.slice(0, read).toString('utf8').trim().toLowerCase();
+    return head.startsWith('<!doctype html') || head.startsWith('<html');
+  } catch (e) {
+    return false;
+  }
+}
+
 function parseHeaders(headerText) {
   if (!headerText) return {};
   const blocks = String(headerText)
@@ -545,8 +570,20 @@ async function downloadFile(opts) {
 
     if (onAttempt) onAttempt({ attempt, max: attempts, httpCode: r.httpCode, exitCode: r.exitCode });
 
-    if (r.httpCode === 401 || r.httpCode === 403) {
+    if (r.httpCode === 401) {
       throw new AuthError(t('downloader.authFailed', { status: r.httpCode }));
+    }
+    if (r.httpCode === 402) {
+      throw new AccessRequiredError(t('downloader.paymentRequired', { status: r.httpCode }), {
+        status: r.httpCode,
+        reason: 'payment',
+      });
+    }
+    if (r.httpCode === 403) {
+      throw new AccessRequiredError(t('downloader.accessFailed', { status: r.httpCode }), {
+        status: r.httpCode,
+        reason: 'forbidden',
+      });
     }
     if (r.httpCode === 404) {
       throw new NotFoundError(t('downloader.notFound404'));
@@ -606,6 +643,16 @@ async function downloadFile(opts) {
       if (fs.existsSync(headerFile)) headers = parseHeaders(fs.readFileSync(headerFile, 'utf8'));
     } catch (e) {
       headers = {};
+    }
+
+    const contentType = headers['content-type'] || '';
+    if (looksLikeHtml(part, contentType)) {
+      fs.rmSync(part, { force: true });
+      cleanupArtifacts(target);
+      throw new AccessRequiredError(t('downloader.accessGated'), {
+        status: Number(r.httpCode) || 0,
+        reason: 'gated',
+      });
     }
 
     const size = fs.statSync(part).size;
@@ -676,6 +723,7 @@ module.exports = {
   downloadFile,
   runCurl,
   parseHeaders,
+  looksLikeHtml,
   fetchRemoteMeta,
   resetCancel,
   isAborted,

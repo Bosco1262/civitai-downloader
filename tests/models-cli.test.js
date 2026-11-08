@@ -832,8 +832,7 @@ test('tui/models: 固定版本与删除记录（只删记录，不动文件）',
     { action: 'browse' },
     { value: '900' },
     { action: 'forget' },
-    { ok: true },
-    { files: false }
+    { value: 'records' }
   );
   assert.match(forgotten, /已删除 1 条模型记录/);
   assert.deepEqual(Object.keys(readLibrary(config).entries), []);

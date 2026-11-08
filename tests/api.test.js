@@ -253,6 +253,98 @@ test('fetchJson: 请求超时抛 NetworkError（超时有 1000ms 下限）', asy
   assert.equal(calls, 1, 'retries=0 时不重试');
 });
 
+test('fetchModelDetail: 同一 modelId 第二次命中会话缓存，清空后重新请求', async (t) => {
+  let calls = 0;
+  const server = await startServer((req, res) => {
+    calls++;
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ id: 7, name: 'Model 7', modelVersions: [] }));
+  });
+  t.after(() => server.close());
+
+  api.configureApi({ retries: 0, requestTimeoutMs: 5000, apiRateLimit: 0 });
+  api.clearModelDetailCache();
+  const first = await api.fetchModelDetail(server.site, 7, 'ua');
+  const second = await api.fetchModelDetail(server.site, 7, 'ua');
+  assert.equal(calls, 1, '第二次应命中缓存');
+  assert.deepEqual(second, first);
+
+  api.clearModelDetailCache();
+  await api.fetchModelDetail(server.site, 7, 'ua');
+  assert.equal(calls, 2, '清空缓存后应重新请求');
+
+  // Different site or model means a different cache entry.
+  // 不同站点 / 不同模型各有一条缓存
+  await api.fetchModelDetail(server.site, 8, 'ua');
+  await api.fetchModelDetail(`${server.site}/`, 7, 'ua');
+  assert.equal(calls, 4);
+  api.clearModelDetailCache();
+});
+
+test('buildPlanFromModels: 只请求 /models/:id，默认取最新版本、固定版本优先', async (t) => {
+  const requested = [];
+  const file = (id, name, sizeKB) => ({
+    id,
+    name,
+    type: 'Model',
+    primary: true,
+    sizeKB,
+    hashes: { SHA256: 'ab' },
+    downloadUrl: `https://blob.example/${name}`,
+  });
+  const older = {
+    id: 1001,
+    name: 'v1',
+    baseModel: 'MOSS',
+    publishedAt: '2026-10-01T00:00:00.000Z',
+    files: [file(11, 'a.safetensors', 2)],
+  };
+  const newer = {
+    id: 2001,
+    name: 'v2',
+    baseModel: 'MOSS',
+    publishedAt: '2026-11-01T00:00:00.000Z',
+    paidAccess: { permanent: true, endsAt: null },
+    files: [file(21, 'a-v2.safetensors', 3)],
+  };
+  const server = await startServer((req, res) => {
+    requested.push(req.url);
+    if (/\/api\/v1\/models\/101/.test(req.url)) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({
+        id: 101,
+        name: 'Model A',
+        type: 'LORA',
+        modelVersions: [older, newer],
+      }));
+      return;
+    }
+    res.writeHead(404);
+    res.end('not found');
+  });
+  t.after(() => server.close());
+
+  api.configureApi({ retries: 0, requestTimeoutMs: 5000, apiRateLimit: 0 });
+  api.clearModelDetailCache();
+  const items = [{ modelId: 101, name: 'Model A', type: 'LORA', versionId: 1001 }];
+
+  const { plan, failed } = await api.buildPlanFromModels(server.site, items, 'ua', {});
+  assert.equal(failed, 0);
+  assert.equal(plan[0].versionId, 2001, '登记的是旧版本，计划取最新版本');
+  assert.equal(plan[0].versionName, 'v2');
+  assert.equal(plan[0].baseModel, 'MOSS', '基础模型取自选中的版本');
+  assert.equal(plan[0].modelAccess.mixed, true, '一个免费 + 一个付费 → 混合');
+  assert.equal(plan[0].access.requiresEntitlement, true, '最新版本是付费版本');
+  assert.deepEqual(requested, ['/api/v1/models/101'], '只请求模型详情端点');
+
+  const pinned = await api.buildPlanFromModels(server.site, items, 'ua', {
+    entries: { 101: { pinnedVersionId: 1001 } },
+  });
+  assert.equal(pinned.plan[0].versionId, 1001, '固定版本优先');
+  assert.equal(pinned.plan[0].modelAccess.mixed, true);
+  api.clearModelDetailCache();
+});
+
 test('buildPlan: 并发获取、失败项带 error 不中断整体', async (t) => {
   const server = await startServer((req, res) => {
     if (req.url.includes('/model-versions/2')) {

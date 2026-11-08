@@ -16,7 +16,7 @@
 // Key model (identical on every screen):
 //   - up/down move, Home/End and PgUp/PgDn jump, Enter confirms;
 //   - Esc cancels the current prompt or leaves the current screen without saving;
-//   - Ctrl+M switches to the task view and back;
+//   - Ctrl+T switches to the task view and back;
 //   - Ctrl+C is the only way to leave the program from anywhere.
 //
 //
@@ -25,7 +25,7 @@
 // 外壳在整个会话期间接管终端，每次重绘都画出同一个稳定框架：
 //
 //   页眉     项目名 + 一行全局按键提示
-//   信息面板 框起来的「已设置信息」+ 每个运行中的任务一行
+//   信息面板 主菜单显示完整仪表盘；其它页面压缩成一行上下文
 //   主体     面包屑、当前界面或提问，以及日志区
 //   页脚     当前焦点所在处的按键提示
 //
@@ -35,7 +35,7 @@
 // 按键模型（所有界面一致）：
 //   - ↑/↓ 移动，Home/End 与 PgUp/PgDn 跳转，回车确认；
 //   - Esc 取消当前提问或直接离开当前界面且不保存；
-//   - Ctrl+M 切到任务视图，再按一次返回；
+//   - Ctrl+T 切到任务视图，再按一次返回；
 //   - Ctrl+C 是唯一可以从任何位置退出程序的方式。
 
 const layout = require('../core/layout');
@@ -66,6 +66,11 @@ const {
  */
 const HEADER_ROWS = 2;
 /**
+ * One blank row always separates the body/status rail from the footer.
+ * 正文/状态槽与页脚之间固定保留一行空行。
+ */
+const FOOTER_GAP_ROWS = 1;
+/**
  * Rows the info panel needs besides its content lines: two borders plus the blank separator.
  * 信息面板除内容行之外需要的行数：上下边框加一行分隔空行。
  */
@@ -94,9 +99,11 @@ let logScroll = 0;
 let noticeText = '';
 let noticeColor = null;
 let noticeAt = 0;
+let noticePersistent = false;
 let taskView = false;
 let taskCursor = 0;
 let taskListStart = 0;
+let cancelPromptOpen = false;
 let dirty = true;
 let scheduled = false;
 let tickTimer = null;
@@ -381,9 +388,15 @@ function onKey(text, key) {
   const typed = String(text === undefined || text === null ? '' : text);
   const ctrl = !!k.ctrl;
 
+  // A persistent error stays readable until the user starts the next action.
+  // 持久错误保留到用户开始下一次操作为止。
+  if (noticePersistent && (typed || ['return', 'escape', 'tab'].includes(name))) {
+    clearNotice();
+  }
+
   // Global overlays. They work from every page, including an open prompt.
   // 全局覆盖层。任何页面（包括打开的提问）都可以使用。
-  if (ctrl && name === 'm') {
+  if (ctrl && name === 't') {
     toggleTaskView();
     return;
   }
@@ -417,6 +430,15 @@ function onKey(text, key) {
     }
     if (name === 'up') return moveTaskCursor(-1);
     if (name === 'down') return moveTaskCursor(1);
+    if (name === 'pageup' || name === 'pagedown') {
+      const count = tasks.listTasks().length;
+      if (count) {
+        const delta = name === 'pageup' ? -5 : 5;
+        taskCursor = Math.max(0, Math.min(count - 1, taskCursor + delta));
+        refresh();
+      }
+      return;
+    }
     if (name === 'home') {
       taskCursor = 0;
       refresh();
@@ -657,7 +679,11 @@ function notice(text, color) {
   noticeText = value;
   noticeColor = typeof color === 'function' ? color : colors.dim;
   noticeAt = Date.now();
+  noticePersistent = noticeColor === colors.red;
   refresh();
+  // Errors stay until the next action; success/information messages are transient.
+  // 错误保留到下一次操作；成功/信息提示短暂显示。
+  if (noticePersistent) return;
   const timer = setTimeout(() => {
     if (Date.now() - noticeAt >= NOTICE_MS - 50) {
       noticeText = '';
@@ -668,10 +694,62 @@ function notice(text, color) {
 }
 
 /**
- * How long a notice stays on screen.
- * 提示消息停留的时间。
+ * How long a successful/informational notice stays on screen.
+ * 成功/信息提示停留的时间。
  */
-const NOTICE_MS = 5000;
+const NOTICE_MS = 3000;
+
+/**
+ * Clear the current notice when the user starts another action.
+ * 用户开始下一次操作时清除当前提示。
+ */
+function clearNotice() {
+  if (!noticeText) return;
+  noticeText = '';
+  noticeAt = 0;
+  noticePersistent = false;
+  refresh();
+}
+
+/**
+ * The single line above the footer: action feedback, elapsed operation or page status.
+ *
+ * Priority: an active notice, then the open prompt/page status, then the global long-running stage.
+ *
+ *
+ * 页脚上方的单行状态槽：操作反馈、耗时操作或页面状态。
+ *
+ * 优先级：当前提示、打开的提问/页面状态、全局耗时阶段。
+ */
+function contextStatus() {
+  if (noticeText && (noticePersistent || Date.now() - noticeAt < NOTICE_MS + 1000)) {
+    return { text: noticeText, color: noticeColor || colors.dim };
+  }
+  const top = modalStack[modalStack.length - 1];
+  try {
+    if (top && typeof top.spec.status === 'function') {
+      const value = top.spec.status();
+      if (value) {
+        return typeof value === 'string'
+          ? { text: value, color: colors.cyan }
+          : { text: String(value.text || ''), color: value.color || colors.cyan };
+      }
+    }
+    if (!top && baseScreen && typeof baseScreen.status === 'function') {
+      const value = baseScreen.status();
+      if (value) {
+        return typeof value === 'string'
+          ? { text: value, color: colors.cyan }
+          : { text: String(value.text || ''), color: value.color || colors.cyan };
+      }
+    }
+  } catch (e) {
+    // A broken status provider must not break the frame.
+    // 状态提供者出错不能拖垮界面。
+  }
+  if (stage) return { text: stage, color: colors.cyan };
+  return null;
+}
 
 /**
  * Append one already-formatted line to the log pane.
@@ -695,8 +773,8 @@ function logCount() {
 }
 
 // ---------------------------------------------------------------------------
-// System views: tasks (Ctrl+M) and the log page (Ctrl+L)
-// 系统视图：任务（Ctrl+M）与日志页（Ctrl+L）
+// System views: tasks (Ctrl+T) and the log page (Ctrl+L)
+// 系统视图：任务（Ctrl+T）与日志页（Ctrl+L）
 // ---------------------------------------------------------------------------
 
 /**
@@ -760,20 +838,36 @@ function selectedTask() {
 
 function cancelSelectedTask() {
   const task = selectedTask();
-  if (!task) return;
+  if (!task || cancelPromptOpen) return;
   if (task.status !== tasks.RUNNING && task.status !== tasks.QUEUED) {
     notice(t('tui.screen.taskNotRunning'), colors.dim);
     return;
   }
   const wasQueued = task.status === tasks.QUEUED;
-  if (tasks.cancelTask(task.id)) {
-    notice(
-      wasQueued
-        ? t('tui.screen.taskQueueCancelled', { name: task.name || task.id })
-        : t('tui.screen.taskCancelRequested', { name: task.name || task.id }),
-      colors.yellow
-    );
-  }
+  cancelPromptOpen = true;
+  Promise.resolve()
+    .then(() =>
+      require('../ui/pages').promptConfirm(t('tui.screen.taskCancelConfirm', { name: task.name || task.id }), {
+        danger: true,
+        initial: false,
+      })
+    )
+    .then((confirmed) => {
+      if (confirmed !== true) return;
+      if (tasks.cancelTask(task.id)) {
+        notice(
+          wasQueued
+            ? t('tui.screen.taskQueueCancelled', { name: task.name || task.id })
+            : t('tui.screen.taskCancelRequested', { name: task.name || task.id }),
+          colors.yellow
+        );
+      }
+    })
+    .catch(() => {})
+    .finally(() => {
+      cancelPromptOpen = false;
+      refresh();
+    });
 }
 
 /**
@@ -888,7 +982,8 @@ function frame() {
   lines.push(clip(indent(colors.bold(t('tui.app.bannerTitle')))));
   lines.push('');
 
-  const { info, bodyBudget } = frameBudget();
+  const status = contextStatus();
+  const { info, bodyBudget } = frameBudget(!!status);
   lines.push(...info.lines, '');
 
   // The system views are pages like any other: same heading, same rule, same footer treatment.
@@ -897,12 +992,18 @@ function frame() {
   else if (taskView) lines.push(...bodyLines(bodyBudget, (ctx) => taskViewLines(ctx.rows)));
   else lines.push(...bodyLines(bodyBudget));
 
-  // The footer is pinned to the last rows: the page's own extra keys first, the global keys last, so
-  // the constant line never moves around.
-  //
-  // 页脚固定在最后几行：先本页额外的键，最后是全局按键，固定那一行永远待在同一位置。
   const hints = footerHints();
-  for (let i = lines.length + hints.length; i < dims.rows; i++) lines.push('');
+  // Pad above the status rail, not below it: the status stays pinned directly above the footer gap.
+  // 空行补在状态槽上方而不是下方，状态槽因此始终固定在页脚空行之上。
+  const tailRows = 1 + hints.length + (status ? 1 : 0);
+  while (lines.length + tailRows < dims.rows) lines.push('');
+  if (status) {
+    const paint = typeof status.color === 'function' ? status.color : colors.dim;
+    lines.push(clip(indent(paint(` ${layout.glyphs().notice} ${status.text}`))));
+  }
+  // The footer always has one blank row above it. Status feedback therefore never touches the key hints.
+  // 页脚上方永远留一行空行，状态反馈因此不会贴着按键说明。
+  lines.push('');
   lines.push(...hints.map((line) => clip(indent(colors.dim(line)))));
 
   return lines.map((line) => `${clip(line)}${layout.ANSI_ERASE_LINE_END}`);
@@ -935,7 +1036,11 @@ function footerHints() {
   const hint = contextHint();
   if (!hint) return [];
   const room = dims.columns - margin() - 1;
-  return [displayWidth(hint) <= room ? hint : t('tui.hint.compact')];
+  if (displayWidth(hint) <= room) return [hint];
+  // The compact line is page-owned: a universal fallback would advertise keys this page does not use.
+  // 紧凑行由页面提供：通用兜底会列出这一页根本没有的按键。
+  const compact = contextCompactHint();
+  return [compact || t('tui.hint.compact')];
 }
 
 /**
@@ -953,6 +1058,27 @@ function contextHint() {
   }
   if (baseScreen && typeof baseScreen.hints === 'function') {
     const hints = baseScreen.hints();
+    if (hints && hints.length) return String(hints[0]);
+  }
+  return '';
+}
+
+/**
+ * Page-owned one-line hint used when the full footer would not fit.
+ * 放不下完整页脚时使用的、由页面自己提供的单行提示。
+ */
+function contextCompactHint() {
+  if (logView) return t('tui.hint.logViewCompact');
+  if (taskView) return t('tui.hint.taskViewCompact');
+  const top = modalStack[modalStack.length - 1];
+  const owner = top || baseScreen;
+  if (!owner) return '';
+  if (typeof owner.spec?.compactHints === 'function') {
+    const hints = owner.spec.compactHints();
+    if (hints && hints.length) return String(hints[0]);
+  }
+  if (typeof owner.compactHints === 'function') {
+    const hints = owner.compactHints();
     if (hints && hints.length) return String(hints[0]);
   }
   return '';
@@ -1007,6 +1133,40 @@ function infoPanel(budget) {
   const width = bodyWidth();
   if (!roomy()) return { lines: content.map((line) => clip(indent(line))) };
   return { lines: box(t('tui.screen.infoTitle'), content, width) };
+}
+
+/**
+ * Whether the dashboard should collapse to one line. The full panel is a main-menu affordance;
+ * keeping it on every prompt wastes most of a 24-row terminal.
+ *
+ * 仪表盘是否应压缩为一行。完整面板属于主菜单；在所有提问上保留它会吃掉 24 行终端的大半。
+ */
+function compactInfoMode() {
+  if (dims.rows < 20) return true;
+  if (taskView || logView) return true;
+  if (modalStack.length > 0) return true;
+  return crumbs.length > 1;
+}
+
+/**
+ * One-line context shown outside the main menu: site, session and active task count.
+ * 主菜单之外显示的一行上下文：站点、会话与活动任务数。
+ */
+function compactInfoPanel() {
+  const facts = safeFacts();
+  const picked = facts.slice(0, 2).map((fact) => {
+    const paint = typeof fact.color === 'function' ? fact.color : (text) => text;
+    return `${colors.dim(fact.label)} ${paint(String(fact.value))}`;
+  });
+  const active = tasks
+    .listTasks()
+    .filter((task) => task.status === tasks.RUNNING || task.status === tasks.QUEUED).length;
+  picked.push(
+    active
+      ? colors.cyan(t('tui.screen.infoActive', { count: active }))
+      : colors.dim(t('tui.screen.infoCompactIdle'))
+  );
+  return { lines: [clip(indent(picked.join(` ${colors.dim(layout.glyphs().separator)} `)))] };
 }
 
 /**
@@ -1118,11 +1278,6 @@ function bodyLines(budget, override) {
   if (content.length > room) content = content.slice(0, room);
 
   lines.push(...content.map((line) => clip(indent(line))));
-  // The notice is feedback from the last action, not part of the page: a marker keeps it from being
-  // read as a continuation of the page's own last line.
-  //
-  // 提示行是「上一步操作的结果」，不属于页面本身：加个标记，避免被当成页面最后一行的续行。
-  if (split.noticeActive) lines.push(clip(indent(noticeColor(` ${layout.glyphs().notice} ${noticeText}`))));
   return lines;
 }
 
@@ -1140,20 +1295,18 @@ function bodyLines(budget, override) {
  */
 function renderCrumbs() {
   const parts = crumbs.filter(Boolean);
-  const stageText = modalStack.length ? '' : stage;
-  const tail = stageText ? ` ${colors.dim(layout.glyphs().bullet)} ${colors.cyan(stageText)}` : '';
   const top = modalStack[modalStack.length - 1];
   const flow = top && top.spec.steps ? top.spec.steps : baseScreen && baseScreen.steps;
   const stepText = flow
     ? require('../ui/steps').stepLine(flow, Math.max(20, bodyWidth()))
     : '';
   const steps = stepText ? `  ${stepText}` : '';
-  if (!parts.length) return `${steps}${tail}`.trim();
+  if (!parts.length) return steps.trim();
   const sep = ` ${colors.dim(layout.glyphs().arrow)} `;
   return (
     parts
       .map((part, index) => (index === parts.length - 1 ? colors.bold(part) : colors.dim(part)))
-      .join(sep) + steps + tail
+      .join(sep) + steps
   );
 }
 
@@ -1166,8 +1319,11 @@ function crumbRule(width) {
 }
 
 /**
- * Long-running step shown next to the breadcrumb ("what is happening right now").
- * 显示在面包屑旁边的耗时步骤（「现在正在做什么」）。
+ * Short-lived operation shown in the status rail ("what is happening right now"). Page or menu names
+ * must never be written here: they are context, not progress, and would look like a stuck success.
+ *
+ * 状态槽里的短时操作提示（「现在正在做什么」）。页面或菜单名称不能写入这里：它们只是上下文，
+ * 不是进度，否则会看起来像一条永不消失的成功提示。
  *
  * @param {string} text empty clears it
  */
@@ -1203,11 +1359,10 @@ function logPageLines(budget) {
   logScroll = Math.max(0, Math.min(logScroll, maxScroll));
   const end = total - logScroll;
   const start = Math.max(0, end - height);
-  const lines = logs.slice(start, end).map((line) => line);
-  lines.push(
-    colors.dim(t('tui.screen.logPosition', { from: start + 1, to: end, total }))
-  );
-  return lines;
+  return [
+    colors.dim(t('tui.screen.logPosition', { from: start + 1, to: end, total })),
+    ...logs.slice(start, end),
+  ];
 }
 
 /**
@@ -1282,10 +1437,13 @@ function box(title, content, width) {
  * Rows left for the body after the header, the info panel and the footer.
  * 扣掉页眉、信息面板与页脚之后留给主体的行数。
  */
-function frameBudget() {
+function frameBudget(statusActive = false) {
   const hints = footerHints().length;
-  const budget = Math.max(6, dims.rows - HEADER_ROWS - hints);
-  const info = infoPanel(budget);
+  const budget = Math.max(
+    6,
+    dims.rows - HEADER_ROWS - hints - FOOTER_GAP_ROWS - (statusActive ? 1 : 0)
+  );
+  const info = compactInfoMode() ? compactInfoPanel() : infoPanel(budget);
   return { budget, info, bodyBudget: Math.max(3, budget - info.lines.length - 1) };
 }
 
@@ -1297,11 +1455,9 @@ function bodySplit(bodyBudget) {
   // Breadcrumb + its rule + one blank line (the task view and the log page have headings of their own).
   // 面包屑 + 其下的横线 + 一行空行（任务视图与日志页有自己的标题）。
   const crumbRows = taskView || logView || renderCrumbs() ? 3 : 0;
-  const noticeActive = !!noticeText && Date.now() - noticeAt < NOTICE_MS;
   return {
     crumbRows,
-    noticeActive,
-    room: Math.max(1, bodyBudget - crumbRows - (noticeActive ? 1 : 0)),
+    room: Math.max(1, bodyBudget - crumbRows),
   };
 }
 
@@ -1311,7 +1467,7 @@ function bodySplit(bodyBudget) {
  */
 function bodyGeometry() {
   measure();
-  const split = bodySplit(frameBudget().bodyBudget);
+  const split = bodySplit(frameBudget(!!contextStatus()).bodyBudget);
   return {
     columns: dims.columns,
     rows: dims.rows,
@@ -1370,9 +1526,11 @@ function resetState() {
   logView = false;
   logScroll = 0;
   noticeText = '';
+  noticePersistent = false;
   taskView = false;
   taskCursor = 0;
   taskListStart = 0;
+  cancelPromptOpen = false;
   lastPaint = '';
 }
 

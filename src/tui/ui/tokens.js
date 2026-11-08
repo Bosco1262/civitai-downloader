@@ -40,10 +40,10 @@ const color = {
 };
 
 const status = {
-  running: color.success,
-  done: color.accent,
+  running: color.accent,
+  done: color.success,
   queued: color.warning,
-  cancelled: color.warning,
+  cancelled: color.muted,
   failed: color.danger,
 };
 

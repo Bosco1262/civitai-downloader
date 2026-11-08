@@ -169,6 +169,7 @@ function snapshot(job) {
     done: job.done,
     skipped: job.skipped,
     failed: job.failed,
+    accessRequired: job.accessRequired || 0,
     current: currentRows(job),
   };
 }
@@ -187,6 +188,7 @@ function publish(job) {
     done: state.done,
     skipped: state.skipped,
     failed: state.failed,
+    accessRequired: state.accessRequired,
     scope: first ? first.model : '',
     detail: first ? `${first.model} · ${first.file}` : '',
     current: state.current,
@@ -209,6 +211,7 @@ async function runJob(job) {
   job.done = 0;
   job.skipped = 0;
   job.failed = 0;
+  job.accessRequired = 0;
   job.current = new Map();
   job.failures = [];
   job.lastErrors = new Map();
@@ -302,6 +305,8 @@ async function runJob(job) {
           job.current.delete(planKey(item));
           if (status === 'skipped') {
             job.skipped++;
+          } else if (status === 'access-required') {
+            job.accessRequired++;
           } else if (ok) {
             job.done++;
           } else {
@@ -328,6 +333,7 @@ async function runJob(job) {
       done: summary.done,
       skipped: summary.skipped,
       failed: summary.failed,
+      accessRequired: summary.accessRequired || 0,
       metaFailed: summary.metaFailed || 0,
       cancelled: !!summary.cancelled,
       error: summary.error || null,
@@ -347,6 +353,7 @@ async function runJob(job) {
       done: summary.done,
       skipped: summary.skipped,
       failed: summary.failed,
+      accessRequired: summary.accessRequired || 0,
       current: [],
       failures: job.failures.slice(),
       logFile: result.logFile,
@@ -464,6 +471,7 @@ function announceResult(job, result) {
   const stats = {
     done: result.done,
     skipped: result.skipped,
+    accessRequired: result.accessRequired || 0,
     failed: result.failed,
     metaFailed: result.metaFailed,
   };
@@ -476,8 +484,14 @@ function announceResult(job, result) {
   } else if (result.cancelled) {
     text = `${t('tui.download.summaryCancelled', stats)}${hint}`;
     color = view.colors.yellow;
+  } else if (result.accessRequired && !result.done && !result.skipped) {
+    text = `${t('tui.download.summaryAccess', stats)}${hint}`;
+    color = view.colors.yellow;
   } else if (result.failed) {
     text = `${t('tui.download.summaryDone', stats)}${hint}`;
+    color = view.colors.yellow;
+  } else if (result.accessRequired) {
+    text = `${t('tui.download.summaryAccess', stats)}${hint}`;
     color = view.colors.yellow;
   } else {
     text = `${t(result.metaFailed ? 'tui.download.summaryDoneMeta' : 'tui.download.summaryDone', stats)}${hint}`;
@@ -547,6 +561,7 @@ function startDownloadTask(config, opts) {
     done: 0,
     skipped: 0,
     failed: 0,
+    accessRequired: 0,
     current: new Map(),
     failures: [],
     lastErrors: new Map(),

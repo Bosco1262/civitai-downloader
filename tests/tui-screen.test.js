@@ -25,6 +25,7 @@ const i18n = require('../src/i18n');
 const layout = require('../src/tui/layout');
 const tasks = require('../src/tui/tasks');
 const screen = require('../src/tui/screen');
+const app = require('../src/tui/flows/app');
 const steps = require('../src/tui/ui/steps');
 const pages = require('../src/tui/pages');
 const settings = require('../src/tui/settings');
@@ -259,6 +260,21 @@ test('screen: 任务总览固定一行，合计所有任务的进度与状态数
   tasks.reset();
 });
 
+test('screen: 任务视图单独显示需权限数量', () => {
+  tasks.reset();
+  const id = tasks.createTask({ kind: 'download', name: 'Paid task', total: 2, totalBytes: 2 });
+  tasks.updateTask(id, { done: 1, accessRequired: 1 });
+  tasks.finishTask(id, tasks.DONE, {
+    done: 1,
+    skipped: 0,
+    accessRequired: 1,
+    failed: 0,
+  });
+  const text = screen.taskViewLines(16).join('\n');
+  assert.ok(text.includes(i18n.t('tui.screen.taskAccess', { count: 1 })), text);
+  tasks.reset();
+});
+
 test('screen: 任务视图逐任务两行，空时给出提示', () => {
   tasks.reset();
   const empty = screen.taskViewLines(12).join('\n');
@@ -280,7 +296,7 @@ test('screen: 任务视图逐任务两行，空时给出提示', () => {
 // 外壳本身
 // ---------------------------------------------------------------------------
 
-test('screen: 固定页眉 / 信息面板 / 页脚一直显示，Ctrl+M 切换任务视图', async () => {
+test('screen: 固定页眉 / 信息面板 / 页脚一直显示，Ctrl+T 切换任务视图', async () => {
   await withFakeTerminal(async ({ frame, key, settle }) => {
     tasks.reset();
     assert.equal(screen.start({ onQuit: () => {} }), true);
@@ -314,7 +330,7 @@ test('screen: 固定页眉 / 信息面板 / 页脚一直显示，Ctrl+M 切换�
     assert.equal(lines[lines.length - 1].trim(), '本页额外按键');
     assert.ok(lines.length <= 30, '帧不超过终端行数');
 
-    key('m', '', true);
+    key('t', '', true);
     await settle();
     screen.render();
     const taskView = frame().join('\n');
@@ -324,11 +340,48 @@ test('screen: 固定页眉 / 信息面板 / 页脚一直显示，Ctrl+M 切换�
     assert.ok(!taskView.includes(`${i18n.t('tui.app.menuTitle')} ›`), `任务视图不应挂在主菜单下：\n${taskView}`);
     assert.ok(taskView.includes(i18n.t('tui.hint.taskRunning')));
 
-    key('m', '', true);
+    key('t', '', true);
     await settle();
     screen.render();
-    assert.ok(!frame().join('\n').includes(i18n.t('tui.hint.taskRunning')), 'Ctrl+M 再按一次返回');
+    assert.ok(!frame().join('\n').includes(i18n.t('tui.hint.taskRunning')), 'Ctrl+T 再按一次返回');
     tasks.reset();
+  });
+});
+
+test('screen: 进入下载流程不会把菜单标题显示成常驻成功状态', async () => {
+  await withFakeTerminal(async ({ frame, key, settle }) => {
+    assert.equal(screen.start({ onQuit: () => {} }), true);
+    screen.setBase({ title: '主菜单', render: () => ['主菜单'], hints: () => [] });
+    const pending = app.runAction('download');
+    await settle();
+    screen.render();
+    const text = frame().join('\n');
+    assert.ok(!text.includes(`✔ ${i18n.t('tui.app.menuDownload')}`), `状态槽不应显示菜单标题：\n${text}`);
+    assert.ok(!text.includes(i18n.t('tui.app.busyHint')), `流程应有自己的提示，不应常驻“正在处理”：\n${text}`);
+
+    key('escape');
+    await settle();
+    await pending;
+    screen.render();
+    assert.ok(!frame().join('\n').includes(`✔ ${i18n.t('tui.app.menuDownload')}`), frame().join('\n'));
+  });
+});
+
+test('screen: 操作提示固定在页脚上方，页脚前始终保留空行', async () => {
+  await withFakeTerminal(async ({ frame, settle }) => {
+    assert.equal(screen.start({ onQuit: () => {} }), true);
+    screen.setBase({
+      title: '主菜单',
+      render: () => ['▸ 主菜单项'],
+      hints: () => ['主菜单提示'],
+    });
+    screen.notice('已保存：并发数 = 4', layout.colors.green);
+    await settle();
+    screen.render();
+    const lines = frame();
+    assert.ok(lines[lines.length - 3].includes('已保存：并发数 = 4'), lines.slice(-4).join('\n'));
+    assert.equal(lines[lines.length - 2].trim(), '', '状态槽与页脚之间必须有一个空行');
+    assert.equal(lines[lines.length - 1].trim(), '主菜单提示');
   });
 });
 
@@ -575,7 +628,9 @@ test('screen: 设置页滚动且首尾循环，光标不会跑出屏幕', async 
       const listTop = () => {
         const rows = frame();
         const ruleIndex = rows.findIndex((line) => /^[-─]{20,}$/.test(line.trim()));
-        return rows[ruleIndex + 2].replace('▸', ' ').trimEnd();
+        // rule, blank, list meta, blank, first content row
+        // 横线、空行、列表元信息、空行、第一行内容
+        return rows[ruleIndex + 4].replace('▸', ' ').trimEnd();
       };
       screen.render();
       assert.ok(cursorLine() >= 0, '一开始光标就在屏幕内');
@@ -627,7 +682,7 @@ test('screen: 设置页滚动且首尾循环，光标不会跑出屏幕', async 
   );
 });
 
-test('screen: Ctrl+M 在提问打开时也能切换任务视图', async () => {
+test('screen: Ctrl+T 在提问打开时也能切换任务视图', async () => {
   await withFakeTerminal(async ({ frame, key, settle }) => {
     assert.equal(screen.start({ onQuit: () => {} }), true);
     screen.setBase({ title: '主菜单', render: () => ['▸ 主菜单项'], hints: () => [] });
@@ -636,12 +691,12 @@ test('screen: Ctrl+M 在提问打开时也能切换任务视图', async () => {
     await settle();
     screen.render();
 
-    key('m', '', true);
+    key('t', '', true);
     await settle();
     screen.render();
-    assert.ok(frame().join('\n').includes(i18n.t('tui.screen.taskTitle')), '提问期间 Ctrl+M 也能打开任务视图');
+    assert.ok(frame().join('\n').includes(i18n.t('tui.screen.taskTitle')), '提问期间 Ctrl+T 也能打开任务视图');
 
-    key('m', '', true);
+    key('t', '', true);
     await settle();
     screen.render();
     assert.ok(frame().join('\n').includes('要下载什么？'), '再按一次回到原来的提问');
@@ -716,20 +771,22 @@ test('screen: 设置页的分组标题与它的行绑定出现', async () => {
         const done = settingsPage(config);
         await settle();
 
-        // The list area: everything between the breadcrumb rule and the status line.
-        // 列表区：面包屑横线之后、状态行之前的所有行。
+        // The list area: the breadcrumb rule, then list metadata + blank, then content until the
+        // fixed blank row above the footer.
+        //
+        // 列表区：面包屑横线后跳过列表元信息与空行，直到页脚上方的固定空行。
         const listArea = () => {
           const frameLines = frame();
           const ruleIndex = frameLines.findIndex((line) => /^[-─]{20,}$/.test(line.trim()));
-          const tail = frameLines.slice(ruleIndex + 2);
-          const cut = tail.findIndex((line) => line.includes('第 ') || line.trim() === '');
-          return (cut < 0 ? tail : tail.slice(0, cut)).map((line) => line.trimEnd());
+          const body = frameLines.slice(ruleIndex + 4, frameLines.length - 2).map((line) => line.trimEnd());
+          while (body.length && !body[body.length - 1].trim()) body.pop();
+          return body;
         };
 
         // Walk the whole page: a heading may never be the last visible line, it must be visible
-        // together with the first row of its section, and the status line always hugs the footer.
+        // together with the first row of its section, and the footer always has one blank row above it.
         //
-        // 走完整页：标题永远不能是最后一行；它必须和本组第一行一起可见；状态行始终贴着页脚。
+        // 走完整页：标题永远不能是最后一行；它必须和本组第一行一起可见；页脚上方固定一行空行。
         screen.render();
         let firstRowSeen = false;
         for (let i = 0; i < 24; i++) {
@@ -737,9 +794,11 @@ test('screen: 设置页的分组标题与它的行绑定出现', async () => {
           const last = area[area.length - 1] || '';
           assert.ok(!titles.some((title) => last.includes(title)), `${rows} 行：标题被单独留在最后一行：${last}`);
           const frameLines = frame();
-          assert.ok(
-            frameLines[frameLines.length - 2].includes('第 '),
-            `${rows} 行：状态行与页脚之间不应有空行：${frameLines.slice(-3).join(' | ')}`
+          assert.ok(frameLines.join('\n').includes('第 '), `${rows} 行：列表位置信息应可见`);
+          assert.equal(
+            frameLines[frameLines.length - 2].trim(),
+            '',
+            `${rows} 行：页脚上方必须保留空行：${frameLines.slice(-3).join(' | ')}`
           );
           const cursorIndex = area.findIndex((line) => line.includes('▸'));
           if (cursorIndex > 0 && titles.some((title) => (area[cursorIndex - 1] || '').includes(title))) {

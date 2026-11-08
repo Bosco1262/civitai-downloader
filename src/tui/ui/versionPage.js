@@ -12,11 +12,13 @@
  */
 
 const { t } = require('../../i18n');
+const { formatBytes } = require('../../util');
 const layout = require('../layout');
 const view = require('../view');
 const screen = require('../screen');
 const list = require('./list');
 const { color } = require('../tokens');
+const { accessLabel, accessColor } = require('./accessText');
 
 const { displayWidth, truncateTo } = layout;
 
@@ -36,14 +38,13 @@ const { displayWidth, truncateTo } = layout;
  */
 async function showVersionPage(detail, rows, initialCursor, describe, options = {}) {
   const multi = !!options.multi;
+  // The caller owns the selection: an empty `selected` means "nothing is checked", never "guess one".
+  // 勾选状态由调用方决定：空的 `selected` 就是「一个都没勾」，页面不再自行补勾。
   const state = {
     cursor: initialCursor,
     windowStart: 0,
     selected: new Set(Array.from(options.selected || [], String)),
   };
-  if (multi && !state.selected.size && rows[initialCursor]) {
-    state.selected.add(String(rows[initialCursor].modelId));
-  }
   const name = String(detail.name || detail.id || '');
   const baseModels = [...new Set(rows.map((row) => row.baseModel).filter(Boolean))];
   const facts = [];
@@ -77,14 +78,22 @@ async function showVersionPage(detail, rows, initialCursor, describe, options = 
         lines.push(color.muted(truncateTo(facts.join(` ${layout.glyphs().bullet} `), width)));
       }
       lines.push('');
+      const selectedBytes = rows
+        .filter((row) => state.selected.has(String(row.modelId)))
+        .reduce((sum, row) => sum + (Number(row.totalBytes) || 0), 0);
+      const versionMeta = multi
+        ? t('tui.models.pageVersionsSelected', {
+          selected: state.selected.size,
+          total: rows.length,
+          size: formatBytes(selectedBytes),
+        })
+        : t('tui.models.pageVersions', { count: rows.length });
       lines.push(
         color.muted(
-          multi
-            ? t('tui.models.pageVersionsSelected', {
-                selected: state.selected.size,
-                total: rows.length,
-              })
-            : t('tui.models.pageVersions', { count: rows.length })
+          `${versionMeta} ${layout.glyphs().separator} ${t('tui.pages.listPosition', {
+            index: Math.min(rows.length, state.cursor + 1),
+            total: rows.length,
+          })}`
         )
       );
 
@@ -97,11 +106,22 @@ async function showVersionPage(detail, rows, initialCursor, describe, options = 
         const marker = active ? color.cursor(layout.glyphs().cursor) : ' ';
         const checked = multi ? `${view.checkbox(state.selected.has(String(row.modelId)))} ` : '';
         const label = view.padTo(row.name, nameWidth);
-        const rest = truncateTo(describe(row), Math.max(8, width - nameWidth - 4));
-        lines.push(`${marker} ${checked}${active ? color.emphasis(label) : label}  ${color.muted(rest)}`);
-      }
-      if (rows.length > win.end - win.start) {
-        lines.push(color.muted(t('tui.pages.listPosition', { index: state.cursor + 1, total: rows.length })));
+        const badge = accessLabel(row.access);
+        const badgeText = badge ? ` [${badge}]` : '';
+        const described = String(describe(row) || '');
+        /*
+         * `describe` may already append the access label (`describeVersion` does): never print the
+         * same badge twice on one row.
+         *
+         * `describe` 可能已经把访问标签拼进描述（`describeVersion` 就是如此）：同一行不重复显示徽标。
+         */
+        const text = badge && !described.includes(badge) ? `${described}${badgeText}` : described;
+        const rest = truncateTo(text, Math.max(8, width - nameWidth - 4));
+        const paintBadge = badge ? accessColor(row.access) : (paint) => paint;
+        const description = badge && rest.endsWith(badgeText)
+          ? `${color.muted(rest.slice(0, -badgeText.length))}${paintBadge(badgeText)}`
+          : color.muted(rest);
+        lines.push(`${marker} ${checked}${active ? color.emphasis(label) : label}  ${description}`);
       }
       return lines;
     },
@@ -116,14 +136,29 @@ async function showVersionPage(detail, rows, initialCursor, describe, options = 
       else if (multi && (name_ === 'space' || text === ' ')) {
         const row = rows[state.cursor];
         if (row) {
+          if (row.access && row.access.kind === 'unavailable') {
+            view.notice(t('tui.access.unavailable'), color.danger);
+            return;
+          }
           const id = String(row.modelId);
           if (state.selected.has(id)) state.selected.delete(id);
           else state.selected.add(id);
         }
       } else if (name_ === 'return') {
         if (!multi) {
-          entry.settle(rows[state.cursor] && rows[state.cursor].modelId);
-        } else if (state.selected.size) {
+          const row = rows[state.cursor];
+          if (row && row.access && row.access.kind === 'unavailable') {
+            view.notice(t('tui.access.unavailable'), color.danger);
+            return;
+          }
+          entry.settle(row && row.modelId);
+        } else {
+          /*
+           * Applying an empty selection is meaningful: it means "do not download this model this
+           * time". `Esc` stays the "discard my edits" path.
+           *
+           * 应用空勾选是有意义的：表示「这次不下载这个模型」。`Esc` 仍然是「放弃本次修改」。
+           */
           const picked = [];
           for (const row of rows) {
             if (state.selected.has(String(row.modelId))) picked.push(String(row.modelId));

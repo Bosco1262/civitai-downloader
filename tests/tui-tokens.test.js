@@ -48,11 +48,11 @@ test('tokens: 语义颜色保持现有视觉映射', () => {
   assert.equal(tokens.color.text('plain'), 'plain');
 });
 
-test('tokens: 任务状态颜色保持现有映射', () => {
-  assert.equal(tokens.status.running, tokens.color.success);
-  assert.equal(tokens.status.done, tokens.color.accent);
+test('tokens: 任务状态使用常规语义色', () => {
+  assert.equal(tokens.status.running, tokens.color.accent);
+  assert.equal(tokens.status.done, tokens.color.success);
   assert.equal(tokens.status.queued, tokens.color.warning);
-  assert.equal(tokens.status.cancelled, tokens.color.warning);
+  assert.equal(tokens.status.cancelled, tokens.color.muted);
   assert.equal(tokens.status.failed, tokens.color.danger);
 });
 

@@ -68,6 +68,9 @@ const COMMANDS = {
       'model',
       'models',
       'from-file',
+      'include-paid',
+      'skip-paid',
+      'paid-only',
     ],
     // --models takes a value in download (a comma-separated model/version reference)
     // --models 在 download 里要取值（逗号分隔的模型/版本引用）
@@ -75,7 +78,18 @@ const COMMANDS = {
   },
   check: {
     file: './commands/check',
-    flags: ['verify-files', 'deep', 'download', 'all', 'json', 'out', 'quiet'],
+    flags: [
+      'verify-files',
+      'deep',
+      'download',
+      'all',
+      'json',
+      'out',
+      'quiet',
+      'include-paid',
+      'skip-paid',
+      'paid-only',
+    ],
     // --models: check every single-model record (boolean; same meaning as verify --models)
     // --models：检查全部单模型记录（布尔；与 verify --models 语义一致）
     booleanFlags: ['models'],

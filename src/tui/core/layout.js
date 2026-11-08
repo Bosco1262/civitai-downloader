@@ -56,7 +56,7 @@ const ANSI_ERASE_LINE_END = '\u001b[K';
  */
 const GLYPHS_UNICODE = {
   cursor: '▸',
-  checked: '[×]',
+  checked: '[✓]',
   unchecked: '[ ]',
   barFull: '█',
   barEmpty: '░',

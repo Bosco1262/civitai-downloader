@@ -15,7 +15,7 @@
  * Interaction rules (the same everywhere in the TUI):
  *  - the arrow keys move, Enter selects/confirms and always moves on to the next screen;
  *  - Esc goes back one level without saving, and quits from the main menu;
- *  - Ctrl+M switches to the task view (and back) from anywhere;
+ *  - Ctrl+T switches to the task view (and back) from anywhere;
  *  - Ctrl+C quits the program from anywhere.
  *
  *
@@ -31,7 +31,7 @@
  * 交互约定（整个 TUI 一致）：
  *  - ↑/↓ 移动，回车选中/确认，并且一定进入下一个界面；
  *  - Esc 返回上一级且不保存，在主菜单里表示退出；
- *  - 任意位置按 Ctrl+M 切换任务视图（再按一次返回）；
+ *  - 任意位置按 Ctrl+T 切换任务视图（再按一次返回）；
  *  - 任意位置按 Ctrl+C 退出程序。
  */
 
@@ -78,6 +78,7 @@ const state = {
  */
 const MAIN_MENU = [
   { key: 'download', titleKey: 'tui.app.menuDownload', descKey: 'tui.app.menuDownloadDesc' },
+  { key: 'tasks', titleKey: 'tui.app.menuTasks', descKey: 'tui.app.menuTasksDesc' },
   { key: 'models', titleKey: 'tui.app.menuModels', descKey: 'tui.app.menuModelsDesc' },
   { key: 'collections', titleKey: 'tui.app.menuCollections', descKey: 'tui.app.menuCollectionsDesc' },
   { key: 'settings', titleKey: 'tui.app.menuSettings', descKey: 'tui.app.menuSettingsDesc' },
@@ -202,7 +203,7 @@ function waitForKey(onQuit) {
  *
  * 有任务在跑时，第一次 Ctrl+C 只是请求它停止，让流程有机会释放全局锁并收尾；再按一次才立即退出。
  */
-function quit(code = 0) {
+function quit(code = 0, options = {}) {
   if (state.quitting) return;
   const active = tasks.activeTasks().map((task) => task.id).sort();
   const sameSet =
@@ -213,8 +214,8 @@ function quit(code = 0) {
   // that appeared in between is a new set, so it is cancelled first instead of being killed abruptly.
   //
   // 对同一组任务第一次按 Ctrl+C 请求取消；再按一次退出。中途新出现的任务属于新的一组，
-  // 因此先取消它，而不是被直接杀掉。
-  if (active.length && (!state.quitArmed || !sameSet)) {
+  // 因此先取消它，而不是被直接杀掉。菜单里的「退出」在用户明确确认后传入 force。
+  if (active.length && !options.force && (!state.quitArmed || !sameSet)) {
     state.quitArmed = true;
     state.quitArmedIds = active;
     tasks.cancelAll();
@@ -251,13 +252,14 @@ function mainScreen() {
     // 这里 Esc 不做任何事：主菜单就是根，返回途中连按 Esc 不应误退出程序。
     // 退出用 Ctrl+C 或「退出」这一项。
     onEscape: () => {},
+    status: () => (state.busy ? t('tui.app.busyHint') : null),
     render(ctx) {
       const lines = [];
       // On a very short terminal the five entries do not all fit: the window follows the cursor and a
       // position line says how many there are, so nothing looks missing.
       //
       // 终端特别矮时五项放不下：视窗跟随光标滚动，并用一行位置提示说明总数，不会显得缺项。
-      const room = Math.max(1, ctx.rows - (state.busy ? 2 : 0));
+      const room = Math.max(1, ctx.rows);
       const win = pages.windowOf(MAIN_MENU.length, cursor.index, room, cursor.windowStart);
       cursor.windowStart = win.start;
       cursor.index = win.cursor;
@@ -273,12 +275,12 @@ function mainScreen() {
       if (win.end - win.start < MAIN_MENU.length) {
         lines.push(colors.dim(t('tui.pages.listPosition', { index: win.cursor + 1, total: MAIN_MENU.length })));
       }
-      if (state.busy) lines.push('', colors.dim(t('tui.app.busyHint')));
       return lines;
     },
     // The menu can be left with Ctrl+C only: its line says so and does not advertise Esc.
     // 主菜单只能用 Ctrl+C 退出：这一行只写它，不宣传 Esc。
     hints: () => [t('tui.hint.main')],
+    compactHints: () => [t('tui.hint.mainCompact')],
     onKey(text, key) {
       // While a flow is running the menu is only a backdrop: prompts own the keys.
       // 流程运行期间菜单只是背景：按键归提问所有。
@@ -293,7 +295,6 @@ function mainScreen() {
       else if (key.name === 'pagedown') cursor.index = list.pageCursor(cursor.index, 1, MAIN_MENU.length, 5, 'menu');
       else if (/^[1-9]$/.test(text) && Number(text) <= MAIN_MENU.length) {
         cursor.index = Number(text) - 1;
-        runAction(MAIN_MENU[cursor.index].key);
       } else if (key.name === 'return') runAction(MAIN_MENU[cursor.index].key);
       else return false;
       return true;
@@ -305,12 +306,15 @@ function mainScreen() {
  * Run one menu action exactly once, keeping the menu inert until it finishes.
  * 运行一个菜单动作且只运行一个，动作结束前菜单不响应按键。
  */
-function runExclusive(fn, stageLabel) {
-  if (state.busy) return;
+function runExclusive(fn) {
+  if (state.busy) return Promise.resolve();
   state.busy = true;
-  if (stageLabel) screen.setStage(stageLabel);
+  // The menu title is context, not a running operation. Writing it to the global stage made the
+  // status rail show a permanent “✔ Download” for every page in the flow.
+  //
+  // 菜单标题只是上下文，不是正在执行的操作。写入全局 stage 会让整个流程一直显示“✔ 下载”。
   screen.refresh();
-  Promise.resolve()
+  return Promise.resolve()
     .then(fn)
     .catch((e) => {
       const { describeError } = require('../../runtime');
@@ -338,12 +342,7 @@ function runExclusive(fn, stageLabel) {
 }
 
 function runAction(action) {
-  runExclusive(() => dispatch(action), t(menuTitleKey(action)));
-}
-
-function menuTitleKey(action) {
-  const item = MAIN_MENU.find((entry) => entry.key === action);
-  return item ? item.titleKey : 'tui.app.menuTitle';
+  return runExclusive(() => dispatch(action));
 }
 
 /**
@@ -355,10 +354,20 @@ function menuTitleKey(action) {
 async function dispatch(action) {
   const config = state.config;
   if (action === 'exit') {
-    quit();
+    const active = tasks.activeTasks();
+    if (active.length) {
+      const confirmed = await pages.promptConfirm(t('tui.app.exitWithTasksConfirm', { count: active.length }), {
+        danger: true,
+        initial: false,
+      });
+      if (!confirmed) return;
+      tasks.cancelAll();
+    }
+    quit(0, { force: true });
     return;
   }
   if (action === 'download') return downloadMenu(config);
+  if (action === 'tasks') return screen.toggleTaskView(true);
   if (action === 'models') return modelsFlow(config);
   if (action === 'collections') return collectionsFlow(config);
   if (action === 'settings') return settingsFlow(config);
@@ -371,8 +380,8 @@ async function dispatch(action) {
     return view.captureOutput(() => require('../../commands/doctor').main(config, { positionals: [], flags: {} }));
   }
   if (action === 'open') {
-    if (view.openDir(config.outDir)) view.log(t('tui.app.opened', { dir: config.outDir }));
-    else view.log(t('tui.app.openFailed'));
+    if (view.openDir(config.outDir)) view.notice(t('tui.app.opened', { dir: config.outDir }), colors.green);
+    else view.notice(t('tui.app.openFailed'), colors.yellow);
     return;
   }
 }
@@ -524,5 +533,6 @@ module.exports = {
   waitForKey,
   MAIN_MENU,
   dispatch,
+  runAction,
   quit,
 };

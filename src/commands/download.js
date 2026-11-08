@@ -7,6 +7,7 @@ const { fetchModelDetail, fetchVersionMeta } = require('../api');
 const { resolveOutDir } = require('../config');
 const { dataPaths } = require('../storage');
 const { parseCollectionId, parseModelRef, parseIdList } = require('../urls');
+const { classifyVersionAccess } = require('../access');
 const { NotFoundError, ConfigError } = require('../errors');
 const { t } = require('../i18n');
 
@@ -61,6 +62,13 @@ function commonOpts(config, args) {
     dedup: args.flags.dedup ? String(args.flags.dedup) : undefined,
     notifyWebhook: args.flags.notify ? String(args.flags.notify) : undefined,
     notifyToast: args.flags.toast ? true : undefined,
+    paidPolicy: args.flags['paid-only']
+      ? 'only'
+      : args.flags['skip-paid']
+        ? 'skip'
+        : args.flags['include-paid']
+          ? 'include'
+          : null,
   };
 }
 
@@ -87,6 +95,7 @@ async function downloadCollection(config, args, collectionId, opts) {
     ...opts,
     collectionId,
     items,
+    paidPolicy: opts.paidPolicy || 'skip',
     resume: !!args.flags.resume,
   });
 }
@@ -114,10 +123,19 @@ async function downloadModel(config, args, ref, opts) {
     // 站点原始对象：下载流程会把它镜像进模型库（「记录所有信息」）
     versionMeta: version,
     modelMeta: detail,
+    access: classifyVersionAccess(version, detail),
   };
   const collectionId = `model-${detail.id}`;
   log(t('download.singleModel', { name: detail.name, version: version.name || version.id }));
-  return runDownloadJob(config, { ...opts, collectionId, items: [item] });
+  if (item.access && item.access.requiresEntitlement) {
+    log(t('download.paidAccessNotice', { name: detail.name, version: version.name || version.id }));
+  }
+  return runDownloadJob(config, {
+    ...opts,
+    collectionId,
+    items: [item],
+    paidPolicy: opts.paidPolicy || 'include',
+  });
 }
 
 /**

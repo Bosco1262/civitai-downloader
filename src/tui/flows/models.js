@@ -31,12 +31,19 @@ const { readLibrary, readCollection, listCollectionIds, entryVersions, getVersio
 // 更新器通过模块对象按调用时查找，而不是解构：测试或嵌入方可以直接替换其中某个函数，
 // 不必重新加载 TUI。
 const updater = require('../../updater');
-const { fetchModelDetail, versionToItem, extractFiles } = require('../../api');
+const {
+  fetchModelDetail,
+  versionToItem,
+  extractFiles,
+  newestVersion,
+  compareVersionRecency,
+} = require('../../api');
 const { resolveOutDir } = require('../../config');
 const { forgetModels } = require('../../commands/models');
 const { verifyModels } = require('../../commands/verify');
 const { refToTarget } = require('../../commands/download');
 const { parseModelRef } = require('../../urls');
+const { classifyVersionAccess, summarizeAccess } = require('../../access');
 const { t } = require('../../i18n');
 const view = require('../adapters/view');
 const pages = require('../ui/pages');
@@ -50,6 +57,7 @@ const { versionDiff } = require('../ui/versionSelection');
 const { showVersionSelectionPage } = require('../ui/versionSelectionPage');
 const { deleteVersions } = require('../core/versionDelete');
 const { color, glyph, format } = require('../ui/tokens');
+const { accessLabel } = require('../ui/accessText');
 
 /**
  * Parse pasted batch input: split on lines and commas, ignoring empty entries and # comments.
@@ -198,31 +206,37 @@ async function pickModel(config, message, opts = {}) {
 
 /**
  * Version rows of one online model (used by the download flow and the pin flow).
- * 线上模型的版本行（下载流程与固定流程共用）。
+ * Rows are newest-first so row 0 is the default version.
+ *
+ * 线上模型的版本行（下载流程与固定流程共用）。按发布时间从新到旧排列，第 0 行即默认版本。
  */
 function versionRows(config, detail) {
   const entry = readEntry(config, detail.id);
   const localIds = new Set(entryVersions(entry).map((v) => String(v.versionId)));
   const pinnedId = entry && entry.pinnedVersionId ? String(entry.pinnedVersionId) : null;
-  return (Array.isArray(detail.modelVersions) ? detail.modelVersions : []).map((v) => {
-    const files = extractFiles(v, config.site, {
-      fileTypes: config.fileTypes,
-      primaryOnly: config.primaryOnly,
+  return (Array.isArray(detail.modelVersions) ? detail.modelVersions : [])
+    .slice()
+    .sort(compareVersionRecency)
+    .map((v) => {
+      const files = extractFiles(v, config.site, {
+        fileTypes: config.fileTypes,
+        primaryOnly: config.primaryOnly,
+      });
+      return {
+        modelId: String(v.id),
+        name: String(v.name || v.id),
+        type: detail.type || '',
+        baseModel: v.baseModel || '',
+        totalBytes: files.reduce((sum, f) => sum + (Number(f.bytes) || 0), 0),
+        fileCount: files.length,
+        versionId: String(v.id),
+        publishedAt: v.publishedAt || null,
+        downloaded: localIds.has(String(v.id)),
+        pinned: pinnedId === String(v.id),
+        access: classifyVersionAccess(v, detail),
+        raw: v,
+      };
     });
-    return {
-      modelId: String(v.id),
-      name: String(v.name || v.id),
-      type: detail.type || '',
-      baseModel: v.baseModel || '',
-      totalBytes: files.reduce((sum, f) => sum + (Number(f.bytes) || 0), 0),
-      fileCount: files.length,
-      versionId: String(v.id),
-      publishedAt: v.publishedAt || null,
-      downloaded: localIds.has(String(v.id)),
-      pinned: pinnedId === String(v.id),
-      raw: v,
-    };
-  });
 }
 
 /**
@@ -238,6 +252,8 @@ function describeVersion(row) {
   ];
   if (row.downloaded) parts.push(t('tui.select.statusDownloaded'));
   if (row.pinned) parts.push(t('tui.manage.pinnedMark'));
+  const access = accessLabel(row.access);
+  if (access) parts.push(access);
   return parts.join(view.separator());
 }
 
@@ -578,11 +594,15 @@ async function buildModelPlanShell(config, raws) {
     }
     const entry = readEntry(config, ref.modelId);
     const pinned = entry && entry.pinnedVersionId ? String(entry.pinnedVersionId) : null;
-    const wanted = ref.versionId || pinned || String(versions[0].id);
-    const version = versions.find((item) => String(item.id) === String(wanted)) || versions[0];
+    const newest = newestVersion(versions);
+    // An explicit `version:<id>` wins, then the pinned version, then the newest one.
+    // 显式 `version:<id>` 优先，其次是固定版本，最后才是最新版本。
+    const wanted = ref.versionId || pinned || String(newest.id);
+    const version = versions.find((item) => String(item.id) === String(wanted)) || newest;
     const built = versionToItem(config.site, version, {
       fileTypes: config.fileTypes,
       primaryOnly: config.primaryOnly,
+      model: detail,
     });
     if (!built.files.length) {
       view.log(t('tui.models.noFiles', { name: detail.name, version: version.name || version.id }));
@@ -595,6 +615,9 @@ async function buildModelPlanShell(config, raws) {
       type: detail.type,
       baseModel: version.baseModel,
       modelMeta: detail,
+      // The whole-model summary feeds the row badge; the row's default selection follows `built.access`.
+      // 整模型汇总用于行徽标；本行的默认勾选跟随 `built.access`。
+      modelAccess: summarizeAccess(versions.map((item) => classifyVersionAccess(item, detail))),
       versionId: version.id,
       versionName: version.name,
       baseVersionId: String(version.id),
@@ -605,25 +628,43 @@ async function buildModelPlanShell(config, raws) {
 }
 
 /**
+ * Bare numeric input means a model id in the model workspace; `refToTarget` treats bare numbers as
+ * collection ids first, so normalize before resolving.
+ *
+ * 模型工作台里的裸数字按模型 ID 处理；`refToTarget` 会先把裸数字当收藏集 ID，
+ * 因此解析前先归一化。
+ *
+ * @param {string|number} raw
+ * @returns {string}
+ */
+function normalizeModelInput(raw) {
+  const value = String(raw === undefined || raw === null ? '' : raw).trim();
+  return /^\d+$/.test(value) ? `model:${value}` : value;
+}
+
+/**
  * Shell entry of "download models": references → shared plan → confirm → receipt.
  * 「下载模型」的外壳入口：引用 → 共享计划 → 确认 → 回执。
  */
 async function downloadModelsShell(config, opts = {}) {
   const resolveInput = async (raw) => {
-    if (!parseModelRef(raw)) throw new Error(t('tui.workspace.invalidInput'));
-    const items = await buildModelPlanShell(config, [raw]);
-    return (items || [])
-      .filter((item) => !item.error)
-      .map((item) => ({ ...item, detail: item.versionName || item.versionId }));
+    const refs = String(raw || '')
+      .split(/[\n,\uFF0C;\uFF1B]+/)
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .map(normalizeModelInput);
+    if (!refs.length) throw new Error(t('tui.workspace.invalidInput'));
+    const bad = refs.filter((ref) => !parseModelRef(ref));
+    if (bad.length) {
+      throw new Error(t('tui.workspace.invalidInputBatch', { refs: bad.join(', ') }));
+    }
+    const items = await buildModelPlanShell(config, refs);
+    return (items || []).filter((item) => !item.error);
   };
-  const presetRefs = Array.isArray(opts.refs) && opts.refs.length ? opts.refs : null;
+  const presetRefs =
+    Array.isArray(opts.refs) && opts.refs.length ? opts.refs.map(normalizeModelInput) : null;
   const rows = presetRefs
-    ? (await buildModelPlanShell(config, presetRefs))
-        .filter((item) => !item.error)
-        .map((item) => ({
-          ...item,
-          detail: item.versionName || item.versionId,
-        }))
+    ? (await buildModelPlanShell(config, presetRefs)).filter((item) => !item.error)
     : [];
   return require('./download').runDownloadWorkspace(config, {
     plan: rows,
@@ -682,7 +723,7 @@ function versionDir(config, versionRec) {
  * @param {object} config
  * @param {string|number} modelId
  */
-async function manageVersions(config, modelId) {
+async function manageVersions(config, modelId, opts = {}) {
   const entry = readEntry(config, modelId);
   if (!entry) {
     view.notice(t('tui.models.recordMissing', { modelId }), color.warning);
@@ -703,12 +744,13 @@ async function manageVersions(config, modelId) {
       files,
       totalBytes: bytes,
       pinned: !!(entry.pinnedVersionId && String(entry.pinnedVersionId) === String(version.versionId)),
+      access: classifyVersionAccess(version.site || version, null),
     };
   });
   const title = entry.name || t('tui.manage.modelIdLabel', { modelId });
   const selected = await showVersionSelectionPage({
     title,
-    crumbPath: [t('tui.app.menuModels'), title],
+    crumbPath: Array.isArray(opts.crumbPath) ? opts.crumbPath : [t('tui.app.menuModels'), title],
     versions: rows,
     selected: rows.map((row) => row.versionId),
     describe: (row) => `${t('tui.download.fileCount', { count: row.files.length })} ${formatBytes(row.totalBytes)}`,
@@ -739,7 +781,7 @@ async function manageVersions(config, modelId) {
  * @param {string|number} modelId
  * @returns {object|null}
  */
-function modelDetailReport(config, modelId) {
+function modelDetailReport(config, modelId, opts = {}) {
   const entry = readEntry(config, modelId);
   if (!entry) return null;
   const versions = entryVersions(entry);
@@ -775,11 +817,13 @@ function modelDetailReport(config, modelId) {
     const files = version.files || [];
     const bytes = files.reduce((sum, file) => sum + (Number(file.bytes) || 0), 0);
     const pinned = pinnedId === String(version.versionId);
+    const access = classifyVersionAccess(version.site || version, null);
     const parts = [
       files.length ? t('tui.models.versionDownloaded') : t('tui.models.versionNotDownloaded'),
       pinned ? t('tui.manage.pinnedMark') : null,
       t('tui.download.fileCount', { count: files.length }),
       formatBytes(bytes),
+      accessLabel(access),
     ].filter(Boolean);
     return {
       label: String(version.versionName || version.versionId),
@@ -790,9 +834,10 @@ function modelDetailReport(config, modelId) {
   });
 
   const title = entry.name || t('tui.manage.modelIdLabel', { modelId });
+  const crumbPath = Array.isArray(opts.crumbPath) ? opts.crumbPath : [t('tui.app.menuModels'), title];
   return {
     title,
-    crumbPath: [t('tui.app.menuModels'), title],
+    crumbPath,
     summary,
     sections: [
       {
@@ -834,7 +879,7 @@ function modelDetailReport(config, modelId) {
         label: t('tui.models.manageVersions'),
         description: t('tui.models.manageVersionsDesc'),
         run: async () => {
-          await manageVersions(config, modelId);
+          await manageVersions(config, modelId, { crumbPath: [...crumbPath, t('tui.models.manageVersions')] });
           return reportPage.REFRESH;
         },
       },
@@ -850,7 +895,7 @@ function modelDetailReport(config, modelId) {
       { label: t('tui.manage.back'), run: () => reportPage.BACK },
     ],
     initialSection: versions.length ? t('tui.models.detailVersions') : undefined,
-    rebuild: () => modelDetailReport(config, modelId),
+    rebuild: () => modelDetailReport(config, modelId, opts),
   };
 }
 
@@ -970,8 +1015,8 @@ async function downloadVersions(config, modelId) {
  * Shell entry of one model: the detail report page.
  * 单个模型的外壳入口：详情报告页。
  */
-async function modelDetailPage(config, modelId) {
-  const model = modelDetailReport(config, modelId);
+async function modelDetailPage(config, modelId, opts = {}) {
+  const model = modelDetailReport(config, modelId, opts);
   if (!model) {
     view.notice(t('tui.models.recordMissing', { modelId }), color.warning);
     return null;
@@ -1045,9 +1090,9 @@ function printModelDetail(config, modelId) {
  * 这是 TUI 里的「单个项目」页：它对应 Civitai 上的一个模型链接，
  * 因此这里的每个动作都围绕这个模型——更新、校验文件、固定版本、打开目录、删除记录。
  */
-async function modelActions(config, modelId) {
+async function modelActions(config, modelId, opts = {}) {
   return present({
-    shell: () => modelDetailPage(config, modelId),
+    shell: () => modelDetailPage(config, modelId, opts),
     plain: () => modelActionsPlain(config, modelId),
   });
 }
@@ -1127,8 +1172,8 @@ async function modelActionsPlain(config, modelId) {
     }
     if (action === 'open') {
       const dir = firstDir || config.outDir;
-      if (view.openDir(dir)) view.log(t('tui.app.opened', { dir }));
-      else view.log(t('tui.app.openFailed'));
+      if (view.openDir(dir)) view.notice(t('tui.app.opened', { dir }), color.success);
+      else view.notice(t('tui.app.openFailed'), color.warning);
       continue;
     }
     if (action === 'forget') return forgetFlow(config, { preset: [String(modelId)] });
@@ -1156,7 +1201,7 @@ async function browseFlow(config, opts = {}) {
  * 在已解析好的行集上浏览模型库。
  */
 async function browseRows(config, collectionIds) {
-  const rows = libraryRows(config, collectionIds);
+  let rows = libraryRows(config, collectionIds);
   if (!rows.length) {
     // An empty library still gets a page: a log line alone looks like the key press did nothing.
     // 模型库为空时也给一页说明：只在日志里回一行会让人以为按键没生效。
@@ -1164,15 +1209,31 @@ async function browseRows(config, collectionIds) {
     return;
   }
   view.log(t('tui.models.browseHint'));
-  const chosen = await pages.pickOne(rows, {
-    message: t('tui.models.browsePick'),
-    title: t('tui.app.menuModels'),
-    describe: describeRow,
-    state: libraryEntries(config),
-    onEnter: () => view.note(color.muted(`  ${librarySummary(rows)}`)),
-  });
-  if (!chosen) return;
-  return modelActions(config, String(chosen.modelId));
+  let pickerState = null;
+  for (;;) {
+    const chosen = await pages.pickOne(rows, {
+      message: t('tui.models.browsePick'),
+      title: t('tui.app.menuModels'),
+      describe: describeRow,
+      state: libraryEntries(config),
+      pickerState,
+      onPickerState: (next) => {
+        pickerState = next;
+      },
+      onEnter: () => view.note(color.muted(`  ${librarySummary(rows)}`)),
+    });
+    if (!chosen) return;
+    await modelActions(config, String(chosen.modelId));
+    rows = libraryRows(config, collectionIds);
+    if (!rows.length) {
+      await pages.promptMessage(t('tui.app.menuModels'), [
+        t('tui.models.noRecords'),
+        '',
+        t('tui.models.noRecordsHint'),
+      ]);
+      return;
+    }
+  }
 }
 
 /**
@@ -1197,7 +1258,11 @@ async function libraryFlow(config) {
 async function checkFlow(config, opts = {}) {
   const ids = libraryModelIds(config);
   if (!ids.length) {
-    view.log(t('tui.models.noRecords'));
+    await pages.promptMessage(t('tui.app.menuModels'), [
+      t('tui.models.noRecords'),
+      '',
+      t('tui.models.noRecordsHint'),
+    ]);
     return;
   }
 
@@ -1479,7 +1544,11 @@ async function verifyReportFlow(config, opts) {
 async function verifyFlow(config, opts = {}) {
   const ids = libraryModelIds(config);
   if (!ids.length) {
-    view.log(t('tui.models.noRecords'));
+    await pages.promptMessage(t('tui.app.menuModels'), [
+      t('tui.models.noRecords'),
+      '',
+      t('tui.models.noRecordsHint'),
+    ]);
     return;
   }
   let targets = Array.isArray(opts.modelIds) && opts.modelIds.length ? opts.modelIds.map(String) : null;
@@ -1622,7 +1691,11 @@ async function pinFlow(config) {
 async function forgetFlow(config, opts = {}) {
   const rows = libraryRows(config);
   if (!rows.length) {
-    view.log(t('tui.models.noRecords'));
+    await pages.promptMessage(t('tui.app.menuModels'), [
+      t('tui.models.noRecords'),
+      '',
+      t('tui.models.noRecordsHint'),
+    ]);
     return;
   }
   const preset = Array.isArray(opts.preset) ? opts.preset.map(String) : null;
@@ -1636,23 +1709,41 @@ async function forgetFlow(config, opts = {}) {
       });
   if (chosen === null) return;
   if (!chosen.length) {
-    view.log(t('tui.manage.noChanges'));
+    view.notice(t('tui.manage.noChanges'), color.warning);
     return;
   }
 
-  const confirm = await pages.promptConfirm(t('tui.models.forgetConfirm', { count: chosen.length }), {
-    danger: true,
-  });
-  if (!confirm) {
-    view.log(t('tui.manage.cancelled'));
-    return;
+  const mode = await pages.promptMenu(t('tui.models.forgetModeTitle', { count: chosen.length }), [
+    { title: t('tui.manage.cancel'), value: 'cancel', description: t('tui.models.forgetCancelDesc') },
+    {
+      title: t('tui.models.forgetRecordsOnly'),
+      value: 'records',
+      description: t('tui.models.forgetRecordsOnlyDesc'),
+    },
+    {
+      title: t('tui.models.forgetWithFiles'),
+      value: 'files',
+      description: t('tui.models.forgetWithFilesDesc'),
+    },
+  ]);
+  if (mode === null || mode === 'cancel') return;
+  const deleteFiles = mode === 'files';
+  if (deleteFiles) {
+    const bytes = chosen.reduce((sum, row) => sum + (Number(row.totalBytes) || 0), 0);
+    const confirmed = await pages.promptConfirm(
+      t('tui.models.forgetFinalConfirm', { count: chosen.length, size: formatBytes(bytes) }),
+      { danger: true, initial: false }
+    );
+    if (!confirmed) return;
   }
-  const withFiles = await pages.promptConfirm(t('tui.models.forgetFilesConfirm'), { initial: false });
-  if (withFiles === null) return;
 
   for (const row of chosen) {
-    forgetModels(config, row.modelId, { deleteFiles: !!withFiles });
+    forgetModels(config, row.modelId, { deleteFiles });
   }
+  view.notice(
+    t(deleteFiles ? 'tui.models.forgetDoneFiles' : 'tui.models.forgetDoneRecords', { count: chosen.length }),
+    color.success
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1673,22 +1764,22 @@ async function forgetFlow(config, opts = {}) {
  * 两个针对整个模型库的操作放在旁边，仍然可达。
  */
 async function modelsFlow(config) {
-  const action = await pages.promptMenu(
-    t('tui.models.menuTitle'),
-    [
-      { title: t('tui.models.menuBrowse'), value: 'browse', description: t('tui.models.menuBrowseDesc') },
-      { title: t('tui.models.menuCheck'), value: 'check', description: t('tui.models.menuCheckDesc') },
-      { title: t('tui.models.menuVerify'), value: 'verify', description: t('tui.models.menuVerifyDesc') },
-      { title: t('tui.manage.back'), value: 'back' },
-    ],
-    { stage: t('tui.app.menuModels') }
-  );
-  if (action === null || action === 'back') return;
-
-  if (action === 'browse') return libraryFlow(config);
-  if (action === 'check') return checkFlow(config);
-  if (action === 'verify') return verifyFlow(config);
-  return undefined;
+  for (;;) {
+    const action = await pages.promptMenu(
+      t('tui.models.menuTitle'),
+      [
+        { title: t('tui.models.menuBrowse'), value: 'browse', description: t('tui.models.menuBrowseDesc') },
+        { title: t('tui.models.menuCheck'), value: 'check', description: t('tui.models.menuCheckDesc') },
+        { title: t('tui.models.menuVerify'), value: 'verify', description: t('tui.models.menuVerifyDesc') },
+        { title: t('tui.manage.back'), value: 'back' },
+      ],
+      { stage: t('tui.app.menuModels') }
+    );
+    if (action === null || action === 'back') return;
+    if (action === 'browse') await libraryFlow(config);
+    else if (action === 'check') await checkFlow(config);
+    else if (action === 'verify') await verifyFlow(config);
+  }
 }
 
 module.exports = {
@@ -1701,6 +1792,7 @@ module.exports = {
   manageVersions,
   downloadVersions,
   browseFlow,
+  normalizeModelInput,
   parseRefs,
   resolveRefs,
   chooseVersion,
@@ -1713,6 +1805,8 @@ module.exports = {
   describeRow,
   describeVersion,
   versionRows,
+  newestVersion,
+  compareVersionRecency,
   printModelDetail,
   modelDetailReport,
   modelDetailPage,

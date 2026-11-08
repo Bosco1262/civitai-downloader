@@ -64,7 +64,7 @@ const layout = require('./layout');
 const { sameManifest } = require('./manifest');
 const { createDedupIndex } = require('./dedup');
 const { notifyFinished } = require('./notify');
-const { AuthError } = require('./errors');
+const { AuthError, isAccessRequiredError } = require('./errors');
 const { t } = require('./i18n');
 
 /**
@@ -186,6 +186,7 @@ async function runDownloadJob(config, opts, hooks = {}) {
     done: 0,
     skipped: 0,
     failed: 0,
+    accessRequired: 0,
     metaFailed: 0,
     plan: [],
     totalBytes: 0,
@@ -441,6 +442,26 @@ async function runDownloadJob(config, opts, hooks = {}) {
       }
     }
 
+    // Paid/restricted rows are selected by the caller. Policy is applied after metadata because the
+    // download URL and paidAccess marker only arrive with the version response.
+    //
+    // 付费/受限行由调用方决定是否选中；策略在拿到版本元数据后应用，因为下载链接与 paidAccess
+    // 标记都来自版本响应。
+    const paidPolicy = String(opts.paidPolicy || 'include').toLowerCase();
+    if (!dryRun && paidPolicy !== 'include') {
+      for (const p of plan) {
+        if (p.error || p.skipped) continue;
+        const restricted = !!(p.access && p.access.requiresEntitlement);
+        if ((paidPolicy === 'skip' && restricted) || (paidPolicy === 'only' && !restricted)) {
+          p.skipped = true;
+          p.accessSkipped = restricted;
+          if (restricted) {
+            logFn(t('job.paidSkipped', { name: p.name }));
+          }
+        }
+      }
+    }
+
     summary.plan = plan;
     summary.skipped = plan.filter((p) => p.skipped).length;
     summary.metaFailed = plan.filter((p) => p.error).length;
@@ -463,6 +484,9 @@ async function runDownloadJob(config, opts, hooks = {}) {
     if (dryRun) {
       for (const p of plan) {
         if (p.error) continue;
+        if (p.access && p.access.requiresEntitlement) {
+          logFn(t('job.paidPlanLine', { name: p.name }));
+        }
         for (const f of p.files) {
           logFn(t('job.planLine', { name: p.name, file: f.name, size: formatBytes(f.bytes) }));
         }
@@ -677,6 +701,7 @@ async function runDownloadJob(config, opts, hooks = {}) {
       let itemOk = true;
       let skippedByUser = false;
       let cancelledBeforeStart = false;
+      let accessRequired = false;
 
       // One directory per model: when a file name is already taken by another version with different
       // content, BOTH sides are renamed with their own "-<version>" suffix, so a file name always
@@ -799,8 +824,15 @@ async function runDownloadJob(config, opts, hooks = {}) {
                 status = await runOnce();
               } catch (e) {
                 // Refreshing cookies needs a browser; in browser-free mode the error surfaces as is.
+                // A free item's 403 is usually an expired session; paid items keep their 403 as an
+                // access error so it is not retried a second time.
+                //
                 // 重新导出 Cookie 需要浏览器；无浏览器模式下直接抛出原始错误。
-                if (e instanceof AuthError && !authRefreshed && browser) {
+                // 免费资源的 403 通常意味着会话过期；付费项的 403 保留为访问错误，不二次重试。
+                const shouldRefresh =
+                  e instanceof AuthError ||
+                  (isAccessRequiredError(e) && e.status !== 402 && !(item.access && item.access.requiresEntitlement));
+                if (shouldRefresh && !authRefreshed && browser) {
                   logFn(t('job.authRefreshing'));
                   const n = await refreshCookies();
                   logFn(t('job.cookiesRefreshed', { count: n }));
@@ -817,9 +849,22 @@ async function runDownloadJob(config, opts, hooks = {}) {
               logFn(t('job.cancelNotice'));
               break;
             }
+            const deniedAccess =
+              isAccessRequiredError(e) &&
+              (e.status === 402 ||
+                e.reason === 'payment' ||
+                e.reason === 'gated' ||
+                (item.access && item.access.requiresEntitlement));
             itemOk = false;
-            logFn(t('job.fileFailed', { file: f.name, message: e.message }));
-            if (hooks.onFileDone) hooks.onFileDone(item, f, 'failed');
+            if (deniedAccess) {
+              accessRequired = true;
+              logFn(t('job.fileAccessRequired', { file: f.name, message: e.message }));
+              if (hooks.onFileError) hooks.onFileError(item, f, e);
+              if (hooks.onFileDone) hooks.onFileDone(item, f, 'access-required');
+            } else {
+              logFn(t('job.fileFailed', { file: f.name, message: e.message }));
+              if (hooks.onFileDone) hooks.onFileDone(item, f, 'failed');
+            }
             break;
           }
 
@@ -912,6 +957,11 @@ async function runDownloadJob(config, opts, hooks = {}) {
         summary.skipped++;
         logFn(t('job.itemSkipped', { name: item.name }));
         if (hooks.onItemDone) hooks.onItemDone(item, false, 'skipped');
+      } else if (accessRequired) {
+        completedIds.add(itemKey(item));
+        summary.accessRequired++;
+        logFn(t('job.itemAccessRequired', { name: item.name }));
+        if (hooks.onItemDone) hooks.onItemDone(item, false, 'access-required');
       } else {
         completedIds.add(itemKey(item));
         summary.failed++;
@@ -996,6 +1046,9 @@ async function runDownloadJob(config, opts, hooks = {}) {
         done: summary.done,
         skipped: summary.skipped,
         failed: summary.failed,
+        accessRequired: summary.accessRequired
+          ? t('job.summaryAccessSuffix', { count: summary.accessRequired })
+          : '',
         metaFailed: summary.metaFailed ? t('job.summaryMetaSuffix', { count: summary.metaFailed }) : '',
         elapsed: formatDuration(summary.elapsedMs / 1000),
       })
@@ -1005,7 +1058,7 @@ async function runDownloadJob(config, opts, hooks = {}) {
   } finally {
     // Job-finished notification (bell / system notification / webhook); a failure does not affect the result
     // 任务结束通知（响铃 / 系统通知 / Webhook），失败不影响结果
-    if (!dryRun && (summary.done || summary.failed || summary.cancelled)) {
+    if (!dryRun && (summary.done || summary.failed || summary.accessRequired || summary.cancelled)) {
       try {
         await deps.notify(config, { ...summary, elapsedMs: summary.elapsedMs || logger.elapsedMs() }, {
           webhook: opts.notifyWebhook,

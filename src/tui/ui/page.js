@@ -128,6 +128,31 @@ function rowText(row, width, labelWidth, narrow) {
 }
 
 /**
+ * Wrap plain text to a display width without splitting CJK characters.
+ * 按显示宽度换行，不拆开中日韩字符。
+ */
+function wrapText(value, width) {
+  const text = String(value === undefined || value === null ? '' : value);
+  const limit = Math.max(4, Math.floor(width));
+  if (!text) return [];
+  const lines = [];
+  let line = '';
+  let used = 0;
+  for (const char of text) {
+    const charWidth = displayWidth(char);
+    if (used + charWidth > limit && line) {
+      lines.push(line);
+      line = '';
+      used = 0;
+    }
+    line += char;
+    used += charWidth;
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
+/**
  * Build every line of the page plus the navigation metadata the scroll window needs.
  *
  * Selectable entries are rows of sections that provide `onEnter`, followed by the action rows. A
@@ -188,10 +213,12 @@ function buildPageLayout(model, width) {
         if (section.onEnter) entries.push({ kind: 'row', line, section, sectionIndex: index, row });
         lines.push(rowText(row, limit, labelWidth, narrow));
         if (row.sub) {
-          // A detail that must stay readable (a folder, a URL) gets its own indented line, full width.
-          // 必须完整可读的细节（目录、URL）单独占一行，用整行宽度。
-          headingOfLine.set(lines.length, headingLine);
-          lines.push(colors.dim(`    ${truncateTo(row.sub, Math.max(4, limit - 4))}`));
+          // A detail that must stay readable (a folder, an error, advice) gets its own wrapped lines.
+          // 必须完整可读的细节（目录、错误、建议）单独成行，并按可用宽度换行。
+          for (const part of wrapText(row.sub, Math.max(4, limit - 4))) {
+            headingOfLine.set(lines.length, headingLine);
+            lines.push(colors.dim(`    ${part}`));
+          }
         }
       }
     } else if (section.emptyText) {
@@ -214,7 +241,7 @@ function buildPageLayout(model, width) {
       const line = lines.length;
       headingOfLine.set(line, headingLine);
       entries.push({ kind: 'action', line, action });
-      const paint = action.danger ? colors.yellow : (text) => text;
+      const paint = action.danger ? colors.red : (text) => text;
       const label = paint(padTo(truncateTo(action.label, labelWidth), labelWidth));
       const room = Math.max(0, limit - labelWidth - 4);
       const description = action.description ? truncateTo(action.description, room) : '';

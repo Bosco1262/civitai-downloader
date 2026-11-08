@@ -82,6 +82,7 @@ const TUI_FILES = [
   'ui/taskView.js',
   'ui/versionPage.js',
   'ui/versionSelectionPage.js',
+  'ui/accessText.js',
 ];
 /**
  * Keys added by this change.
@@ -111,6 +112,7 @@ const TUI_MODULES = new Set([
   'verify',
   'doctor',
   'workspace',
+  'access',
   'versionSelection',
 ]);
 /**
@@ -354,10 +356,11 @@ test('i18n-tui: 滚动视窗 / 单选模式 / 快捷跳行等新增纯逻辑可�
 
 test('i18n-tui: 主菜单 / 固定页眉文案逐字一致且 app.js 已接线', () => {
   assert.equal(tr('tui.app.bannerTitle'), 'civitai-downloader');
-  assert.equal(tr('tui.hint.main'), '↑↓ 选择 | Enter 进入 | ? 帮助');
+  assert.equal(tr('tui.hint.main'), '↑↓ 选择 | Enter 进入 | Ctrl+T 任务 | ? 帮助');
   assert.equal(tr('tui.app.menuTitle'), '主菜单');
   const menu = [
     ['tui.app.menuDownload', '下载'],
+    ['tui.app.menuTasks', '任务'],
     ['tui.app.menuModels', '本地模型管理'],
     ['tui.app.menuCollections', '本地收藏集管理'],
     ['tui.app.menuSettings', '设置'],
@@ -391,12 +394,12 @@ test('i18n-tui: 主菜单 / 固定页眉文案逐字一致且 app.js 已接线',
   ]) {
     assert.ok(source.includes(`'${key}'`), `app.js 应引用 ${key}`);
   }
-  // The five entries are the whole top level: the old single-purpose entries are gone.
-  // 顶层就是这五项：旧的一堆单项入口已移除。
-  assert.equal(app.MAIN_MENU.length, 5);
+  // Tasks are a stable top-level entry, not only a hidden shortcut.
+  // 任务是稳定的顶层入口，而不是只靠隐藏快捷键。
+  assert.equal(app.MAIN_MENU.length, 6);
   assert.deepEqual(
     app.MAIN_MENU.map((item) => item.key),
-    ['download', 'models', 'collections', 'settings', 'exit']
+    ['download', 'tasks', 'models', 'collections', 'settings', 'exit']
   );
 });
 
@@ -407,11 +410,11 @@ test('i18n-tui: 仪表盘 / 任务视图 / 页脚文案逐字一致', () => {
   assert.equal(tr('tui.screen.infoIdle'), '空闲 | 没有进行中的任务');
   // One line per page, listing only that page's keys.
   // 每页一行，且只列这一页能用的键。
-  assert.equal(tr('tui.hint.main'), '↑↓ 选择 | Enter 进入 | ? 帮助');
+  assert.equal(tr('tui.hint.main'), '↑↓ 选择 | Enter 进入 | Ctrl+T 任务 | ? 帮助');
   assert.equal(tr('tui.hint.menu'), '↑↓ 选择 | Enter 确认 | Esc 返回 | ? 帮助');
-  assert.equal(tr('tui.hint.settings'), '↑↓ 选择 | Enter 修改 / 执行 | Esc 返回 | ? 帮助');
+  assert.equal(tr('tui.hint.settings'), '↑↓ 选择 | Enter 修改并保存 / 执行 | Esc 返回 | ? 帮助');
   assert.equal(tr('tui.hint.message'), 'Esc 返回 | ? 帮助');
-  assert.equal(tr('tui.hint.taskView'), '↑↓ 选择 | Esc 返回 | ? 帮助');
+  assert.equal(tr('tui.hint.taskView'), '↑↓ 选择 | PgUp/PgDn 翻页 | Esc 返回 | ? 帮助');
   assert.equal(tr('tui.screen.taskTitle'), '任务视图');
   assert.equal(tr('tui.screen.taskCounts', { done: 2, skipped: 1, failed: 0, total: 9 }), '完成 2 | 跳过 1 | 失败 0 / 共 9 项');
   assert.equal(tr('tui.screen.taskElapsed', { elapsed: '00:03' }), '已用 00:03');
@@ -566,7 +569,7 @@ test('i18n-tui: manage / login / settings 文案逐字一致', () => {
   );
   assert.equal(tr('tui.manage.changeAdded', { name: 'A' }), '  + 新增 A');
   assert.equal(tr('tui.manage.changeVersion', { name: 'A', from: 1, to: 2 }), '  ~ 版本变化 A: 1 → 2');
-  assert.equal(tr('tui.manage.resetDone', { count: 2, names: 'a、b' }), '已重置 2 个模型的记录：a、b');
+  assert.equal(tr('tui.manage.resetDone', { count: 2, names: 'a、b' }), '已将 2 个模型标记为需重下：a、b');
   assert.equal(tr('tui.manage.verifySummary', { label: '模型库', total: 3, size: '1.00 MiB' }), '模型库：共 3 个模型，合计 1.00 MiB');
   assert.equal(tr('tui.manage.verifyCounts', { ok: 3, broken: 1 }), '正常 3 项，异常 1 项');
   assert.equal(tr('tui.manage.dirLine', { dir: 'D:\\out' }), '目录: D:\\out');
@@ -819,7 +822,9 @@ test('i18n-tui: 语言状态不泄漏（try/finally 恢复）', (t) => {
 
 test('i18n-tui: TUI 源码不残留中文硬编码（注释除外）', () => {
   for (const file of TUI_FILES) {
-    const lines = readTui(file).split('\n');
+    // Split CRLF as well: a trailing \r prevents the line-comment regex from matching on Windows.
+    // 同时拆分 CRLF：Windows 下残留的 \r 会让行注释正则匹配失败，误报中文注释。
+    const lines = readTui(file).split(/\r?\n/);
     const offenders = [];
     lines.forEach((line, index) => {
       if (CJK.test(stripLineComment(line))) offenders.push(`${index + 1}: ${line.trim()}`);

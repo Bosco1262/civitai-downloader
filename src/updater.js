@@ -29,6 +29,7 @@ const fs = require('fs');
 const path = require('path');
 const { log, sanitizeName, sha256File } = require('./util');
 const { buildPlan, fetchModelDetail, extractFiles } = require('./api');
+const { classifyVersionAccess } = require('./access');
 const {
   readLibrary,
   writeLibrary,
@@ -145,6 +146,7 @@ function itemFromVersion(site, modelId, name, type, version, opts = {}) {
     baseModel: version.baseModel,
     files,
     totalBytes: files.reduce((sum, f) => sum + f.bytes, 0),
+    access: classifyVersionAccess(version, null),
   };
 }
 

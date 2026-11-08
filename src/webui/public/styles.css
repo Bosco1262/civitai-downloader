@@ -469,6 +469,10 @@ td.mono {
   color: var(--ok);
 }
 
+.small.warn {
+  color: var(--warn);
+}
+
 .badge.warn {
   background: var(--warn-soft);
   color: var(--warn);

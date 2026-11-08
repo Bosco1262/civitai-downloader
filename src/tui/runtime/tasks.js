@@ -4,7 +4,7 @@
 //
 // Everything long-running (a download run, a check, a verify pass) registers a task here, and the app
 // shell renders the registry twice: as a one-line-per-task summary inside the info panel, and as the
-// full task view behind Ctrl+M. The flows stay in charge of the numbers — this module only stores them,
+// full task view behind Ctrl+T. The flows stay in charge of the numbers — this module only stores them,
 // which keeps the rendering code free of flow-specific knowledge.
 //
 // Downloads are special: they keep running after the flow that started them has returned. The task
@@ -17,7 +17,7 @@
 // TUI 的实时任务登记表。
 //
 // 所有耗时操作（下载、检查、校验）都在这里登记一个任务，应用外壳会渲染它两次：
-// 信息面板里每个任务一行摘要，以及 Ctrl+M 打开的完整任务视图。数字仍由各流程自己更新——
+// 信息面板里每个任务一行摘要，以及 Ctrl+T 打开的完整任务视图。数字仍由各流程自己更新——
 // 本模块只负责存放，渲染代码因此不必了解任何流程细节。
 //
 // 下载是特殊的：启动它的流程返回之后，下载仍在继续。因此任务里保存了任务视图需要的一切
@@ -94,6 +94,7 @@ function createTask(init = {}) {
     done: 0,
     skipped: 0,
     failed: 0,
+    accessRequired: 0,
     bytes: 0,
     speed: 0,
     eta: '',
@@ -140,7 +141,7 @@ function updateTask(id, patch) {
   for (const key of ['name', 'scope', 'detail', 'status', 'eta', 'outDir', 'logFile']) {
     if (patch[key] !== undefined) task[key] = String(patch[key]);
   }
-  for (const key of ['total', 'totalBytes', 'done', 'skipped', 'failed', 'bytes', 'speed', 'jobs']) {
+  for (const key of ['total', 'totalBytes', 'done', 'skipped', 'failed', 'accessRequired', 'bytes', 'speed', 'jobs']) {
     if (patch[key] !== undefined) task[key] = num(patch[key]);
   }
   if (patch.attempts !== undefined) task.attempts = patch.attempts;

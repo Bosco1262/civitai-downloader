@@ -73,6 +73,7 @@ function createTracker(opts = {}) {
   let done = 0;
   let skipped = 0;
   let failed = 0;
+  let accessRequired = 0;
   let attempt = null;
   let lastSample = { at: now(), bytes: 0 };
   let speed = 0;
@@ -122,6 +123,10 @@ function createTracker(opts = {}) {
         skipped++;
         return;
       }
+      if (status === 'access-required') {
+        accessRequired++;
+        return;
+      }
       if (ok) {
         done++;
         doneBytes += Number(item && item.totalBytes) || 0;
@@ -150,6 +155,7 @@ function createTracker(opts = {}) {
         done,
         skipped,
         failed,
+        accessRequired,
         total: plan.length,
         bytes,
         expected,

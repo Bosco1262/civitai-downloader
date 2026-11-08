@@ -1088,6 +1088,15 @@ async function selectItems(items, opts = {}) {
     const note = state.visible.length
       ? ''
       : ` ${view.separator()}${t('tui.select.noMatches')}`;
+    // The hosted header already carries page position and selection totals. Its body stops before a
+    // second page line so the shell's status rail never appears directly below a page counter.
+    //
+    // 托管选择器的顶部已经包含页码与已选合计，因此正文不再重复底部页码，
+    // 避免外壳状态槽看起来挂在页码下面。
+    if (!standalone) {
+      if (note) lines.push(view.colors.dim(clipToWidth(note, dims.columns)));
+      return lines;
+    }
     lines.push(
       view.colors.dim(
         clipToWidth(
@@ -1102,9 +1111,6 @@ async function selectItems(items, opts = {}) {
         )
       )
     );
-    // The shell prints the same hints in its footer, so the hosted body stops before them.
-    // 外壳会在页脚打印同样的提示，因此托管主体到此为止。
-    if (!standalone) return lines;
     for (const hintText of pageHintLines()) {
       lines.push(view.colors.dim(clipToWidth(hintText, dims.columns)));
     }
@@ -1376,12 +1382,8 @@ async function selectItems(items, opts = {}) {
       return;
     }
     if (st.help) {
-      // Any key closes the overlay; Esc/q also cancels the picker.
-      // 任意键关闭帮助浮层；Esc/q 则直接取消选择。
-      if (k.name === 'escape' || (text === 'q' && !k.ctrl)) {
-        finish(null);
-        return;
-      }
+      // Help is its own modal layer: Esc closes the help first and never cancels the picker.
+      // 帮助是独立的一层：Esc 只关闭帮助，绝不连带取消底层选择器。
       st.help = false;
       st.message = '';
       render();
@@ -1476,6 +1478,19 @@ async function selectItems(items, opts = {}) {
       crumb: false,
       handlesHelp: true,
       hints: () => pageHintLines(),
+      onEscape() {
+        if (st.help) {
+          st.help = false;
+          st.message = '';
+          return true;
+        }
+        if (st.searching) {
+          st.searching = false;
+          st.message = t('tui.select.searchExited');
+          return true;
+        }
+        return false;
+      },
       render(promptState, ctx) {
         // The shell hands over exactly the room that is left for the body, so the geometry comes from
         // there and not from the terminal: header, info panel, log pane and hints are already gone.
