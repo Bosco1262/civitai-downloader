@@ -290,12 +290,12 @@ function safeHostSlug(site) {
 /**
  * Load the config.
  * 加载配置。
- * @param {{root?:string, file?:string}} [options]
+ * @param {{root?:string, file?:string}} [opts]
  * @returns {object} 配置对象，另含非枚举的 warnings
  */
-function loadConfig(options = {}) {
-  const root = options.root || ROOT;
-  const file = options.file || path.join(root, 'config.json');
+function loadConfig(opts = {}) {
+  const root = opts.root || ROOT;
+  const file = opts.file || path.join(root, 'config.json');
   const warnings = [];
   let user = {};
   let exists = false;

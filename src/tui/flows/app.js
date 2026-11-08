@@ -73,8 +73,8 @@ const state = {
 };
 
 /**
- * Main menu entries: the whole tool hangs off these five items.
- * 主菜单条目：整个工具挂在这五项之下。
+ * Main menu entries: the whole tool hangs off these six items.
+ * 主菜单条目：整个工具挂在这六项之下。
  */
 const MAIN_MENU = [
   { key: 'download', titleKey: 'tui.app.menuDownload', descKey: 'tui.app.menuDownloadDesc' },

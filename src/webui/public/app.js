@@ -52,7 +52,7 @@ function applyStaticI18n() {
 
 // Bytes → human readable (KiB/MiB/GiB, matching the CLI).
 // 字节数转可读大小（与命令行一致）。
-function fmtBytes(bytes) {
+function formatBytes(bytes) {
   const n = Number(bytes);
   if (!Number.isFinite(n) || n <= 0) return '0 B';
   const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
@@ -68,7 +68,7 @@ function fmtBytes(bytes) {
 
 // Milliseconds → `m:ss` or `h:mm:ss`.
 // 毫秒转时长。
-function fmtDuration(ms) {
+function formatDuration(ms) {
   const total = Math.max(0, Math.round((Number(ms) || 0) / 1000));
   const hours = Math.floor(total / 3600);
   const minutes = Math.floor((total % 3600) / 60);
@@ -103,7 +103,7 @@ function fmtPercent(part, whole) {
 
 // Call the JSON API; a non-2xx answer throws an Error carrying the server message.
 // 调用 JSON API；非 2xx 时抛出带服务器消息的 Error。
-async function api(path, options = {}) {
+async function request(path, options = {}) {
   const method = options.method || 'GET';
   const init = { method, headers: {} };
   if (method !== 'GET') {
@@ -136,7 +136,7 @@ const store = { state: null, library: null };
 // 读取 `/api/state`（force 表示忽略缓存）。
 async function loadState(force = false) {
   if (!force && store.state) return store.state;
-  store.state = await api('/api/state');
+  store.state = await request('/api/state');
   return store.state;
 }
 
@@ -144,7 +144,7 @@ async function loadState(force = false) {
 // 读取模型库列表（带缓存）。
 async function loadLibrary(force = false) {
   if (!force && store.library) return store.library;
-  store.library = await api('/api/library?sort=name');
+  store.library = await request('/api/library?sort=name');
   return store.library;
 }
 
@@ -438,7 +438,7 @@ function renderJob(job) {
   const status = document.getElementById('job-status');
   status.textContent = t(statusKey);
   status.className = `job-status ${job.status}`;
-  document.getElementById('job-elapsed').textContent = fmtDuration(job.elapsedMs);
+  document.getElementById('job-elapsed').textContent = formatDuration(job.elapsedMs);
   document.getElementById('job-cancel').disabled = job.status !== 'running';
   renderJobProgress(job.progress, job.status);
 }
@@ -459,10 +459,10 @@ function renderJobProgress(progress, status) {
     progressNode.append(progressBar(progress.expected > 0 ? progress.percent : 0, !progress.expected));
     metaNode.append(
       h('span', { text: t('web.job.items', { done: progress.done, total: progress.total }) }),
-      h('span', { text: `${fmtBytes(progress.bytes)} / ${fmtBytes(progress.expected)}` }),
+      h('span', { text: `${formatBytes(progress.bytes)} / ${formatBytes(progress.expected)}` }),
       h('span', { text: fmtPercent(progress.bytes, progress.expected) }),
-      progress.speed ? h('span', { text: `${fmtBytes(progress.speed)}/s` }) : null,
-      progress.etaMs ? h('span', { text: t('web.job.eta', { eta: fmtDuration(progress.etaMs) }) }) : null,
+      progress.speed ? h('span', { text: `${formatBytes(progress.speed)}/s` }) : null,
+      progress.etaMs ? h('span', { text: t('web.job.eta', { eta: formatDuration(progress.etaMs) }) }) : null,
       progress.accessRequired
         ? h('span', { class: 'small warn', text: t('web.job.accessRequiredCount', { count: progress.accessRequired }) })
         : null,
@@ -472,7 +472,7 @@ function renderJobProgress(progress, status) {
       progress.skipped ? h('span', { text: t('web.job.skippedCount', { count: progress.skipped }) }) : null
     );
     for (const running of progress.running || []) {
-      metaNode.append(h('span', { class: 'nowrap', text: `▸ ${running.name} ${fmtBytes(running.bytes)}` }));
+      metaNode.append(h('span', { class: 'nowrap', text: `▸ ${running.name} ${formatBytes(running.bytes)}` }));
     }
   } else if (progress.phase === 'verify') {
     progressNode.append(progressBar(((progress.index || 0) / Math.max(1, progress.total || 1)) * 100, false));
@@ -554,9 +554,9 @@ function handleEvent(event) {
 
 // Start a request that returns `{job}` and follow it.
 // 发起返回 `{job}` 的请求并跟踪。
-async function runJob(request, onDone) {
+async function requestAndFollowJob(startRequest, onDone) {
   try {
-    const response = await request();
+    const response = await startRequest();
     const job = response && response.job;
     if (!job) {
       toast(t('web.error.noJob'), 'fail');
@@ -573,7 +573,7 @@ async function runJob(request, onDone) {
 async function cancelJob() {
   if (!currentJobId) return;
   try {
-    await api(`/api/jobs/${encodeURIComponent(currentJobId)}/cancel`, { method: 'POST', body: {} });
+    await request(`/api/jobs/${encodeURIComponent(currentJobId)}/cancel`, { method: 'POST', body: {} });
   } catch (error) {
     toast(error.message, 'warn');
   }
@@ -686,7 +686,7 @@ async function renderDashboard() {
     card(
       t('web.dash.outDir'),
       state.outDir,
-      state.disk && state.disk.free !== null ? t('web.dash.free', { size: fmtBytes(state.disk.free) }) : null
+      state.disk && state.disk.free !== null ? t('web.dash.free', { size: formatBytes(state.disk.free) }) : null
     ),
     card(
       t('web.dash.login'),
@@ -695,7 +695,7 @@ async function renderDashboard() {
     card(
       t('web.dash.library'),
       t('web.dash.libraryValue', { models: state.library.models, versions: state.library.versions }),
-      fmtBytes(state.library.bytes)
+      formatBytes(state.library.bytes)
     ),
     card(t('web.dash.concurrency'), String(state.jobs), t('web.dash.engine', { engine: state.engine })),
     card(t('web.dash.runtime'), `Node ${state.node}`, state.platform)
@@ -747,7 +747,7 @@ async function renderDashboard() {
     text: t('web.dash.checkSession'),
     onclick: async () => {
       try {
-        const result = await api('/api/login/check', { method: 'POST', body: {} });
+        const result = await request('/api/login/check', { method: 'POST', body: {} });
         toast(
           result.ok ? t('web.dash.sessionOk') : t('web.dash.sessionBad', { reason: result.reason }),
           result.ok ? 'ok' : 'warn'
@@ -762,7 +762,7 @@ async function renderDashboard() {
     text: t('web.dash.openDir'),
     onclick: async () => {
       try {
-        await api('/api/open', { method: 'POST', body: {} });
+        await request('/api/open', { method: 'POST', body: {} });
       } catch (error) {
         toast(error.message, 'fail');
       }
@@ -815,7 +815,7 @@ async function renderDoctor() {
   });
   let report;
   try {
-    report = await api('/api/doctor', { method: 'POST', body: { deep: true } });
+    report = await request('/api/doctor', { method: 'POST', body: { deep: true } });
   } catch (error) {
     loading();
     toast(error.message, 'fail');
@@ -853,7 +853,7 @@ async function renderCollection(collectionId) {
   });
   let detail;
   try {
-    detail = await api(`/api/collections/${encodeURIComponent(collectionId)}`);
+    detail = await request(`/api/collections/${encodeURIComponent(collectionId)}`);
   } catch (error) {
     loading();
     toast(error.message, 'fail');
@@ -882,7 +882,7 @@ async function renderCollection(collectionId) {
         text: t('web.dash.resetChanges'),
         onclick: async () => {
           try {
-            const result = await api('/api/models/reset', {
+            const result = await request('/api/models/reset', {
               method: 'POST',
               body: { items: changed.map((item) => ({ modelId: item.modelId, versionId: item.versionId })) },
             });
@@ -997,7 +997,7 @@ async function pickVersion(item, onPick) {
   });
   let data;
   try {
-    data = await api('/api/models/versions', { method: 'POST', body: { modelIds: [item.modelId] } });
+    data = await request('/api/models/versions', { method: 'POST', body: { modelIds: [item.modelId] } });
   } catch (error) {
     loading();
     toast(error.message, 'fail');
@@ -1030,7 +1030,7 @@ async function pickVersion(item, onPick) {
           : null,
         h('span', {
           class: 'small muted',
-          text: `${version.baseModel || '—'} · ${t('web.dl.fileCount', { count: version.files })} · ${fmtBytes(
+          text: `${version.baseModel || '—'} · ${t('web.dl.fileCount', { count: version.files })} · ${formatBytes(
             version.bytes
           )} · ${fmtDate(version.publishedAt)}`,
         })
@@ -1070,7 +1070,7 @@ async function loadPlan() {
     return;
   }
   downloadState.collectionId = match[1];
-  await runJob(() => api('/api/collections/plan', { method: 'POST', body: { collectionId: downloadState.collectionId } }), (job) => {
+  await requestAndFollowJob(() => request('/api/collections/plan', { method: 'POST', body: { collectionId: downloadState.collectionId } }), (job) => {
     if (job.status !== 'done' || !job.result) return;
     downloadState.plan = job.result;
     downloadState.selected = new Set(
@@ -1142,8 +1142,8 @@ async function renderDownload() {
           toast(t('web.dl.singleEmpty'), 'warn');
           return;
         }
-        runJob(
-          () => api('/api/download', { method: 'POST', body: { refs, outDir: downloadState.outDir, jobs: downloadState.jobs } }),
+        requestAndFollowJob(
+          () => request('/api/download', { method: 'POST', body: { refs, outDir: downloadState.outDir, jobs: downloadState.jobs } }),
           (job) => {
             if (job.status !== 'done') return;
             downloadState.refs = '';
@@ -1173,7 +1173,7 @@ async function renderDownload() {
     summary.textContent = t('web.dl.summary', {
       selected: chosen.length,
       total: plan.items.length,
-      size: fmtBytes(bytes),
+      size: formatBytes(bytes),
     });
   };
 
@@ -1221,7 +1221,7 @@ async function renderDownload() {
               { text: item.baseModel || '—' },
               { text: override ? override.versionName : item.versionName || String(item.versionId || '—'), class: 'mono' },
               { text: item.error ? '—' : t('web.dl.fileCount', { count: (item.files || []).length }), class: 'num' },
-              { text: item.error ? '—' : fmtBytes(item.totalBytes), class: 'num' },
+              { text: item.error ? '—' : formatBytes(item.totalBytes), class: 'num' },
               { node: h('div', { class: 'inline' }, ...tags) },
               {
                 node: h('button', {
@@ -1391,9 +1391,9 @@ async function renderDownload() {
         const override = downloadState.overrides.get(String(item.modelId));
         return override ? { modelId: item.modelId, versionId: override.versionId } : item;
       });
-      await runJob(
+      await requestAndFollowJob(
         () =>
-          api('/api/download', {
+          request('/api/download', {
             method: 'POST',
             body: {
               collectionId: plan.collectionId,
@@ -1425,7 +1425,7 @@ async function renderDownload() {
     'web.dl.subtitle',
     sourcePanel,
     panel(
-      t('web.dl.planTitle', { count: plan.items.length, size: fmtBytes(plan.totalBytes || 0) }),
+      t('web.dl.planTitle', { count: plan.items.length, size: formatBytes(plan.totalBytes || 0) }),
       [selectAll, selectNone, selectNew],
       filters,
       tableHost,
@@ -1476,7 +1476,7 @@ async function renderLibrary() {
     if (libraryState.collectionId) params.set('collectionId', libraryState.collectionId);
     let data;
     try {
-      data = await api(`/api/library?${params.toString()}`);
+      data = await request(`/api/library?${params.toString()}`);
     } catch (error) {
       host.replaceChildren(h('div', { class: 'empty', text: error.message }));
       return;
@@ -1499,7 +1499,7 @@ async function renderLibrary() {
             { text: model.type || '—' },
             { text: model.baseModel || '—' },
             { text: model.versions, class: 'num' },
-            { text: fmtBytes(model.totalBytes), class: 'num' },
+            { text: formatBytes(model.totalBytes), class: 'num' },
             { node: model.pinnedVersionId ? badge(t('web.lib.pinned'), 'info') : document.createTextNode('') },
             { text: model.lastVerifiedAt ? fmtDate(model.lastVerifiedAt) : '—' },
           ],
@@ -1632,7 +1632,7 @@ async function renderModelDetail(modelId) {
   });
   let detail;
   try {
-    detail = await api(`/api/library/${encodeURIComponent(modelId)}`);
+    detail = await request(`/api/library/${encodeURIComponent(modelId)}`);
   } catch (error) {
     loading();
     toast(error.message, 'fail');
@@ -1647,7 +1647,7 @@ async function renderModelDetail(modelId) {
         [t('web.lib.modelId'), h('span', { class: 'mono', text: detail.modelId })],
         [t('web.lib.columnType'), detail.type || '—'],
         [t('web.lib.columnBase'), detail.baseModel || '—'],
-        [t('web.lib.columnSize'), fmtBytes(detail.totalBytes)],
+        [t('web.lib.columnSize'), formatBytes(detail.totalBytes)],
         [t('web.lib.dir'), h('span', { class: 'mono small', text: detail.dir || '—' })],
       ]),
       h('div', { class: 'hr' }),
@@ -1665,7 +1665,7 @@ async function renderModelDetail(modelId) {
           cells: [
             { text: version.versionName || version.versionId, class: 'name' },
             { text: version.versionId, class: 'mono' },
-            { text: fmtBytes(version.bytes), class: 'num' },
+            { text: formatBytes(version.bytes), class: 'num' },
             { text: t('web.dl.fileCount', { count: version.files.length }), class: 'num' },
             { text: version.verifiedAt ? fmtDate(version.verifiedAt) : '—' },
             {
@@ -1684,7 +1684,7 @@ async function renderModelDetail(modelId) {
                   text: detail.pinnedVersionId === version.versionId ? t('web.lib.unpin') : t('web.lib.pin'),
                   onclick: async () => {
                     try {
-                      await api(`/api/library/${encodeURIComponent(modelId)}/pin`, {
+                      await request(`/api/library/${encodeURIComponent(modelId)}/pin`, {
                         method: 'POST',
                         body: { versionId: detail.pinnedVersionId === version.versionId ? null : version.versionId },
                       });
@@ -1703,8 +1703,8 @@ async function renderModelDetail(modelId) {
                   text: t('web.lib.downloadVersion'),
                   onclick: () => {
                     close();
-                    runJob(() =>
-                      api('/api/download', {
+                    requestAndFollowJob(() =>
+                      request('/api/download', {
                         method: 'POST',
                         body: { items: [{ modelId: detail.modelId, versionId: version.versionId }] },
                       })
@@ -1723,14 +1723,14 @@ async function renderModelDetail(modelId) {
         label: t('web.lib.checkThis'),
         onClick: (done) => {
           done();
-          runJob(() => api('/api/check', { method: 'POST', body: { models: [detail.modelId] } }));
+          requestAndFollowJob(() => request('/api/check', { method: 'POST', body: { models: [detail.modelId] } }));
         },
       },
       {
         label: t('web.lib.verifyThis'),
         onClick: (done) => {
           done();
-          runJob(() => api('/api/verify', { method: 'POST', body: { modelIds: [detail.modelId], noHash: false } }));
+          requestAndFollowJob(() => request('/api/verify', { method: 'POST', body: { modelIds: [detail.modelId], noHash: false } }));
         },
       },
       {
@@ -1741,7 +1741,7 @@ async function renderModelDetail(modelId) {
           if (deleteFiles === null) return;
           done();
           try {
-            await api(`/api/library/${encodeURIComponent(modelId)}/forget`, {
+            await request(`/api/library/${encodeURIComponent(modelId)}/forget`, {
               method: 'POST',
               body: { deleteFiles },
             });
@@ -1856,9 +1856,9 @@ async function renderCheck() {
             toast(t('web.check.nothingSelected'), 'warn');
             return;
           }
-          await runJob(
+          await requestAndFollowJob(
             () =>
-              api('/api/check', {
+              request('/api/check', {
                 method: 'POST',
                 body: { collections: [...chk.collections], models: [...chk.models], deep: checkState.deep },
               }),
@@ -1897,8 +1897,8 @@ function renderCheckReports(reports) {
           type: 'button',
           text: t('web.check.downloadChanges', { count: report.changed }),
           onclick: () =>
-            runJob(() =>
-              api('/api/download', {
+            requestAndFollowJob(() =>
+              request('/api/download', {
                 method: 'POST',
                 body: {
                   collectionId: report.collectionId,
@@ -1998,9 +1998,9 @@ async function renderVerify() {
         type: 'button',
         text: t('web.verify.run'),
         onclick: () =>
-          runJob(
+          requestAndFollowJob(
             () =>
-              api('/api/verify', {
+              request('/api/verify', {
                 method: 'POST',
                 body: { modelIds: [...vfy.models], noHash: !verifyState.deep },
               }),
@@ -2041,14 +2041,14 @@ function renderVerifyResult(result) {
             text: t('web.verify.repair'),
             onclick: () => {
               const items = result.broken.map((item) => ({ modelId: item.modelId, versionId: item.versionId }));
-              runJob(() => api('/api/download', { method: 'POST', body: { items, force: true } }));
+              requestAndFollowJob(() => request('/api/download', { method: 'POST', body: { items, force: true } }));
             },
           })
         : null,
       h(
         'p',
         { class: 'small' },
-        t('web.verify.counts', { ok: result.ok, broken: result.broken.length, size: fmtBytes(result.totalBytes) })
+        t('web.verify.counts', { ok: result.ok, broken: result.broken.length, size: formatBytes(result.totalBytes) })
       ),
       table(
         [t('web.lib.columnName'), t('web.lib.versionId'), t('web.verify.reason'), t('web.lib.dir')],
@@ -2161,7 +2161,7 @@ const SETTINGS_SPEC = [
 async function renderSettings() {
   const state = await loadState();
   updateHeader(state);
-  const data = await api('/api/settings');
+  const data = await request('/api/settings');
   const draft = { ...data.values };
 
   function field(spec) {
@@ -2239,7 +2239,7 @@ async function renderSettings() {
         }
       }
       try {
-        await api('/api/settings', { method: 'POST', body: patch });
+        await request('/api/settings', { method: 'POST', body: patch });
         toast(t('web.settings.saved'), 'ok');
         invalidate();
         await loadI18n();
@@ -2285,7 +2285,7 @@ async function renderLogin() {
     type: 'button',
     text: t('web.login.start'),
     onclick: () =>
-      runJob(() => api('/api/login/start', { method: 'POST', body: {} }), () => {
+      requestAndFollowJob(() => request('/api/login/start', { method: 'POST', body: {} }), () => {
         invalidate();
         route();
       }),
@@ -2295,7 +2295,7 @@ async function renderLogin() {
     text: t('web.login.finished'),
     onclick: async () => {
       try {
-        await api('/api/login/confirm', { method: 'POST', body: {} });
+        await request('/api/login/confirm', { method: 'POST', body: {} });
         toast(t('web.login.confirmed'), 'ok');
       } catch (error) {
         toast(error.message, 'warn');
@@ -2307,7 +2307,7 @@ async function renderLogin() {
     text: t('web.dash.checkSession'),
     onclick: async () => {
       try {
-        const result = await api('/api/login/check', { method: 'POST', body: {} });
+        const result = await request('/api/login/check', { method: 'POST', body: {} });
         toast(
           result.ok ? t('web.dash.sessionOk') : t('web.dash.sessionBad', { reason: result.reason }),
           result.ok ? 'ok' : 'warn'
@@ -2378,7 +2378,7 @@ async function renderHelp() {
 // Load the `web.*` dictionary for the current language.
 // 读取当前语言的 `web.*` 文案。
 async function loadI18n() {
-  const data = await api('/api/i18n');
+  const data = await request('/api/i18n');
   DICT = data.dict || {};
   LANG = data.language || 'zh-CN';
 }
@@ -2388,7 +2388,7 @@ async function loadI18n() {
 async function toggleLanguage() {
   const next = LANG === 'zh-CN' ? 'en' : 'zh-CN';
   try {
-    await api('/api/settings', { method: 'POST', body: { language: next } });
+    await request('/api/settings', { method: 'POST', body: { language: next } });
     invalidate();
     await loadI18n();
     applyStaticI18n();
@@ -2430,4 +2430,4 @@ document.addEventListener('DOMContentLoaded', boot);
 
 // Small debugging handle (a browser tab's console is the natural place to poke at the API).
 // 调试用的小把手（浏览器控制台就是最方便试 API 的地方）。
-window.__dl = { api, t, toast, route, store, get dict() { return DICT; } };
+window.__dl = { request, t, toast, route, store, get dict() { return DICT; } };

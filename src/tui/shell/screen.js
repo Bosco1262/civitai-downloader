@@ -95,14 +95,14 @@ let crumbs = [];
 let stage = '';
 let logs = [];
 let logView = false;
-let logScroll = 0;
+let logScrollOffset = 0;
 let noticeText = '';
 let noticeColor = null;
 let noticeAt = 0;
 let noticePersistent = false;
 let taskView = false;
 let taskCursor = 0;
-let taskListStart = 0;
+let taskWindowStart = 0;
 let cancelPromptOpen = false;
 let dirty = true;
 let scheduled = false;
@@ -147,7 +147,7 @@ function bodyWidth() {
  * Whether the decorative parts of the frame fit (borders, descriptions).
  * 框架的装饰部分（边框、说明文字）是否放得下。
  */
-function roomy() {
+function isRoomy() {
   return dims.columns >= layout.MIN_COLUMNS;
 }
 
@@ -346,7 +346,7 @@ function openLogView() {
   logReturnTaskView = taskView;
   taskView = false;
   logView = true;
-  logScroll = 0;
+  logScrollOffset = 0;
   refresh();
 }
 
@@ -412,12 +412,12 @@ function onKey(text, key) {
       closeLogView();
       return;
     }
-    if (name === 'up') logScroll += 1;
-    else if (name === 'down') logScroll = Math.max(0, logScroll - 1);
-    else if (name === 'pageup') logScroll += 10;
-    else if (name === 'pagedown') logScroll = Math.max(0, logScroll - 10);
-    else if (name === 'home') logScroll = logs.length;
-    else if (name === 'end') logScroll = 0;
+    if (name === 'up') logScrollOffset += 1;
+    else if (name === 'down') logScrollOffset = Math.max(0, logScrollOffset - 1);
+    else if (name === 'pageup') logScrollOffset += 10;
+    else if (name === 'pagedown') logScrollOffset = Math.max(0, logScrollOffset - 10);
+    else if (name === 'home') logScrollOffset = logs.length;
+    else if (name === 'end') logScrollOffset = 0;
     else if (typed === '?' && !ctrl) openHelp();
     refresh();
     return;
@@ -456,7 +456,7 @@ function onKey(text, key) {
     if (typed === 'x') {
       tasks.clearFinished();
       taskCursor = 0;
-      taskListStart = 0;
+      taskWindowStart = 0;
       notice(t('tui.screen.tasksCleared'), colors.dim);
       return;
     }
@@ -764,7 +764,7 @@ function logLine(text) {
 
 function clearLog() {
   logs = [];
-  logScroll = 0;
+  logScrollOffset = 0;
   refresh();
 }
 
@@ -792,7 +792,7 @@ function toggleTaskView(value) {
   const running = list.findIndex((task) => task.status === tasks.RUNNING);
   const queued = list.findIndex((task) => task.status === tasks.QUEUED);
   taskCursor = running >= 0 ? running : queued >= 0 ? queued : 0;
-  taskListStart = 0;
+  taskWindowStart = 0;
   return refresh();
 }
 
@@ -1131,7 +1131,7 @@ function infoPanel(budget) {
   const content = infoContent(facts, allTasks, maxContent);
 
   const width = bodyWidth();
-  if (!roomy()) return { lines: content.map((line) => clip(indent(line))) };
+  if (!isRoomy()) return { lines: content.map((line) => clip(indent(line))) };
   return { lines: box(t('tui.screen.infoTitle'), content, width) };
 }
 
@@ -1352,12 +1352,12 @@ function logPageLines(budget) {
   const room = Math.max(1, Math.floor(budget) || 1);
   if (!logs.length) return [colors.dim(t('tui.screen.logEmpty'))];
   const height = Math.max(1, room - 1);
-  // logScroll counts lines from the newest one upwards; the renderer clamps it.
-  // logScroll 是从最新一行往上数的行数；越界在这里夹紧。
+  // logScrollOffset counts lines from the newest one upwards; the renderer clamps it.
+  // logScrollOffset 是从最新一行往上数的行数；越界在这里夹紧。
   const total = logs.length;
   const maxScroll = Math.max(0, total - height);
-  logScroll = Math.max(0, Math.min(logScroll, maxScroll));
-  const end = total - logScroll;
+  logScrollOffset = Math.max(0, Math.min(logScrollOffset, maxScroll));
+  const end = total - logScrollOffset;
   const start = Math.max(0, end - height);
   return [
     colors.dim(t('tui.screen.logPosition', { from: start + 1, to: end, total })),
@@ -1390,11 +1390,11 @@ function taskViewLines(budget) {
   const listRoom = Math.max(1, room - detailRoom);
 
   const maxStart = Math.max(0, list.length - listRoom);
-  let start = Math.max(0, Math.min(taskListStart, maxStart));
+  let start = Math.max(0, Math.min(taskWindowStart, maxStart));
   if (taskCursor < start) start = taskCursor;
   else if (taskCursor >= start + listRoom) start = taskCursor - listRoom + 1;
   start = Math.max(0, Math.min(start, maxStart));
-  taskListStart = start;
+  taskWindowStart = start;
 
   const lines = [];
   const end = Math.min(list.length, start + listRoom);
@@ -1524,12 +1524,12 @@ function resetState() {
   stage = '';
   logs = [];
   logView = false;
-  logScroll = 0;
+  logScrollOffset = 0;
   noticeText = '';
   noticePersistent = false;
   taskView = false;
   taskCursor = 0;
-  taskListStart = 0;
+  taskWindowStart = 0;
   cancelPromptOpen = false;
   lastPaint = '';
 }

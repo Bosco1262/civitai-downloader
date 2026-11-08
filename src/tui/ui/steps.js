@@ -18,21 +18,21 @@ const { color } = tokens;
  * @param {number} [initialIndex]
  */
 function createSteps(steps, initialIndex = 0) {
-  const list = Array.isArray(steps) ? steps.filter(Boolean) : [];
-  let index = Math.max(0, Math.min(list.length - 1, Math.floor(Number(initialIndex) || 0)));
+  const stepList = Array.isArray(steps) ? steps.filter(Boolean) : [];
+  let index = Math.max(0, Math.min(stepList.length - 1, Math.floor(Number(initialIndex) || 0)));
 
   return {
     get steps() {
-      return list;
+      return stepList;
     },
     get index() {
       return index;
     },
     get current() {
-      return list[index] || null;
+      return stepList[index] || null;
     },
     goto(nextIndex) {
-      index = Math.max(0, Math.min(list.length - 1, Math.floor(Number(nextIndex) || 0)));
+      index = Math.max(0, Math.min(stepList.length - 1, Math.floor(Number(nextIndex) || 0)));
       return index;
     },
     next() {
@@ -53,14 +53,14 @@ function createSteps(steps, initialIndex = 0) {
  * @returns {string}
  */
 function stepLine(flow, width) {
-  const list = Array.isArray(flow) ? flow : flow && flow.steps ? flow.steps : [];
+  const stepList = Array.isArray(flow) ? flow : flow && flow.steps ? flow.steps : [];
   const index = Array.isArray(flow) ? 0 : flow.index;
-  if (!list.length || !list[index]) return '';
+  if (!stepList.length || !stepList[index]) return '';
   const narrow = Math.floor(Number(width) || 0) < tokens.breakpoint.compact;
   if (narrow) {
-    return color.accent(`步骤 ${index + 1}/${list.length} ${list[index].label}`);
+    return color.accent(`步骤 ${index + 1}/${stepList.length} ${stepList[index].label}`);
   }
-  const parts = list.map((step, position) => {
+  const parts = stepList.map((step, position) => {
     if (position < index) return color.muted(step.label);
     if (position > index) return color.muted(step.label);
     return color.accent(step.label);

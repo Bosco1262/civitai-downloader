@@ -176,8 +176,12 @@ async function withDeadline(promise, ms) {
   const limit = Math.max(1, Number(ms) || 1);
   let timer = null;
   const guard = new Promise((resolve) => {
+    // Keep the timer referenced: an unref'ed guard can let the event loop exit before the timeout
+    // fires when the awaited promise never settles, which turns a timeout into a silent hang.
+    //
+    // 保持计时器被引用：当被等待的 promise 永不 settle 时，unref 会让事件循环在超时前退出，
+    // 结果不是超时，而是进程悄悄结束。
     timer = setTimeout(() => resolve({ timedOut: true }), limit);
-    if (typeof timer.unref === 'function') timer.unref();
   });
   try {
     const value = await Promise.race([

@@ -209,24 +209,26 @@ test('sanitizeName: 替换非法字符、去掉结尾点空格、截断', () => 
   assert.equal(util.sanitizeName('x'.repeat(300), 10).length, 10);
 });
 
-test('diskFileName / diskDirName: 超长时缩短且不超上限', () => {
+test('diskFileName / diskDirName: 超长时按平台规则处理', () => {
   const longDir = `C:/${'a'.repeat(180)}`;
   const longName = `${'x'.repeat(200)}.safetensors`;
-  const fitted = util.diskFileName(longDir, longName);
-  assert.ok(path.join(longDir, fitted).length <= util.MAX_PATH_WIN, '文件名路径不超上限');
-  assert.ok(fitted.endsWith('.safetensors'), '保留扩展名');
 
-  const dirName = util.diskDirName(longDir, 'y'.repeat(200), 12345);
-  assert.ok(path.join(longDir, dirName).length <= util.MAX_PATH_WIN, '目录名路径不超上限');
+  // MAX_PATH_WIN is a Windows constraint: on POSIX the name is sanitized but never shortened for it.
+  // MAX_PATH_WIN 是 Windows 的限制：POSIX 上只做名称清理，不会为它截断。
+  if (process.platform === 'win32') {
+    const fitted = util.diskFileName(longDir, longName);
+    assert.ok(path.join(longDir, fitted).length <= util.MAX_PATH_WIN, '文件名路径不超上限');
+    assert.ok(fitted.endsWith('.safetensors'), '保留扩展名');
 
-  let tooLong = true;
-  if (process.platform !== 'win32') tooLong = false;
-  if (!tooLong) {
-    assert.equal(util.diskFileName('C:/x', 'normal.safetensors'), 'normal.safetensors');
-    assert.equal(util.diskDirName('C:/x', 'Normal Model', 1), 'Normal Model');
+    const dirName = util.diskDirName(longDir, 'y'.repeat(200), 12345);
+    assert.ok(path.join(longDir, dirName).length <= util.MAX_PATH_WIN, '目录名路径不超上限');
   } else {
-    assert.equal(util.diskFileName('C:/x', 'normal.safetensors'), 'normal.safetensors');
+    assert.equal(util.diskFileName(longDir, longName), util.sanitizeName(longName));
+    assert.equal(util.diskDirName(longDir, 'y'.repeat(200), 12345), util.sanitizeName('y'.repeat(200)));
   }
+
+  assert.equal(util.diskFileName('C:/x', 'normal.safetensors'), 'normal.safetensors');
+  assert.equal(util.diskDirName('C:/x', 'Normal Model', 1), 'Normal Model');
 });
 
 test('uniqueName: 冲突时追加序号', () => {

@@ -160,23 +160,23 @@ The terminal UI is a full-screen app rather than a scrolling log: the screen is 
   ────────────────────────────────────────────────────────────────
 
   ▸ Download                  Download models or collections: paste a link / ID, tick the items
-    Tasks                     Active tasks, failures and recent results
+    Task view                 Active tasks, failures and recent results
     Local model management    Manage local files per model: update, verify, pin, delete records
     Local collection management  Manage per collection: check, re-download, reset members
     Settings                  Login, download directory, concurrency, proxy and every option
     Exit
 
-  ↑↓ Select | Enter Open | Ctrl+T Tasks | ? Help
+  ↑↓ Select | Enter Open | Ctrl+T Task view | ? Help
 ```
 
 The full dashboard belongs to the main menu. Every other page collapses it to one line (site, session, active tasks), leaving the body enough room on a 24-row terminal.
 
-The raw log is a page: `Ctrl+L` opens it and `Esc` returns (`↑↓` / `PgUp` / `PgDn` scroll). The task view opens with `Ctrl+T` or the stable **Tasks** menu entry. It is the only home of a download's live progress and result; `c` asks for confirmation before cancelling, `s` skips the current model, `r` retries failed items, `d` opens the output folder and `x` clears finished tasks.
+The raw log is a page: `Ctrl+L` opens it and `Esc` returns (`↑↓` / `PgUp` / `PgDn` scroll). The task view opens with `Ctrl+T` or the stable **Task view** menu entry. It is the only home of a download's live progress and result; `c` asks for confirmation before cancelling, `s` skips the current model, `r` retries failed items, `d` opens the output folder and `x` clears finished tasks.
 
 The main menu has six entries:
 
 - **Download**: one entry point for models and collections. Model references can be comma-separated; the collection workspace supports search, type/base-model/status filters, sorting, select-all-filtered, clear and "new only". The read-only confirmation page keeps its start button visible below a scrolling list and shows new downloads, existing items to verify, total size, file types and free disk.
-- **Tasks**: a discoverable task-view entry in addition to `Ctrl+T`.
+- **Task view**: a discoverable entry in addition to `Ctrl+T`.
 - **Local model management**: list → detail → back restores the list. Reports start at the top of the summary; `Tab` cycles content, selectable rows and actions.
 - **Local collection management**: snapshot reports separate added / removed / version changes. "Mark changes for re-download" and "mark selected members for re-download" update records only and never delete files.
 - **Settings**: one page for every option; `Enter` edits and saves immediately. `Ctrl+R` fills the default value and `Ctrl+O` picks a folder.

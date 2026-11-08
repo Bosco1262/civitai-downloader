@@ -767,7 +767,7 @@ Examples:
   'tui.app.menuTitle': 'Main menu',
   'tui.app.menuDownload': 'Download',
   'tui.app.menuDownloadDesc': 'Download models or collections: paste a link / ID, select the items, start',
-  'tui.app.menuTasks': 'Tasks',
+  'tui.app.menuTasks': 'Task view',
   'tui.app.menuTasksDesc': 'View active tasks, failures and recent results (Ctrl+T)',
   'tui.app.menuModels': 'Local model management',
   'tui.app.menuModelsDesc': 'Manage local files per model: update, verify, pin a version, delete records',
@@ -854,7 +854,7 @@ Examples:
 
   // Footer: exactly one line per page, listing only the keys that work there
   // 页脚：每个页面只有一行，只列这一页能用的键
-  'tui.hint.main': '↑↓ Select | Enter Open | Ctrl+T Tasks | ? Help',
+  'tui.hint.main': '↑↓ Select | Enter Open | Ctrl+T Task view | ? Help',
   'tui.hint.mainCompact': '↑↓ Select | Enter | ? Help',
   'tui.hint.menu': '↑↓ Select | Enter Confirm | Esc Back | ? Help',
   'tui.hint.confirm': '←→ Select | y/n Shortcut | Enter Confirm | Esc Back | ? Help',

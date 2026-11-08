@@ -38,13 +38,13 @@ const {
 } = require('./errors');
 const { t } = require('./i18n');
 
-const ATTEMPTS = 5;
-const SPEED_LIMIT = 51200; // 50 KB/s 下限 / 50 KB/s lower bound
-const SPEED_TIME = 120; // 低于限速持续 2 分钟即断开 / cut off after 2 minutes below the limit
+const DEFAULT_ATTEMPTS = 5;
+const SPEED_LIMIT_BPS = 51200; // 50 KB/s 下限 / 50 KB/s lower bound
+const SPEED_TIME_SEC = 120; // 低于限速持续 2 分钟即断开 / cut off after 2 minutes below the limit
 
 let curlBin = null;
 let currentChild = null;
-let aborted = false;
+let cancelled = false;
 
 /**
  * Dependency-injection hooks: real curl is used by default; tests can swap in stubs,
@@ -253,15 +253,15 @@ function resolveEngine(requested) {
 }
 
 function resetCancel() {
-  aborted = false;
+  cancelled = false;
 }
 
-function isAborted() {
-  return aborted;
+function isCancelled() {
+  return cancelled;
 }
 
 function cancelCurrentDownload() {
-  aborted = true;
+  cancelled = true;
   const child = currentChild;
   if (child && !child.killed) {
     try {
@@ -295,8 +295,8 @@ function runCurl(opts) {
       '--retry', String(retryCount),
       '--retry-delay', '5',
       '--retry-connrefused',
-      '--speed-limit', String(SPEED_LIMIT),
-      '--speed-time', String(SPEED_TIME),
+      '--speed-limit', String(SPEED_LIMIT_BPS),
+      '--speed-time', String(SPEED_TIME_SEC),
     ];
     if (resume) args.push('-C', '-');
     if (proxy) args.push('--proxy', proxy);
@@ -465,7 +465,7 @@ async function fetchRemoteMeta(opts) {
  */
 function verifyFile(file, expectedSha256) {
   if (!expectedSha256) return Promise.resolve(null);
-  return sha256File(file, { shouldAbort: isAborted });
+  return sha256File(file, { shouldAbort: isCancelled });
 }
 
 /**
@@ -488,7 +488,7 @@ async function downloadFile(opts) {
     force,
     quiet,
     proxy,
-    attempts = ATTEMPTS,
+    attempts = DEFAULT_ATTEMPTS,
     retryCount = 5,
     onAttempt,
     engine,
@@ -500,7 +500,7 @@ async function downloadFile(opts) {
   const tolerance = expectedBytes ? Math.max(1024, expectedBytes * 0.001) : 0;
   const useEngine = resolveEngine(engine);
 
-  if (aborted) throw new CancelError(CANCEL_MESSAGE);
+  if (cancelled) throw new CancelError(CANCEL_MESSAGE);
 
   // 1) The target file exists and its hash passes → skip.
   // 1) 目标文件已存在且校验通过 → 跳过
@@ -535,7 +535,7 @@ async function downloadFile(opts) {
   }
 
   for (let attempt = 1; attempt <= attempts; attempt++) {
-    if (aborted) throw new CancelError(CANCEL_MESSAGE);
+    if (cancelled) throw new CancelError(CANCEL_MESSAGE);
 
     // 3) Resume consistency: drop the old part when the remote file changed, so a file that cannot verify is never stitched together.
     // 3) 续传一致性：远端文件变了就丢弃旧分片，避免拼出必然校验失败的文件
@@ -543,7 +543,7 @@ async function downloadFile(opts) {
       const side = readSidecar(target);
       if (side && side.etag) {
         const remote = await fetchRemoteMeta({ url, cookieFile, userAgent, proxy });
-        if (aborted) throw new CancelError(CANCEL_MESSAGE);
+        if (cancelled) throw new CancelError(CANCEL_MESSAGE);
         if (remote.ok && remote.etag && remote.etag !== side.etag) {
           log(t('downloader.remoteChanged'));
           fs.rmSync(part, { force: true });
@@ -563,7 +563,7 @@ async function downloadFile(opts) {
       headerFile,
       resume: !force,
     });
-    if (aborted) throw new CancelError(CANCEL_MESSAGE);
+    if (cancelled) throw new CancelError(CANCEL_MESSAGE);
 
     if (onAttempt) onAttempt({ attempt, max: attempts, httpCode: r.httpCode, exitCode: r.exitCode });
 
@@ -723,7 +723,7 @@ module.exports = {
   looksLikeHtml,
   fetchRemoteMeta,
   resetCancel,
-  isAborted,
+  isCancelled,
   isCancelError,
   cancelCurrentDownload,
   sidecarPath,

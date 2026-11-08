@@ -761,7 +761,7 @@ npm 用法（传参需要 -- 分隔）:
   'tui.app.menuTitle': '主菜单',
   'tui.app.menuDownload': '下载',
   'tui.app.menuDownloadDesc': '下载模型或收藏集：粘贴链接 / ID，勾选条目后开始',
-  'tui.app.menuTasks': '任务',
+  'tui.app.menuTasks': '任务视图',
   'tui.app.menuTasksDesc': '查看活动任务、失败原因与历史结果（Ctrl+T）',
   'tui.app.menuModels': '本地模型管理',
   'tui.app.menuModelsDesc': '按模型管理本地文件：更新、校验、固定版本、删除记录',
@@ -848,7 +848,7 @@ npm 用法（传参需要 -- 分隔）:
 
   // Footer: exactly one line per page, listing only the keys that work there
   // 页脚：每个页面只有一行，只列这一页能用的键
-  'tui.hint.main': '↑↓ 选择 | Enter 进入 | Ctrl+T 任务 | ? 帮助',
+  'tui.hint.main': '↑↓ 选择 | Enter 进入 | Ctrl+T 任务视图 | ? 帮助',
   'tui.hint.mainCompact': '↑↓ 选择 | Enter | ? 帮助',
   'tui.hint.menu': '↑↓ 选择 | Enter 确认 | Esc 返回 | ? 帮助',
   'tui.hint.confirm': '←→ 选择 | y/n 快捷 | Enter 确认 | Esc 返回 | ? 帮助',

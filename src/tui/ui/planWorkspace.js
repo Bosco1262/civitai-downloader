@@ -39,7 +39,7 @@ function inputLine(state) {
  * One selected-row line.
  * 一行已选行。
  */
-function rowLine(row, cursor, focused, width) {
+function workspaceRowLine(row, cursor, focused, width) {
   const mark = focused && cursor ? color.cursor(layout.glyphs().cursor) : ' ';
   const box = view.checkbox(!!row.selected);
   const label = truncateTo(String(row.name || row.modelId || ''), Math.max(12, Math.floor(width / 3)));
@@ -272,7 +272,7 @@ async function showPlanWorkspace(opts = {}) {
         for (let index = win.start; index < win.end && lines.length < available; index++) {
           const row = visible[index];
           const decorated = { ...row, selected: state.selected.has(String(opts.idOf(row))) };
-          lines.push(rowLine(decorated, index === state.cursor, state.region === 'selected', ctx.width));
+          lines.push(workspaceRowLine(decorated, index === state.cursor, state.region === 'selected', ctx.width));
         }
       } else if (!visible.length && lines.length < available) {
         lines.push(color.muted(state.rows.length ? t('tui.workspace.noMatches') : opts.emptyText || t('tui.workspace.empty')));

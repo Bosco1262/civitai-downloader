@@ -356,11 +356,11 @@ test('i18n-tui: 滚动视窗 / 单选模式 / 快捷跳行等新增纯逻辑可�
 
 test('i18n-tui: 主菜单 / 固定页眉文案逐字一致且 app.js 已接线', () => {
   assert.equal(tr('tui.app.bannerTitle'), 'civitai-downloader');
-  assert.equal(tr('tui.hint.main'), '↑↓ 选择 | Enter 进入 | Ctrl+T 任务 | ? 帮助');
+  assert.equal(tr('tui.hint.main'), '↑↓ 选择 | Enter 进入 | Ctrl+T 任务视图 | ? 帮助');
   assert.equal(tr('tui.app.menuTitle'), '主菜单');
   const menu = [
     ['tui.app.menuDownload', '下载'],
-    ['tui.app.menuTasks', '任务'],
+    ['tui.app.menuTasks', '任务视图'],
     ['tui.app.menuModels', '本地模型管理'],
     ['tui.app.menuCollections', '本地收藏集管理'],
     ['tui.app.menuSettings', '设置'],
@@ -410,7 +410,7 @@ test('i18n-tui: 仪表盘 / 任务视图 / 页脚文案逐字一致', () => {
   assert.equal(tr('tui.screen.infoIdle'), '空闲 | 没有进行中的任务');
   // One line per page, listing only that page's keys.
   // 每页一行，且只列这一页能用的键。
-  assert.equal(tr('tui.hint.main'), '↑↓ 选择 | Enter 进入 | Ctrl+T 任务 | ? 帮助');
+  assert.equal(tr('tui.hint.main'), '↑↓ 选择 | Enter 进入 | Ctrl+T 任务视图 | ? 帮助');
   assert.equal(tr('tui.hint.menu'), '↑↓ 选择 | Enter 确认 | Esc 返回 | ? 帮助');
   assert.equal(tr('tui.hint.settings'), '↑↓ 选择 | Enter 修改并保存 / 执行 | Esc 返回 | ? 帮助');
   assert.equal(tr('tui.hint.message'), 'Esc 返回 | ? 帮助');

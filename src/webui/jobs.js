@@ -73,7 +73,7 @@ function createJobs(opts = {}) {
    * Public (serialisable) view of a job: everything except the internal cancel hook.
    * 任务对外的可序列化视图：除内部取消钩子之外的全部字段。
    */
-  function view(job) {
+  function toPublicJob(job) {
     if (!job) return null;
     return {
       id: job.id,
@@ -92,7 +92,7 @@ function createJobs(opts = {}) {
   }
 
   function publish(job) {
-    emit({ type: 'job', job: view(job) });
+    emit({ type: 'job', job: toPublicJob(job) });
   }
 
   /**
@@ -194,7 +194,7 @@ function createJobs(opts = {}) {
         publish(job);
       });
 
-    return view(job);
+    return toPublicJob(job);
   }
 
   /**
@@ -247,10 +247,10 @@ function createJobs(opts = {}) {
       log(job, line);
       return true;
     },
-    get: (id) => view(jobs.get(String(id))),
+    get: (id) => toPublicJob(jobs.get(String(id))),
     has: (id) => jobs.has(String(id)),
-    list: () => order.map((id) => view(jobs.get(id))).filter(Boolean),
-    active: () => (activeId ? view(jobs.get(activeId)) : null),
+    list: () => order.map((id) => toPublicJob(jobs.get(id))).filter(Boolean),
+    active: () => (activeId ? toPublicJob(jobs.get(activeId)) : null),
     /**
      * Test hook: forget every finished job.
      * 测试用：清掉已结束的任务。
