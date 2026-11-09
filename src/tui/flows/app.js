@@ -239,12 +239,15 @@ function quit(code = 0, options = {}) {
  */
 function mainScreen() {
   const cursor = { index: 0, windowStart: 0 };
-  const labelWidth = MAIN_MENU.reduce((max, item) => Math.max(max, layout.displayWidth(t(item.titleKey))), 0);
 
   return {
-    title: t('tui.app.menuTitle'),
+    // Resolved on every paint: a language switch must change the breadcrumb without a restart.
+    // 每次绘制时解析：切换语言后面包屑必须立即改变，而不是等重启。
+    get title() {
+      return t('tui.app.menuTitle');
+    },
     help: () => {
-      runExclusive(() => pages.showHelp({ onQuit: () => quit() }), t('tui.app.menuHelp'));
+      runExclusive(() => pages.showHelp({ onQuit: () => quit() }));
     },
     // Esc does nothing here: the menu is the root, and a repeated Esc on the way back must not quit
     // the program by accident. Ctrl+C and the "exit" entry are the ways out.
@@ -255,6 +258,12 @@ function mainScreen() {
     status: () => (state.busy ? t('tui.app.busyHint') : null),
     render(ctx) {
       const lines = [];
+      // Recompute the label column on every paint: labels change with the language.
+      // 每次绘制都重算标签列宽：标签会随语言变化。
+      const labelWidth = MAIN_MENU.reduce(
+        (max, item) => Math.max(max, layout.displayWidth(t(item.titleKey))),
+        0
+      );
       // On a very short terminal the six entries do not all fit: the window follows the cursor and a
       // position line says how many there are, so nothing looks missing.
       //
@@ -306,9 +315,13 @@ function mainScreen() {
  * Run one menu action exactly once, keeping the menu inert until it finishes.
  * 运行一个菜单动作且只运行一个，动作结束前菜单不响应按键。
  */
-function runExclusive(fn) {
+function runExclusive(fn, config) {
   if (state.busy) return Promise.resolve();
   state.busy = true;
+  // Tests pass a fixture here; normal menu actions leave it undefined and reload from disk.
+  // 测试在这里传入固定配置；正常菜单动作不传，仍从磁盘重新加载。
+  const injected = config !== undefined;
+  if (injected) state.config = config;
   // The menu title is context, not a running operation. Writing it to the global stage made the
   // status rail show a permanent “✔ Download” for every page in the flow.
   //
@@ -329,9 +342,12 @@ function runExclusive(fn) {
       state.busy = false;
       screen.setStage('');
       // A flow may have changed the config (settings, login): reload it for the info panel.
+      // Tests inject a fixture and skip the reload so the developer's config.json cannot leak in.
+      //
       // 流程可能改了配置（设置、登录）：重新加载，供信息面板使用。
+      // 测试注入固定配置，跳过重新加载，避免读到开发者的 config.json。
       try {
-        state.config = loadConfig();
+        state.config = injected ? config : loadConfig();
         configureRuntime(state.config);
       } catch (e) {
         // Keep the previous config when the new one cannot be read.
@@ -341,8 +357,8 @@ function runExclusive(fn) {
     });
 }
 
-function runAction(action) {
-  return runExclusive(() => dispatch(action));
+function runAction(action, config) {
+  return runExclusive(() => dispatch(action), config);
 }
 
 /**
@@ -526,6 +542,7 @@ async function main() {
 module.exports = {
   main,
   mainMenu,
+  mainScreen,
   statusFacts,
   printStatus,
   banner,

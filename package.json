@@ -20,7 +20,9 @@
     "test": "node --test",
     "test:seq": "node scripts/run-tests.js",
     "check:tui": "node scripts/check-tui-contracts.js",
-    "check:comments": "node scripts/check-comments.js"
+    "check:comments": "node scripts/check-comments.js",
+    "config:example": "node scripts/generate-config-example.js",
+    "check:config-example": "node scripts/generate-config-example.js --check"
   },
   "keywords": [
     "civitai",

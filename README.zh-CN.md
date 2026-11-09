@@ -401,6 +401,8 @@ npm run pin    -- --list                         # 列出所有已固定的模�
 
 > 未知配置项不会导致失败，但会在启动时提示「配置提示: 未知配置项 …」，便于发现拼写错误。
 
+`config.example.json` 由 `src/config.js` 的 `DEFAULTS` 生成，请勿手工修改。修改默认值后运行 `npm run config:example`（CI 会用 `npm run check:config-example` 检查是否同步）。
+
 ## 项目结构
 
 ```

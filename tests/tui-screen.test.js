@@ -37,6 +37,34 @@ const LANGUAGE_AT_LOAD = i18n.getLanguage();
 test.after(() => i18n.setLanguage(LANGUAGE_AT_LOAD));
 
 const { ANSI, withFakeTerminal } = require('./helpers/tui');
+const { testConfig } = require('./helpers/config');
+
+/**
+ * Silence the view facade while a task runs without the shell.
+ *
+ * Without the shell `view.notice`/`view.log` fall back to `console.log`. Under `node --test` a
+ * background task can emit that notice after the test's stdout patch is gone, which corrupts the
+ * child-process test protocol on some Node versions (the "Unable to deserialize cloned data" error).
+ *
+ *
+ * 在没有外壳时静默 view 门面。
+ *
+ * 无外壳时 `view.notice`/`view.log` 会回退到 `console.log`。在 `node --test` 下，后台任务可能在
+ * 测试的 stdout 补丁撤销后才输出，污染子进程测试协议（“Unable to deserialize cloned data”）。
+ */
+async function withSilentView(fn) {
+  const saved = { log: view.log, note: view.note, notice: view.notice, decision: view.decision, bell: view.bell };
+  view.log = () => {};
+  view.note = () => {};
+  view.notice = () => {};
+  view.decision = () => {};
+  view.bell = () => {};
+  try {
+    return await fn();
+  } finally {
+    Object.assign(view, saved);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // tasks.js
@@ -348,11 +376,12 @@ test('screen: 固定页眉 / 信息面板 / 页脚一直显示，Ctrl+T 切换�
   });
 });
 
-test('screen: 进入下载流程不会把菜单标题显示成常驻成功状态', async () => {
+test('screen: 进入下载流程不会把菜单标题显示成常驻成功状态', async (t) => {
+  const config = testConfig(t);
   await withFakeTerminal(async ({ frame, key, settle }) => {
     assert.equal(screen.start({ onQuit: () => {} }), true);
     screen.setBase({ title: '主菜单', render: () => ['主菜单'], hints: () => [] });
-    const pending = app.runAction('download');
+    const pending = app.runAction('download', config);
     await settle();
     screen.render();
     const text = frame().join('\n');
@@ -362,6 +391,7 @@ test('screen: 进入下载流程不会把菜单标题显示成常驻成功状态
     key('escape');
     await settle();
     await pending;
+    assert.equal(i18n.getLanguage(), 'zh-CN', '注入的测试配置应覆盖根目录 config.json');
     screen.render();
     assert.ok(!frame().join('\n').includes(`✔ ${i18n.t('tui.app.menuDownload')}`), frame().join('\n'));
   });
@@ -935,6 +965,119 @@ test('screen: 设置支持恢复默认值（Ctrl+R 与整页恢复）', async ()
   );
 });
 
+test('settings: 修改 language 立即切换语言并重建行', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'civitai-language-'));
+  const config = {
+    configFile: path.join(root, 'config.json'),
+    language: 'zh-CN',
+    site: 'https://civitai.com',
+    outDir: root,
+    jobs: 1,
+    fileTypes: ['Model'],
+  };
+  const previous = i18n.getLanguage();
+  try {
+    i18n.setLanguage('zh-CN');
+    const field = settings.SECTIONS.flatMap((section) => section.fields).find((item) => item.key === 'language');
+    await withSilentView(async () => {
+      assert.equal(settings.applyField(config, field, 'en'), true);
+    });
+    assert.equal(i18n.getLanguage(), 'en');
+    assert.equal(config.language, 'en');
+    assert.equal(settings.buildRows()[0].label, 'Basics');
+  } finally {
+    i18n.setLanguage(previous);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('screen: 设置页切换语言后立即重绘，不用重启', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'civitai-language-page-'));
+  const previous = i18n.getLanguage();
+  try {
+    i18n.setLanguage('zh-CN');
+    await withFakeTerminal(async ({ frame, key, settle }) => {
+      assert.equal(screen.start({ onQuit: () => {} }), true);
+      const config = {
+        configFile: path.join(root, 'config.json'),
+        language: 'zh-CN',
+        site: 'https://civitai.com',
+        outDir: root,
+        jobs: 1,
+        fileTypes: ['Model'],
+        engine: 'curl',
+        dedup: 'off',
+      };
+      const done = settings.settingsPage(config);
+      await settle();
+
+      // Basic section fields: site, outDir, chromePath, debugPort, headless, language.
+      // 基础分组字段：站点、输出目录、Chrome 路径、调试端口、无头模式、语言。
+      for (let i = 0; i < 5; i++) key('down');
+      key('return');
+      await settle();
+
+      // The language picker starts on zh-CN; move to en and confirm.
+      // 语言选择器初始停在中文；移到英文并确认。
+      key('down');
+      key('return');
+      await settle();
+      await settle();
+
+      const text = frame().join('\n');
+      assert.ok(text.includes('Basics'), text);
+      assert.ok(text.includes('Interface language'), text);
+      assert.ok(text.includes('Settings'), text);
+      assert.ok(!text.includes('基础'), text);
+
+      key('escape');
+      assert.equal(await done, true);
+    });
+  } finally {
+    i18n.setLanguage(previous);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('screen: 根面包屑跟随动态标题（语言切换）', async () => {
+  let title = '主菜单';
+  await withFakeTerminal(async ({ frame, settle }) => {
+    assert.equal(screen.start({ onQuit: () => {} }), true);
+    screen.setBase({
+      get title() {
+        return title;
+      },
+      render: () => ['▸ 项'],
+      hints: () => [],
+    });
+    await settle();
+    assert.ok(frame().join('\n').includes('主菜单'));
+
+    title = 'Main menu';
+    screen.render();
+    assert.ok(frame().join('\n').includes('Main menu'));
+  });
+});
+
+test('screen: 主菜单标题与标签随语言变化', () => {
+  const previous = i18n.getLanguage();
+  try {
+    i18n.setLanguage('zh-CN');
+    const page = app.mainScreen();
+    const zh = page.render({ rows: 10, width: 100 }).join('\n');
+    assert.ok(zh.includes(i18n.t('tui.app.menuTasks')), zh);
+    assert.equal(page.title, i18n.t('tui.app.menuTitle'));
+
+    i18n.setLanguage('en');
+    const en = page.render({ rows: 10, width: 100 }).join('\n');
+    assert.ok(en.includes('Task view'), en);
+    assert.ok(!en.includes('任务视图'), en);
+    assert.equal(page.title, 'Main menu');
+  } finally {
+    i18n.setLanguage(previous);
+  }
+});
+
 test('settings: 分组标题只在光标停在该组第一行时才被拉进视窗', () => {
   const { scrollToSection } = require('../src/tui/settings');
   // Two sections: heading 0 + rows 1-5, blank 6, heading 7 + rows 8-10.
@@ -1244,7 +1387,7 @@ test('download: 同一模型的两个版本各占一行，并一起进入确认�
   }
 });
 
-test('downloadTask: 第二个下载排队，前一个完成后自动开始', async () => {
+test('downloadTask: 第二个下载排队，前一个完成后自动开始', async () => withSilentView(async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'civitai-dl-queue-'));
   const previousBell = process.env.NO_BELL;
   process.env.NO_BELL = '1';
@@ -1327,7 +1470,7 @@ test('downloadTask: 第二个下载排队，前一个完成后自动开始', asy
     else process.env.NO_BELL = previousBell;
     fs.rmSync(root, { recursive: true, force: true });
   }
-});
+}));
 
 test('download: 确认页开始后进入回执页，Esc 退出而任务继续', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'civitai-dl-receipt-'));
@@ -1419,7 +1562,7 @@ test('download: 确认页开始后进入回执页，Esc 退出而任务继续', 
   }
 });
 
-test('downloadTask: 进度按 job 给出的最终目录与文件名计算，expected 不为 0', async () => {
+test('downloadTask: 进度按 job 给出的最终目录与文件名计算，expected 不为 0', async () => withSilentView(async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'civitai-dl-progress-'));
   const previousBell = process.env.NO_BELL;
   process.env.NO_BELL = '1';
@@ -1488,7 +1631,7 @@ test('downloadTask: 进度按 job 给出的最终目录与文件名计算，expe
     else process.env.NO_BELL = previousBell;
     fs.rmSync(root, { recursive: true, force: true });
   }
-});
+}));
 
 test('screen: 窄终端下框架不去掉页眉，且行宽不超列数', async () => {
   await withFakeTerminal(

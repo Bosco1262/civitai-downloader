@@ -781,7 +781,7 @@ npm 用法（传参需要 -- 分隔）:
   'tui.app.downloadModelDesc': '粘贴模型链接 / model:<ID> / version:<ID>，可多行或逗号分隔',
   'tui.app.downloadCollection': '下载收藏集',
   'tui.app.downloadCollectionDesc': '粘贴收藏集链接或 ID，枚举后勾选要下载的条目',
-  'tui.app.menuHelp': '帮助 / 快捷键',
+
   'tui.app.opened': '已打开: {dir}',
   'tui.app.openFailed': '打开目录失败',
   'tui.app.operationFailed': '操作失败: {error}',
@@ -1494,7 +1494,7 @@ npm 用法（传参需要 -- 分隔）:
   'tui.help.generalQuickSelect': '跳到第 n 行（配合 Shift 直接勾选）',
   'tui.help.generalConfirm': '选中 / 确认，并进入下一个界面',
   'tui.help.generalBack': '返回上一级（在主菜单里不生效；退出请用 Ctrl+C）',
-  'tui.help.generalTasks': '打开/关闭任务视图（Ctrl+T；主菜单也有「任务」入口）',
+  'tui.help.generalTasks': '打开/关闭任务视图（Ctrl+T；主菜单也有「任务视图」入口）',
   'tui.help.generalLog': '打开本次会话的日志（Ctrl+L；Esc 返回）',
   'tui.help.generalQuit': '立刻退出程序',
   'tui.help.generalHelp': '在列表里打开本页按键速查',

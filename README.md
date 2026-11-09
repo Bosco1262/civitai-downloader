@@ -163,7 +163,7 @@ The terminal UI is a full-screen app rather than a scrolling log: the screen is 
     Task view                 Active tasks, failures and recent results
     Local model management    Manage local files per model: update, verify, pin, delete records
     Local collection management  Manage per collection: check, re-download, reset members
-    Settings                  Login, download directory, concurrency, proxy and every option
+    Settings                  Log in, download directory, concurrency, proxy and every option
     Exit
 
   ↑↓ Select | Enter Open | Ctrl+T Task view | ? Help
@@ -414,6 +414,8 @@ npm run pin    -- --list                         # list every pinned model
 | `trpcInput` | `{}` | Overrides for the site tRPC request body (shallow-merged with the built-in template) |
 
 > Unknown config fields do not cause a failure, but the startup prints "config hint: unknown option …" so typos are easy to spot.
+
+`config.example.json` is generated from `DEFAULTS` in `src/config.js`; do not edit it by hand. After changing a default, run `npm run config:example` (CI checks the result with `npm run check:config-example`).
 
 ## Project Structure
 

@@ -30,5 +30,7 @@ jobs:
         run: node scripts/check-syntax.js
       - name: Bilingual comments / 双语注释规范
         run: node scripts/check-comments.js
+      - name: Config example sync / 配置示例同步
+        run: node scripts/generate-config-example.js --check
       - name: Unit and integration tests / 单元与集成测试
         run: npm test

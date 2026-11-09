@@ -165,7 +165,7 @@
 - `Enter`：执行当前焦点动作，不是全局确认。
 - `Esc`：返回直接父级或关闭覆盖层；回执页只回下载子菜单，不取消任务。
 - `Tab`：页面内的区域焦点切换；报告页用于正文 / 可操作行 / 操作区。
-- `Ctrl+T`：打开/关闭任务视图（全局覆盖层，主菜单同时提供「任务」入口）。
+- `Ctrl+T`：打开/关闭任务视图（全局覆盖层，主菜单同时提供「任务视图」入口）。
 - `Ctrl+L`：打开会话日志（全局覆盖层，标题为“日志”）。
 - `Ctrl+C`：退出；有任务运行时先请求取消。
 - `?`：帮助；所有页面都应可用，并在帮助页列出上述全局键。
@@ -224,6 +224,25 @@
 - 默认勾选只看本行的默认版本：免费则勾选，付费/限时不勾选；徽标是 `[付费/免费]` 但本行下的是免费版时，行是**已勾选**的。用户可显式勾选付费版本，但必须显示“需已有下载权限；不会购买或消耗 Buzz”。
 - 同一模型多个基础模型时，行的“基础模型”显示去重列表（`MOSS Image / Krea 2`）；`b` 筛选按包含匹配，两种取值下该行都会出现。
 - 无权限不计入网络失败，使用“需权限”计数，且不自动重试。
+
+### 5.5 英文文案大小写
+
+英文 TUI 文案按用途分四档，避免同一屏幕上混用不同规则：
+
+| 用途 | 规则 | 示例 |
+|---|---|---|
+| 菜单项、页面/分组标题、字段标签、描述、确认句 | **Sentence case**（首词大写，其余小写，专有名词除外） | `Task view`、`Local model management`、`Current settings`、`Restore all defaults` |
+| 页脚按键提示里的动作词 | **Title Case**（每个动作词首字母大写） | `↑↓ Select \| Enter Open \| Esc Back \| ? Help` |
+| 行内状态与元数据值 | **小写** | `running`、`queued`、`position 1`、`elapsed 3s`、`concurrency 2` |
+| 名称/动词/缩写 | 按语义固定 | `Task view` 作名称；`task view` 在句中；`Log in` 作动词，`login page` 作名词；`ID`、`URL`、`OK`、`SHA256`、`Civitai`、`Chrome`、`Edge`、`aria2c` |
+
+补充约定：
+
+- **动作行用祈使动词**：`Run environment check`、`Run deep check`、`Run deep verification (SHA256)`；报告标题可以是名词短语（`Environment check`、`Verification report`）。
+- **输入占位符统一小写**：`model:<id>`、`version:<id>`；正文里的缩写仍写 `ID`（例如 “the ID may be wrong”）。
+- **`Webhook` 是项目术语**，保持首字母大写；不写 `webhook`。
+- 菜单/页面名称在正文中作为普通词出现时小写，例如 “the task view”，但作为菜单项时写 `Task view`。
+- 新增/修改英文文案时同步检查 `src/i18n/en.js` 与 `tests/i18n-tui.test.js` 的断言。
 
 ## 6. 反馈
 

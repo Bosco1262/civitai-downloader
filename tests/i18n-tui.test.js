@@ -354,6 +354,41 @@ test('i18n-tui: 滚动视窗 / 单选模式 / 快捷跳行等新增纯逻辑可�
   assert.equal(select.filterItems(rows, { keyword: 'v10' }).length, 1);
 });
 
+test('i18n-tui: 英文大小写与占位符约定', () => {
+  // Hints use Title Case action words; this was the only group that had drifted to lowercase.
+  // 页脚提示里的动作词用 Title Case；此前只有报告/日志这一组漂成了小写。
+  assert.ok(en['tui.hint.report'].includes('↑↓ Scroll / Select'));
+  assert.ok(en['tui.hint.reportBody'].includes('PgDn Scroll content'));
+  assert.ok(en['tui.hint.reportRows'].includes('↑↓ Select row'));
+  assert.ok(en['tui.hint.reportActions'].includes('↑↓ Select action'));
+  assert.ok(en['tui.hint.logView'].includes('PgDn Scroll'));
+  assert.ok(en['tui.hint.modelVersion'].includes('Enter Download this version'));
+
+  // Menu names and stale references.
+  // 菜单名称与过时引用。
+  assert.ok(en['tui.help.generalTasks'].includes('Task view entry'));
+  assert.ok(!en['tui.help.generalTasks'].includes('Tasks entry'));
+  assert.ok(!zh['tui.help.generalTasks'].includes('「任务」入口'));
+  assert.ok(en['tui.app.menuSettingsDesc'].startsWith('Log in,'));
+
+  // Titles, prose acronyms and input placeholders.
+  // 标题、正文缩写与输入占位符。
+  assert.match(en['tui.check.report.titleCollection'], /\| Collection /);
+  assert.match(en['tui.check.report.emptySnapshotHint'], /\bthe ID may be wrong\b/);
+  assert.match(en['tui.app.downloadModelDesc'], /model:<id> \/ version:<id>/);
+  assert.match(en['tui.models.sourcePasteDesc'], /model:<id>, version:<id>/);
+  assert.match(en['tui.workspace.modelInputLabel'], /version:<id>/);
+  assert.ok(!/<ID>|version:ID/.test(en['tui.app.downloadModelDesc']));
+  assert.ok(!/<ID>|version:ID/.test(en['tui.models.sourcePasteDesc']));
+  assert.ok(!/version:ID/.test(en['tui.workspace.modelInputLabel']));
+
+  // Action rows use imperative verbs; feature/report titles stay noun phrases.
+  // 动作行用祈使动词；功能/报告标题保持名词短语。
+  assert.equal(en['tui.settings.actionDoctor'], 'Run environment check');
+  assert.equal(en['tui.doctor.report.actionDeep'], 'Run deep check');
+  assert.equal(en['tui.verify.report.actionDeep'], 'Run deep verification (SHA256)');
+});
+
 test('i18n-tui: 主菜单 / 固定页眉文案逐字一致且 app.js 已接线', () => {
   assert.equal(tr('tui.app.bannerTitle'), 'civitai-downloader');
   assert.equal(tr('tui.hint.main'), '↑↓ 选择 | Enter 进入 | Ctrl+T 任务视图 | ? 帮助');

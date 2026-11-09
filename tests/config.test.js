@@ -26,6 +26,7 @@ const {
   saveConfig,
 } = require('../src/config');
 const { ConfigError } = require('../src/errors');
+const { testConfig } = require('./helpers/config');
 
 const tempDirs = [];
 
@@ -97,6 +98,20 @@ test('loadConfig: 无 config.json 时使用默认值，configExists 为 false', 
   assert.equal(cfg.dataDir, path.join(root, '.data'));
   assert.equal(cfg.cookiesFile, path.join(root, '.data', 'cookies.txt'));
   assert.deepEqual(cfg.warnings, []);
+});
+
+test('testConfig: 每份测试配置独立且落在临时目录', (t) => {
+  const config = testConfig(t);
+  assert.equal(config.configExists, true);
+  assert.equal(config.language, 'zh-CN');
+  assert.ok(config.configFile.startsWith(config.root));
+  assert.ok(config.outDir.startsWith(config.root));
+  assert.notEqual(config.configFile, path.join(ROOT, 'config.json'));
+});
+
+test('config.example.json 与 DEFAULTS 保持一致', () => {
+  const example = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.example.json'), 'utf8'));
+  assert.deepEqual(example, DEFAULTS);
 });
 
 test('loadConfig: 空文件与纯空白文件都回落到默认值', () => {

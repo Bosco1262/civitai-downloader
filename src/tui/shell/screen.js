@@ -556,9 +556,15 @@ function baseScreenAcceptsText() {
  *
  * @param {object} screen
  */
+function screenTitle(screen) {
+  if (!screen || !screen.title) return '';
+  return typeof screen.title === 'function' ? String(screen.title()) : String(screen.title);
+}
+
 function setBase(screen) {
   baseScreen = screen || null;
-  crumbs = baseScreen && baseScreen.title ? [String(baseScreen.title)] : [];
+  const title = screenTitle(baseScreen);
+  crumbs = title ? [title] : [];
   refresh();
 }
 
@@ -1294,6 +1300,15 @@ function bodyLines(budget, override) {
  * 再追加一次同样的文字就会出现「主菜单 › 设置 › 设置」。
  */
 function renderCrumbs() {
+  // Keep the root crumb in sync with the base screen: its title may be translated per paint.
+  // 让根面包屑跟随常驻界面：标题可能随语言在每次绘制时变化。
+  if (baseScreen) {
+    const title = screenTitle(baseScreen);
+    if (title) {
+      if (crumbs.length) crumbs[0] = title;
+      else crumbs = [title];
+    }
+  }
   const parts = crumbs.filter(Boolean);
   const top = modalStack[modalStack.length - 1];
   const flow = top && top.spec.steps ? top.spec.steps : baseScreen && baseScreen.steps;

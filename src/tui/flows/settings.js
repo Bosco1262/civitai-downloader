@@ -24,6 +24,7 @@
  */
 
 const { saveConfig, DEFAULTS } = require('../../config');
+const { configureRuntime } = require('../../runtime');
 const { t } = require('../../i18n');
 const layout = require('../core/layout');
 const view = require('../adapters/view');
@@ -357,13 +358,20 @@ function rowValue(config, field) {
 function applyField(config, field, value) {
   const before = field.key === 'fileTypes' ? (config.fileTypes || []).join(',') : config[field.key];
   const after = field.key === 'fileTypes' ? value.join(',') : value;
-  const label = shortLabel(t(field.label));
   if (String(before) === String(after)) {
-    view.decision('tui.settings.unchanged', { label });
+    view.decision('tui.settings.unchanged', { label: shortLabel(t(field.label)) });
     return false;
   }
   saveConfig(config, { [field.key]: value });
   config[field.key] = value;
+  // Apply a language change at once: waiting until the flow returns leaves the current page and the
+  // persistent main menu painted in the old language.
+  //
+  // 语言修改立即生效：等流程返回再应用会让当前页和常驻主菜单仍停在旧语言。
+  if (field.key === 'language') configureRuntime(config);
+  // Resolve the label after the switch so the confirmation itself is in the new language.
+  // 在切换之后再解析标签，让确认提示本身也使用新语言。
+  const label = shortLabel(t(field.label));
   if (field.key === 'site') {
     // Changing the site is the one edit with a follow-up (a new Chrome profile + a new login), so it
     // takes over the toast instead of the generic "saved" line.
@@ -510,9 +518,19 @@ function settingsModel(rows, config) {
  * @returns {Promise<boolean>} whether anything was written to config.json
  */
 async function settingsPage(config) {
-  const rows = buildRows();
-  const selectable = rows.map((row, index) => (row.kind === 'section' ? -1 : index)).filter((index) => index >= 0);
+  let rows = buildRows();
+  let selectable = rows.map((row, index) => (row.kind === 'section' ? -1 : index)).filter((index) => index >= 0);
   const state = { cursor: selectable[0], written: false, windowStart: 0 };
+
+  // Labels and section titles are translated when the rows are built. A language change therefore
+  // needs a rebuild; otherwise the page keeps the wording (and the label widths) of the old language.
+  //
+  // 行里的标签与分组标题在构建时就已翻译。切换语言后必须重建，否则本页会继续使用旧语言及其列宽。
+  const rebuildRows = () => {
+    rows = buildRows();
+    selectable = rows.map((row, index) => (row.kind === 'section' ? -1 : index)).filter((index) => index >= 0);
+    if (!rows[state.cursor]) state.cursor = selectable[0];
+  };
 
   // The cursor follows the shared form policy: wrap at both ends, page by ten rows.
   // 光标遵循共享表单策略：两端循环，每页十行。
@@ -599,7 +617,13 @@ async function settingsPage(config) {
     if (!row || row.kind === 'section') return;
     if (row.kind === 'field') {
       const done = await editField(config, row.field);
-      if (done) state.written = true;
+      if (!done) return;
+      state.written = true;
+      if (row.field.key === 'language') {
+        rebuildRows();
+        screen.setCrumb(t('tui.app.menuSettings'));
+        screen.refresh();
+      }
       return;
     }
     if (row.action === 'login') return require('./login').loginFlow(config);
@@ -617,7 +641,14 @@ async function settingsPage(config) {
       return;
     }
     if (row.action === 'reset') {
-      if (await resetEverything(config)) state.written = true;
+      if (await resetEverything(config)) {
+        state.written = true;
+        // Restoring defaults may have changed the language as well.
+        // 恢复默认值也可能顺带改了语言。
+        rebuildRows();
+        screen.setCrumb(t('tui.app.menuSettings'));
+        screen.refresh();
+      }
       return;
     }
     return undefined;
@@ -738,6 +769,9 @@ async function resetEverything(config) {
   if (!confirm) return false;
   saveConfig(config, patch);
   Object.assign(config, patch);
+  // Restoring defaults can also change the language; apply it before reporting the result.
+  // 恢复默认值也可能改变语言；先应用语言，再报告结果。
+  if (Object.prototype.hasOwnProperty.call(patch, 'language')) configureRuntime(config);
   view.decision('tui.settings.resetDone', { count: changed.length });
   return true;
 }
