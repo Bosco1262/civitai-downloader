@@ -1038,6 +1038,7 @@ Examples:
   // run.js: download progress panel
   // run.js：下载进度面板
   'tui.run.downloading': 'Downloading',
+  'tui.run.stage': 'Running: {name}',
   'tui.run.counts': 'Done {ok} | Skipped {skipped} | Failed {failed} / {total} items',
   'tui.run.remaining': 'ETA {eta}',
   'tui.run.fileLabel': 'Current file',
@@ -1065,6 +1066,7 @@ Examples:
   'tui.download.metaExcluded': '{count} items failed metadata fetching and were excluded from the list',
   'tui.download.noDownloadable': 'No downloadable items',
   'tui.download.noDownloadableReason': 'No item produced a file list ({count} failed): {error}. Press L for the full log.',
+  'tui.download.noDownloadableWithReason': 'No downloadable items: {reason}',
   'tui.download.pinsApplied': 'Using the pinned version for {count} model(s)',
   'tui.download.doneCount': '{count} of them are already done (unchecked by default; pick force re-download later to fetch them again)',
   'tui.download.fileCount': '{count} files',
@@ -1113,9 +1115,9 @@ Examples:
   'tui.download.forceToggleDesc': '{count} of them are already done; Enter switches the behaviour',
   'tui.download.lowSpaceConfirm': 'Disk space may be insufficient. Start anyway?',
   'tui.download.invalidCollectionId': 'Enter a numeric ID or a collection URL',
-  'tui.download.collectionEmpty': 'The collection is empty',
   'tui.download.collectionEmptyHint':
     'No items came back: check the collection ID, and make sure you are logged in (Settings → Log in / check the session)',
+  'tui.download.collectionEmptyWithHint': 'The collection is empty: {hint}',
   'tui.download.collectionCount': 'Collection {collectionId}: {count} items',
   'tui.download.fetchMeta': 'Fetching file metadata ({count} items, concurrency {concurrency})…',
   'tui.download.metaFailed': '{count} items failed metadata fetching (retry later, or download the others first)',
@@ -1279,6 +1281,7 @@ Examples:
   'tui.login.modeLoginDesc': 'Open the browser to log in and save the session',
   'tui.login.modeCheck': 'Only check the current session',
   'tui.login.modeCheckDesc': 'Verify that the saved session is still valid without opening the login page',
+  'tui.login.checking': 'Checking the saved session…',
   'tui.login.startConfirm': 'A browser will open to log in to {site}; start now?',
   'tui.login.activeDownloadConfirm': 'A download is running. Opening the login window restarts the browser and may interrupt that task\'s metadata requests. Continue?',
   'tui.login.waitConfirm': 'Press y after finishing the login in the browser (n discards this save)',

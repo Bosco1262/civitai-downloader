@@ -26,6 +26,7 @@ const { runDownloadJob } = require('../../job');
 const { cancelCurrentDownload } = require('../../downloader');
 const { t } = require('../../i18n');
 const view = require('../adapters/view');
+const screen = require('../shell/screen');
 const tasks = require('./tasks');
 const { installRawKeys } = require('../core/keys');
 
@@ -405,6 +406,13 @@ async function runWithProgress(config, opts) {
     }) || (() => {});
   view.beginStatus(render);
 
+  // A foreground run blocks its page, so the status slot names what it is doing; the dashboard and
+  // the task view keep the detailed progress.
+  //
+  // 前台运行会占住页面，状态槽因此写出正在执行什么；详细进度仍在仪表盘与任务视图。
+  const previousStage = screen.getStage();
+  if (taskName) screen.setStage(t('tui.run.stage', { name: taskName }));
+
   try {
     return await runDownloadJob(
       config,
@@ -457,6 +465,7 @@ async function runWithProgress(config, opts) {
     clearInterval(timer);
     restoreKeys();
     view.setCancelHandler(null);
+    screen.setStage(previousStage);
     // Final numbers: the run is over, but the task view keeps showing it and the last timer tick may be
     // almost a second old.
     //

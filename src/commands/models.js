@@ -21,7 +21,16 @@
 
 const fs = require('fs');
 const path = require('path');
-const { log, formatBytes, resolveUserPath, writeJsonAtomic, ensureDir, uniqueName, moveFile } = require('../util');
+const {
+  log,
+  formatBytes,
+  resolveUserPath,
+  writeJsonAtomic,
+  ensureDir,
+  uniqueName,
+  moveFile,
+  removeEmptyDirs,
+} = require('../util');
 const {
   readLibrary,
   writeLibrary,
@@ -309,38 +318,6 @@ function exportModels(file, models) {
 // --forget
 // 删除记录
 // ---------------------------------------------------------------------------
-
-/**
- * Remove empty directories bottom-up (up to but not including stopDir).
- * Only directories that held recorded files are removed, and only when they are empty.
- *
- * 自下而上删除空目录（到 stopDir 为止，不动 stopDir 本身）。
- * 只删除「记录里的文件所在目录」，且仅在为空时删除。
- */
-function removeEmptyDirs(startDir, stopDir) {
-  const stop = path.resolve(stopDir);
-  let current = path.resolve(startDir);
-  let removed = 0;
-  for (;;) {
-    const rel = path.relative(stop, current);
-    if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) break;
-    let entries;
-    try {
-      entries = fs.readdirSync(current);
-    } catch (e) {
-      break;
-    }
-    if (entries.length) break;
-    try {
-      fs.rmdirSync(current);
-    } catch (e) {
-      break;
-    }
-    removed++;
-    current = path.dirname(current);
-  }
-  return removed;
-}
 
 /**
  * Delete the files of one version record (by the recorded file names only, then clean up empty directories).

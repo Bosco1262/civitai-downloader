@@ -186,7 +186,7 @@ function reportSections(report) {
               to: versionLabel(item.versionName, item.versionId),
             }),
             badge,
-          ].filter(Boolean).join(` ${color.muted(glyph.bullet)} `),
+          ].filter(Boolean).join(color.muted(glyph.separator)),
         };
       }),
     },
@@ -210,7 +210,7 @@ function reportSections(report) {
         label: item.name || item.modelId,
         detail: [versionLabel(item.versionName, item.versionId), accessLabel(item.access)]
           .filter(Boolean)
-          .join(` ${color.muted(glyph.bullet)} `),
+          .join(color.muted(glyph.separator)),
       })),
     },
     {
@@ -244,8 +244,17 @@ function reportSections(report) {
  * Report model of one check report (collection or single model).
  * 单个检查报告（收藏集或单模型）的报告模型。
  */
-function checkReportModel(config, report) {
+function checkReportModel(config, report, opts = {}) {
   const stats = report.stats || summarize(report);
+  // The caller supplies the navigation prefix (model page, collection page); the report appends its
+  // own title. Falling back to the entity root keeps standalone entries working.
+  //
+  // 调用方给出导航前缀（模型页、收藏集页），报告只追加自己的标题；
+  // 独立入口回退到实体根。
+  const prefix =
+    Array.isArray(opts.crumbPath) && opts.crumbPath.length
+      ? opts.crumbPath
+      : [report.kind === 'model' ? t('tui.app.menuModels') : t('tui.app.menuCollections')];
   const deep = !!report.deepChecked;
   const noSnapshot = report.kind !== 'model' && !report.hasSnapshot;
   const emptySnapshot =
@@ -305,7 +314,10 @@ function checkReportModel(config, report) {
         : t('tui.check.report.actionSnapshotEmpty'),
       description: t('tui.check.report.actionSnapshotDesc'),
       run: async () => {
-        await require('./download').downloadFlow(config, { collectionId: report.collectionId });
+        await require('./download').downloadFlow(config, {
+          collectionId: report.collectionId,
+          crumbPath: [...prefix, title],
+        });
         const { snapshot } = readCollection(config, report.collectionId, { allowCorrupt: true });
         return snapshot ? 'recheck' : undefined;
       },
@@ -315,7 +327,7 @@ function checkReportModel(config, report) {
     actions.push({
       label: t('tui.check.report.actionDownload'),
       description: t('tui.check.report.actionDownloadDesc', { count: changes.length }),
-      run: () => downloadReportChanges(config, [report]),
+      run: () => downloadReportChanges(config, [report], { crumbPath: [...prefix, title] }),
     });
   }
   actions.push({ label: t('tui.check.report.actionRecheck'), run: () => 'recheck' });
@@ -340,14 +352,11 @@ function checkReportModel(config, report) {
       : t('tui.check.report.titleCollection', { id: report.collectionId });
   return {
     title,
-    crumbPath: [
-      report.kind === 'model' ? t('tui.app.menuModels') : t('tui.app.menuCollections'),
-      title,
-    ],
+    crumbPath: [...prefix, title],
     summary,
     sections,
     actions,
-    rebuild: () => checkReportModel(config, report),
+    rebuild: () => checkReportModel(config, report, { crumbPath: prefix }),
   };
 }
 
@@ -355,7 +364,7 @@ function checkReportModel(config, report) {
  * Report model of several targets: one row per target, Enter opens its own report.
  * 多目标的报告模型：每个目标一行，Enter 进入它自己的报告。
  */
-function checkReportsModel(config, reports) {
+function checkReportsModel(config, reports, opts = {}) {
   const rows = reports.map((report) => {
     const stats = report.stats || summarize(report);
     return {
@@ -381,9 +390,12 @@ function checkReportsModel(config, reports) {
   const section = reports.every((report) => report.kind === 'model')
     ? t('tui.app.menuModels')
     : t('tui.app.menuCollections');
+  const prefix =
+    Array.isArray(opts.crumbPath) && opts.crumbPath.length ? opts.crumbPath : [section];
+  const listTitle = t('tui.check.report.listTitle');
   return {
-    title: t('tui.check.report.listTitle'),
-    crumbPath: [section, t('tui.check.report.listTitle')],
+    title: listTitle,
+    crumbPath: [...prefix, listTitle],
     summary: [
       { label: t('tui.check.report.factTargets'), value: String(reports.length) },
       { label: t('tui.check.report.factProblems'), value: String(problems) },
@@ -393,7 +405,11 @@ function checkReportsModel(config, reports) {
       {
         title: t('tui.check.report.sectionTargets'),
         rows,
-        onEnter: (report) => reportPage.showReportPage(config, checkReportModel(config, report)),
+        onEnter: (report) =>
+          reportPage.showReportPage(
+            config,
+            checkReportModel(config, report, { crumbPath: [...prefix, listTitle] })
+          ),
       },
     ],
     actions: [
@@ -402,7 +418,8 @@ function checkReportsModel(config, reports) {
             {
               label: t('tui.check.report.actionDownloadAll'),
               description: t('tui.check.report.actionDownloadAllDesc', { count: changes }),
-              run: () => downloadReportChanges(config, reports),
+              run: () =>
+                downloadReportChanges(config, reports, { crumbPath: [...prefix, listTitle] }),
             },
           ]
         : []),
@@ -418,20 +435,20 @@ function checkReportsModel(config, reports) {
  *
  * @returns {Promise<'recheck'|null>}
  */
-async function showCheckReports(config, reports) {
+async function showCheckReports(config, reports, opts = {}) {
   const list = (Array.isArray(reports) ? reports : []).filter(Boolean);
   if (!list.length) return null;
   if (list.length === 1) {
-    return reportPage.showReportPage(config, checkReportModel(config, list[0]));
+    return reportPage.showReportPage(config, checkReportModel(config, list[0], opts));
   }
-  return reportPage.showReportPage(config, checkReportsModel(config, list));
+  return reportPage.showReportPage(config, checkReportsModel(config, list, opts));
 }
 
 /**
  * Reset the records the report points at and hand the changed items to the shared download plan.
  * 重置报告涉及的状态记录，并把变化项交给共享下载计划。
  */
-async function downloadReportChanges(config, reports) {
+async function downloadReportChanges(config, reports, opts = {}) {
   const list = (Array.isArray(reports) ? reports : []).filter(Boolean);
   const parts = list
     .map((report) => ({ report, plan: changedItems(report) }))
@@ -470,6 +487,7 @@ async function downloadReportChanges(config, reports) {
     name,
     outDir: config.outDir,
     jobs: config.jobs,
+    crumbPath: [...(opts.crumbPath || []), t('tui.app.menuDownload')],
   });
 }
 
@@ -525,9 +543,13 @@ async function collectCollectionReports(config, ids, mode) {
  *
  * @param {string[]} ids collection ids to check
  */
-async function checkCollectionsFlow(config, ids) {
+async function checkCollectionsFlow(config, ids, opts = {}) {
   const targets = (Array.isArray(ids) ? ids : [ids]).map(String).filter(Boolean);
   if (!targets.length) return;
+  const crumbPath =
+    Array.isArray(opts.crumbPath) && opts.crumbPath.length
+      ? opts.crumbPath
+      : [t('tui.app.menuCollections')];
 
   const mode = await pages.promptMenu(
     t('tui.check.modeTitle'),
@@ -547,7 +569,7 @@ async function checkCollectionsFlow(config, ids) {
         const reports = await pages.withSpinner(t('tui.check.checking'), () =>
           collectCollectionReports(config, targets, mode)
         );
-        const outcome = await showCheckReports(config, reports);
+        const outcome = await showCheckReports(config, reports, { crumbPath });
         if (outcome !== 'recheck') return;
       }
     },
@@ -623,10 +645,10 @@ async function checkCollectionsFlow(config, ids) {
  * Standalone entry: ask which collections, then run the check.
  * 独立入口：先问要检查哪些收藏集，再执行检查。
  */
-async function checkFlow(config) {
+async function checkFlow(config, opts = {}) {
   const picked = await askCollectionId(config, t('tui.check.pickCollection'));
   if (!picked) return;
-  return checkCollectionsFlow(config, Array.isArray(picked) ? picked : [picked]);
+  return checkCollectionsFlow(config, Array.isArray(picked) ? picked : [picked], opts);
 }
 
 module.exports = {

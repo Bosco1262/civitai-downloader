@@ -474,8 +474,12 @@ async function downloadPlainFlow(config, opts = {}) {
     //
     // 空结果是唯一会被当成「点了没反应」的情形：明确说出来，
     // 并提醒枚举需要浏览器里已登录的会话。
-    view.notice(t('tui.download.collectionEmpty'), color.warning);
-    view.notice(t('tui.download.collectionEmptyHint'), color.muted);
+    view.notice(
+      t('tui.download.collectionEmptyWithHint', {
+        hint: t('tui.download.collectionEmptyHint'),
+      }),
+      color.warning
+    );
     return;
   }
   view.log(t('tui.download.collectionCount', { collectionId, count: items.length }));
@@ -485,13 +489,16 @@ async function downloadPlainFlow(config, opts = {}) {
   const pinnedCount = applyPinsToItems(readLibrary(config, { allowCorrupt: true }).entries, items);
   if (pinnedCount) view.log(t('tui.download.pinsApplied', { count: pinnedCount }));
 
-  view.log(t('tui.download.fetchMeta', { count: items.length, concurrency: config.metaConcurrency }));
-  const { plan, totalBytes, failed } = await buildPlan(config.site, items, config.userAgent, {
-    concurrency: config.metaConcurrency,
-    fileTypes: config.fileTypes,
-    primaryOnly: config.primaryOnly,
-    onLog: view.log,
-  });
+  const metaMessage = t('tui.download.fetchMeta', { count: items.length, concurrency: config.metaConcurrency });
+  view.log(metaMessage);
+  const { plan, totalBytes, failed } = await pages.withSpinner(metaMessage, () =>
+    buildPlan(config.site, items, config.userAgent, {
+      concurrency: config.metaConcurrency,
+      fileTypes: config.fileTypes,
+      primaryOnly: config.primaryOnly,
+      onLog: view.log,
+    })
+  );
   if (failed) view.log(t('tui.download.metaFailed', { count: failed }));
 
   const paths = dataPaths(config, collectionId);
@@ -756,16 +763,19 @@ async function runDownloadPlan(config, opts) {
   }
   const entries = opts.entries || readLibrary(config, { allowCorrupt: true }).entries;
   if (!selectablePlan(plan).length) {
-    view.notice(t('tui.download.noDownloadable'), color.warning);
     const failed = plan.filter((item) => item.error);
     if (failed.length) {
       view.notice(
-        t('tui.download.noDownloadableReason', {
-          count: failed.length,
-          error: view.truncate(String(failed[0].error), 120),
+        t('tui.download.noDownloadableWithReason', {
+          reason: t('tui.download.noDownloadableReason', {
+            count: failed.length,
+            error: view.truncate(String(failed[0].error), 120),
+          }),
         }),
         color.danger
       );
+    } else {
+      view.notice(t('tui.download.noDownloadable'), color.warning);
     }
     return false;
   }
@@ -1413,8 +1423,12 @@ async function resolveCollectionPlan(config, collectionId) {
     fetchItems(config, collectionId)
   );
   if (!items.length) {
-    view.notice(t('tui.download.collectionEmpty'), color.warning);
-    view.notice(t('tui.download.collectionEmptyHint'), color.muted);
+    view.notice(
+      t('tui.download.collectionEmptyWithHint', {
+        hint: t('tui.download.collectionEmptyHint'),
+      }),
+      color.warning
+    );
     return null;
   }
 
@@ -1437,14 +1451,17 @@ async function resolveCollectionPlan(config, collectionId) {
    * 上面的快照记录收藏集自己的版本；下面的下载计划改为跟随模型：固定版本优先，否则用最新版本。
    * 每个成员的详情同时带回它的所有版本，行徽标因此完整，且不需要额外请求。
    */
-  view.log(t('tui.download.fetchMeta', { count: items.length, concurrency: config.metaConcurrency }));
-  const { plan, totalBytes, failed } = await buildPlanFromModels(config.site, items, config.userAgent, {
-    concurrency: config.metaConcurrency,
-    fileTypes: config.fileTypes,
-    primaryOnly: config.primaryOnly,
-    entries: readLibrary(config, { allowCorrupt: true }).entries,
-    onLog: view.log,
-  });
+  const metaMessage = t('tui.download.fetchMeta', { count: items.length, concurrency: config.metaConcurrency });
+  view.log(metaMessage);
+  const { plan, totalBytes, failed } = await pages.withSpinner(metaMessage, () =>
+    buildPlanFromModels(config.site, items, config.userAgent, {
+      concurrency: config.metaConcurrency,
+      fileTypes: config.fileTypes,
+      primaryOnly: config.primaryOnly,
+      entries: readLibrary(config, { allowCorrupt: true }).entries,
+      onLog: view.log,
+    })
+  );
   if (failed) view.log(t('tui.download.metaFailed', { count: failed }));
 
   const paths = dataPaths(config, collectionId);
@@ -1477,12 +1494,16 @@ async function downloadCollectionShell(config, opts = {}) {
     }
     collectionId = parsed;
   }
+  const crumbPath =
+    Array.isArray(opts.crumbPath) && opts.crumbPath.length
+      ? opts.crumbPath
+      : [t('tui.app.menuDownload'), t('tui.app.downloadCollection')];
   if (!collectionId) {
     return runDownloadWorkspace(config, {
       plan: [],
       collectionId: `collection-${Date.now()}`,
       name: t('tui.app.downloadCollection'),
-      crumbPath: [t('tui.app.menuDownload'), t('tui.app.downloadCollection')],
+      crumbPath,
       inputLabel: t('tui.download.collectionIdPrompt'),
       resultLabel: t('tui.workspace.collectionTitle'),
       emptyText: t('tui.workspace.collectionEmptyPrompt'),
@@ -1502,7 +1523,7 @@ async function downloadCollectionShell(config, opts = {}) {
     plan,
     collectionId,
     name: t('tui.check.collectionLabel', { id: collectionId }),
-    crumbPath: [t('tui.app.menuDownload'), t('tui.app.downloadCollection')],
+    crumbPath,
     outDir: resolveOutDir(config, config.outDir),
     jobs: config.jobs,
   });
@@ -1613,7 +1634,7 @@ async function workspaceConfirmPage(config, data) {
           label: workspaceRowLabel(row),
           detail: [formatBytes(Number(row.totalBytes) || 0), row.type, row.modelId ? `#${row.modelId}` : '']
             .filter(Boolean)
-            .join(` ${glyph.bullet} `),
+            .join(view.separator()),
           raw: row,
         })),
         emptyText: t('tui.workspace.empty'),
@@ -1627,7 +1648,7 @@ async function workspaceConfirmPage(config, data) {
           label: workspaceRowLabel(row),
           detail: [formatBytes(Number(row.totalBytes) || 0), row.modelId ? `#${row.modelId}` : '']
             .filter(Boolean)
-            .join(` ${glyph.bullet} `),
+            .join(view.separator()),
           color: color.danger,
           raw: row,
         })),
@@ -1847,7 +1868,7 @@ function groupPlanRows(plan, entries = {}) {
       formatBytes(group.totalBytes),
     ]
       .filter(Boolean)
-      .join(` ${glyph.bullet} `);
+      .join(view.separator());
   }
   return [...groups.values()];
 }

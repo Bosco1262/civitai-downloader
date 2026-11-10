@@ -259,10 +259,16 @@ async function showReportPage(config, model) {
     });
     if (!answer) return null;
 
-    const outcome =
+    // The page prompt settled before the action runs, so its path must be re-applied for the action's
+    // own prompts (menus, confirms, nested pages) to inherit it.
+    //
+    // 动作执行前页面提问已经结束，因此这里重新应用页面路径，
+    // 让动作里的菜单、确认框与嵌套页面继续继承它。
+    const outcome = await screen.withCrumbs(current.crumbPath, () =>
       answer.kind === 'action'
-        ? await answer.action.run({ config, model: current })
-        : await answer.section.onEnter(answer.row.raw, { config, model: current });
+        ? answer.action.run({ config, model: current })
+        : answer.section.onEnter(answer.row.raw, { config, model: current })
+    );
     // Only the page's own signals control the flow: `BACK` closes it, another string is handed to
     // the caller (check → recheck, verify → deep). Anything else — a nested flow's true/false/null,
     // or no value at all — means "stay on this page".

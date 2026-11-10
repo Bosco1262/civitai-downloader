@@ -1,13 +1,14 @@
 'use strict';
 
 /**
- * Delete downloaded versions: remove their files first, then their library records.
+ * Delete downloaded versions: remove their files first, then their library records, and prune the
+ * empty directories they leave behind up to the download root.
  *
  * Shared by the download workspace and the model-management desired-state selector. Files still
  * referenced by a retained version are kept; pinned versions are never deleted.
  *
  *
- * 删除已下载版本：先删文件，再删模型库记录。
+ * 删除已下载版本：先删文件，再删模型库记录，并清理留下的空目录（到下载根为止）。
  *
  * 下载工作台与模型管理的期望状态选择器共用。仍被保留版本引用的文件不删除；
  * 固定版本永远不会被删除。
@@ -15,6 +16,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { removeEmptyDirs } = require('../../util');
 const { readLibrary, getVersion } = require('../../storage');
 const { markForRedownload } = require('../../updater');
 
@@ -68,6 +70,12 @@ function deleteVersions(config, rows) {
       }
     }
     markForRedownload(config, [{ modelId: target.modelId, versionId: target.versionId }]);
+    // The version's files are gone, so prune its directory (and empty layout parents) up to the
+    // download root: deleting the last version must not leave an empty model folder behind.
+    //
+    // 该版本的文件已删除，清掉它的目录（以及空的布局父目录），到下载根为止：
+    // 删掉最后一个版本不应该留下空的模型目录。
+    removeEmptyDirs(dir, version.outDir || config.outDir);
     count++;
   }
   return count;

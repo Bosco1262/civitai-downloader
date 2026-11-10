@@ -32,6 +32,7 @@ const {
   checkUpdates,
 } = require('../src/updater');
 const { readLibrary, writeLibrary, upsertVersion, getVersion, versionIds } = require('../src/storage');
+const { deleteVersions } = require('../src/tui/core/versionDelete');
 const { validateConfig, DEFAULTS } = require('../src/config');
 
 test('applyPinsToItems: 自动构建的收藏集条目改用固定版本', () => {
@@ -596,6 +597,60 @@ test('markForRedownload: 传字符串表示删除整个模型', () => {
   assert.equal(markForRedownload(config, ['901']), 1);
   const after = readLibrary(config).entries;
   assert.equal(after['901'], undefined);
+});
+
+test('deleteVersions: 删掉最后一个版本时同时清掉空的模型目录', () => {
+  const config = makeConfig();
+  const dirName = path.join('Lora', 'M');
+  const dir = path.join(config.outDir, dirName);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'model.safetensors'), 'x');
+
+  const entries = {};
+  upsertVersion(entries, 902, {
+    name: 'M',
+    versionId: 1,
+    outDir: config.outDir,
+    dirName,
+    files: [{ name: 'model.safetensors', bytes: 1 }],
+  });
+  writeLibrary(config, entries);
+
+  assert.equal(deleteVersions(config, [{ modelId: '902', versionId: 1 }]), 1);
+  assert.equal(readLibrary(config).entries['902'], undefined, '模型条目随最后一个版本一起移除');
+  assert.equal(fs.existsSync(dir), false, '空的模型目录被清理');
+  assert.equal(fs.existsSync(config.outDir), true, '下载根目录保留');
+});
+
+test('deleteVersions: 目录仍被保留版本占用时不删目录', () => {
+  const config = makeConfig();
+  const dirName = path.join('Lora', 'M2');
+  const dir = path.join(config.outDir, dirName);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'v1.safetensors'), '1');
+  fs.writeFileSync(path.join(dir, 'v2.safetensors'), '2');
+
+  const entries = {};
+  upsertVersion(entries, 903, {
+    name: 'M2',
+    versionId: 1,
+    outDir: config.outDir,
+    dirName,
+    files: [{ name: 'v1.safetensors', bytes: 1 }],
+  });
+  upsertVersion(entries, 903, {
+    name: 'M2',
+    versionId: 2,
+    outDir: config.outDir,
+    dirName,
+    files: [{ name: 'v2.safetensors', bytes: 1 }],
+  });
+  writeLibrary(config, entries);
+
+  assert.equal(deleteVersions(config, [{ modelId: '903', versionId: 1 }]), 1);
+  assert.equal(fs.existsSync(path.join(dir, 'v1.safetensors')), false, '被删版本的文件没了');
+  assert.equal(fs.existsSync(path.join(dir, 'v2.safetensors')), true, '保留版本的文件还在');
+  assert.equal(fs.existsSync(dir), true, '目录仍被保留版本占用');
 });
 
 // ---------------------------------------------------------------------------

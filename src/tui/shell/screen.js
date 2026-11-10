@@ -66,10 +66,13 @@ const {
  */
 const HEADER_ROWS = 2;
 /**
- * One blank row always separates the body/status rail from the footer.
- * 正文/状态槽与页脚之间固定保留一行空行。
+ * The tail is always two rows: one status slot directly above the footer. The slot is blank when
+ * there is nothing to report, so a notice never changes how many rows the body gets.
+ *
+ * 尾部固定两行：状态槽紧贴页脚上方；没有内容时它就是空行，
+ * 因此提示的出现或消失不会改变正文分到的行数。
  */
-const FOOTER_GAP_ROWS = 1;
+const STATUS_SLOT_ROWS = 1;
 /**
  * Rows the info panel needs besides its content lines: two borders plus the blank separator.
  * 信息面板除内容行之外需要的行数：上下边框加一行分隔空行。
@@ -585,6 +588,79 @@ function setCrumb(title) {
 }
 
 /**
+ * Normalize one crumb path: strings only, empty segments dropped.
+ * 归一化一段面包屑路径：只保留非空字符串。
+ *
+ * @param {string[]} path
+ * @returns {string[]}
+ */
+function crumbParts(path) {
+  return (Array.isArray(path) ? path : [])
+    .map((part) => String(part === undefined || part === null ? '' : part))
+    .filter(Boolean);
+}
+
+/**
+ * Push a crumb path, merging the part that already sits at the end of the stack.
+ * Returns how many segments were actually added, so a caller can pop exactly those.
+ *
+ * 压入一段面包屑路径，与栈尾已有的相同开头合并；
+ * 返回实际新增的段数，调用方据此精确弹栈。
+ *
+ * @param {string[]} path
+ * @returns {number}
+ */
+function pushCrumbs(path) {
+  const parts = crumbParts(path);
+  if (!parts.length) return 0;
+  let overlap = 0;
+  for (let k = Math.min(crumbs.length, parts.length); k > 0; k -= 1) {
+    const tail = crumbs.slice(crumbs.length - k).join('\u0000');
+    const head = parts.slice(0, k).join('\u0000');
+    if (tail === head) {
+      overlap = k;
+      break;
+    }
+  }
+  const added = parts.slice(overlap);
+  crumbs.push(...added);
+  return added.length;
+}
+
+/**
+ * Keep a crumb path for the lifetime of `fn` (sync or async), then restore the previous stack.
+ * Used when a page closes before its actions run: the child prompts still see the page's path.
+ *
+ * 在 `fn` 执行期间保留一段面包屑路径，结束后恢复原栈。
+ * 用于「页面先关闭、动作后执行」的场景：子提问仍然能看到页面的路径。
+ *
+ * @template T
+ * @param {string[]} path
+ * @param {() => T|Promise<T>} fn
+ * @returns {Promise<T>}
+ */
+async function withCrumbs(path, fn) {
+  const added = pushCrumbs(path);
+  refresh();
+  try {
+    return await fn();
+  } finally {
+    if (added) crumbs.splice(crumbs.length - added, added);
+    refresh();
+  }
+}
+
+/**
+ * Read-only copy of the current breadcrumb stack (tests and diagnostics).
+ * 当前面包屑栈的只读副本（测试与诊断使用）。
+ *
+ * @returns {string[]}
+ */
+function getCrumbs() {
+  return crumbs.slice();
+}
+
+/**
  * Provide the "already configured" facts shown in the info panel. The provider runs on every paint,
  * so a login or a settings save is reflected immediately.
  *
@@ -621,10 +697,16 @@ function prompt(spec) {
       spec.crumb === false
         ? []
         : Array.isArray(spec.crumbPath)
-          ? spec.crumbPath.map((part) => String(part || '')).filter(Boolean)
+          ? crumbParts(spec.crumbPath)
           : spec.title
             ? [String(spec.title)]
             : [];
+    // Only the segments this prompt really added may be popped on settle: an absolute path may be
+    // partially shared with the parent, and popping its full length would remove the parent too.
+    //
+    // 只弹出这个提问真正新增的段：绝对路径可能与父级共享前缀，
+    // 按完整长度弹栈会把父级路径一起删掉。
+    const addedCrumbs = pushCrumbs(crumbPath);
     const entry = {
       spec,
       state: spec.initialState ? { ...spec.initialState } : {},
@@ -633,7 +715,7 @@ function prompt(spec) {
         settled = true;
         const index = modalStack.indexOf(entry);
         if (index >= 0) modalStack.splice(index, 1);
-        if (crumbPath.length) crumbs.splice(Math.max(0, crumbs.length - crumbPath.length), crumbPath.length);
+        if (addedCrumbs) crumbs.splice(crumbs.length - addedCrumbs, addedCrumbs);
         resolve(value === undefined ? null : value);
         refresh();
       },
@@ -661,7 +743,6 @@ function prompt(spec) {
         return typeof spec.hints === 'function' ? spec.hints(entry.state) : [];
       },
     };
-    if (crumbPath.length) crumbs.push(...crumbPath);
     modalStack.push(entry);
     refresh();
   });
@@ -979,8 +1060,8 @@ function render() {
 }
 
 /**
- * Compose the whole frame: header, info panel, body (or a system view) and footer hints.
- * 组装整个框架：页眉、信息面板、主体（或系统视图）与页脚提示。
+ * Compose the whole frame: header, info panel, body (or a system view), status slot and footer.
+ * 组装整个框架：页眉、信息面板、主体（或系统视图）、状态槽与页脚。
  */
 function frame() {
   measure();
@@ -989,7 +1070,7 @@ function frame() {
   lines.push('');
 
   const status = contextStatus();
-  const { info, bodyBudget } = frameBudget(!!status);
+  const { info, bodyBudget } = frameBudget();
   lines.push(...info.lines, '');
 
   // The system views are pages like any other: same heading, same rule, same footer treatment.
@@ -999,20 +1080,52 @@ function frame() {
   else lines.push(...bodyLines(bodyBudget));
 
   const hints = footerHints();
-  // Pad above the status rail, not below it: the status stays pinned directly above the footer gap.
-  // 空行补在状态槽上方而不是下方，状态槽因此始终固定在页脚空行之上。
-  const tailRows = 1 + hints.length + (status ? 1 : 0);
-  while (lines.length + tailRows < dims.rows) lines.push('');
-  if (status) {
-    const paint = typeof status.color === 'function' ? status.color : colors.dim;
-    lines.push(clip(indent(paint(` ${layout.glyphs().notice} ${status.text}`))));
-  }
-  // The footer always has one blank row above it. Status feedback therefore never touches the key hints.
-  // 页脚上方永远留一行空行，状态反馈因此不会贴着按键说明。
-  lines.push('');
-  lines.push(...hints.map((line) => clip(indent(colors.dim(line)))));
+  // The status slot is always present, directly above the footer: a notice appearing or expiring
+  // must not change the body's row count, or the list would jump under the cursor.
+  //
+  // 状态槽始终存在、紧贴页脚上方：提示出现或消失不能改变正文行数，
+  // 否则列表会在光标下跳动。
+  const tail = [
+    status ? statusLine(status) : '',
+    ...hints.map((line) => clip(indent(colors.dim(line)))),
+  ];
+  while (lines.length + tail.length < dims.rows) lines.push('');
+  lines.push(...tail);
 
   return lines.map((line) => `${clip(line)}${layout.ANSI_ERASE_LINE_END}`);
+}
+
+/**
+ * Glyph of one status row: success, warning, error, or a neutral dot for information/progress.
+ * 一行状态的图标：成功、警告、错误，以及信息/进度用的中性圆点。
+ *
+ * @param {{color?:Function}} status
+ * @returns {string}
+ */
+function statusGlyph(status) {
+  const glyphs = layout.glyphs();
+  if (status.color === colors.red) return glyphs.statusError;
+  if (status.color === colors.yellow) return glyphs.statusWarn;
+  if (status.color === colors.green) return glyphs.statusOk;
+  return glyphs.statusInfo;
+}
+
+/**
+ * One rendered status row: the severity glyph plus the text, painted and clipped to the frame.
+ * Line breaks and tabs are flattened so a multi-line error can never break the single-row frame.
+ *
+ * 渲染一行状态：严重程度图标加文本，按框架宽度着色并裁剪。
+ * 换行与制表符会被压平，多行错误因此不会破坏单行框架。
+ *
+ * @param {{text:string, color?:Function}} status
+ * @returns {string}
+ */
+function statusLine(status) {
+  const text = String(status.text === undefined || status.text === null ? '' : status.text)
+    .replace(/[\r\n\t]+/g, ' ')
+    .trim();
+  const paint = typeof status.color === 'function' ? status.color : colors.dim;
+  return clip(indent(paint(`${statusGlyph(status)} ${text}`)));
 }
 
 /**
@@ -1449,15 +1562,12 @@ function box(title, content, width) {
 }
 
 /**
- * Rows left for the body after the header, the info panel and the footer.
- * 扣掉页眉、信息面板与页脚之后留给主体的行数。
+ * Rows left for the body after the header, the info panel, the status slot and the footer.
+ * 扣掉页眉、信息面板、状态槽与页脚之后留给主体的行数。
  */
-function frameBudget(statusActive = false) {
+function frameBudget() {
   const hints = footerHints().length;
-  const budget = Math.max(
-    6,
-    dims.rows - HEADER_ROWS - hints - FOOTER_GAP_ROWS - (statusActive ? 1 : 0)
-  );
+  const budget = Math.max(6, dims.rows - HEADER_ROWS - hints - STATUS_SLOT_ROWS);
   const info = compactInfoMode() ? compactInfoPanel() : infoPanel(budget);
   return { budget, info, bodyBudget: Math.max(3, budget - info.lines.length - 1) };
 }
@@ -1482,7 +1592,7 @@ function bodySplit(bodyBudget) {
  */
 function bodyGeometry() {
   measure();
-  const split = bodySplit(frameBudget(!!contextStatus()).bodyBudget);
+  const split = bodySplit(frameBudget().bodyBudget);
   return {
     columns: dims.columns,
     rows: dims.rows,
@@ -1560,6 +1670,9 @@ module.exports = {
   setBase,
   getBase,
   setCrumb,
+  pushCrumbs,
+  withCrumbs,
+  getCrumbs,
   setStage,
   getStage,
   setInfo,

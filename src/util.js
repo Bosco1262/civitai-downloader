@@ -399,6 +399,39 @@ function ensureDir(dir) {
 }
 
 /**
+ * Remove empty directories bottom-up, stopping before `stopDir` (which is never removed).
+ * 自下而上删除空目录，到 `stopDir` 为止（`stopDir` 本身不删除）。
+ *
+ * @param {string} startDir
+ * @param {string} stopDir
+ * @returns {number} number of directories removed
+ */
+function removeEmptyDirs(startDir, stopDir) {
+  const stop = path.resolve(stopDir);
+  let current = path.resolve(startDir);
+  let removed = 0;
+  for (;;) {
+    const rel = path.relative(stop, current);
+    if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) break;
+    let entries;
+    try {
+      entries = fs.readdirSync(current);
+    } catch (e) {
+      break;
+    }
+    if (entries.length) break;
+    try {
+      fs.rmdirSync(current);
+    } catch (e) {
+      break;
+    }
+    removed++;
+    current = path.dirname(current);
+  }
+  return removed;
+}
+
+/**
  * Back the file up and return the backup path (null when the file is missing or the copy failed).
  * 备份文件，返回备份路径（不存在或失败返回 null）。
  */
@@ -703,6 +736,7 @@ module.exports = {
   writeJsonAtomic,
   backupFile,
   ensureDir,
+  removeEmptyDirs,
   // Arguments
   // 参数
   parseArgs,

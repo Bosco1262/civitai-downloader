@@ -75,7 +75,7 @@ async function showVersionSelectionPage(opts = {}) {
         const box = view.checkbox(state.selected.has(id));
         const label = view.padTo(String(row.name || id), nameWidth);
         const access = accessLabel(row.access);
-        const rest = [describe(row), access].filter(Boolean).join(` ${layout.glyphs().bullet} `);
+        const rest = [describe(row), access].filter(Boolean).join(layout.glyphs().separator);
         const lock = row.pinned ? ` ${color.warning(t('tui.versionSelection.pinned'))}` : '';
         lines.push(
           `${marker} ${box} ${active ? color.emphasis(label) : label}  ${color.muted(

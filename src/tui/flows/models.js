@@ -670,7 +670,10 @@ async function downloadModelsShell(config, opts = {}) {
     plan: rows,
     collectionId: `refs-${Date.now()}`,
     name: t('tui.app.downloadModel'),
-    crumbPath: [t('tui.app.menuDownload'), t('tui.app.downloadModel')],
+    crumbPath:
+      Array.isArray(opts.crumbPath) && opts.crumbPath.length
+        ? opts.crumbPath
+        : [t('tui.app.menuDownload'), t('tui.app.downloadModel')],
     inputLabel: t('tui.workspace.modelInputLabel'),
     resultLabel: t('tui.workspace.modelTitle'),
     emptyText: t('tui.workspace.modelEmpty'),
@@ -851,17 +854,17 @@ function modelDetailReport(config, modelId, opts = {}) {
       {
         label: t('tui.models.actionCheck'),
         description: t('tui.models.actionCheckDesc'),
-        run: () => checkFlow(config, { modelIds: [String(modelId)] }),
+        run: () => checkFlow(config, { modelIds: [String(modelId)], crumbPath }),
       },
       {
         label: t('tui.app.menuVerify'),
         description: t('tui.app.menuVerifyDesc'),
-        run: () => verifyFlow(config, { modelIds: [String(modelId)] }),
+        run: () => verifyFlow(config, { modelIds: [String(modelId)], crumbPath }),
       },
       {
         label: t('tui.models.actionDownload'),
         description: t('tui.models.actionDownloadDesc'),
-        run: () => downloadVersions(config, modelId),
+        run: () => downloadVersions(config, modelId, { crumbPath }),
       },
       {
         label: pinnedId ? t('tui.manage.unpinAction') : t('tui.manage.pinAction'),
@@ -977,7 +980,7 @@ async function versionActions(config, modelId, versionRec) {
  * 模型页只列出已经落盘的版本；要增加版本时，这里把线上版本列表作为多选选择器打开，
  * 再把勾选的每个版本交给同一份计划：每个版本一行，一次下载。
  */
-async function downloadVersions(config, modelId) {
+async function downloadVersions(config, modelId, opts = {}) {
   const name = modelLabel(config, modelId);
   let detail = null;
   try {
@@ -1008,7 +1011,12 @@ async function downloadVersions(config, modelId) {
     label: (row) => row.name,
   });
   if (!chosen || !chosen.length) return;
-  return downloadFlow(config, { refs: chosen.map((row) => `version:${row.modelId}`) });
+  return downloadFlow(config, {
+    refs: chosen.map((row) => `version:${row.modelId}`),
+    crumbPath: Array.isArray(opts.crumbPath) && opts.crumbPath.length
+      ? [...opts.crumbPath, t('tui.app.menuDownload')]
+      : undefined,
+  });
 }
 
 /**
@@ -1297,7 +1305,12 @@ async function checkFlow(config, opts = {}) {
         const reports = await pages.withSpinner(t('tui.check.checking'), () =>
           check.collectModelReports(config, targets, mode)
         );
-        const outcome = await check.showCheckReports(config, reports);
+        const outcome = await check.showCheckReports(config, reports, {
+          crumbPath:
+            Array.isArray(opts.crumbPath) && opts.crumbPath.length
+              ? opts.crumbPath
+              : [t('tui.app.menuModels')],
+        });
         if (outcome !== 'recheck') return;
       }
     },
@@ -1399,7 +1412,7 @@ async function runVerification(config, targets, deep) {
  * Report model of a verification result: summary facts, the broken files and the repair actions.
  * 校验结果的报告模型：摘要事实、异常文件与修复操作。
  */
-function verifyReportModel(config, result, deep) {
+function verifyReportModel(config, result, deep, opts = {}) {
   const summary = [
     { label: t('tui.verify.report.factScope'), value: result.label },
     { label: t('tui.verify.report.factModels'), value: String(result.total) },
@@ -1449,9 +1462,13 @@ function verifyReportModel(config, result, deep) {
   }
   actions.push({ label: t('tui.manage.back'), run: () => reportPage.BACK });
 
+  const prefix =
+    Array.isArray(opts.crumbPath) && opts.crumbPath.length
+      ? opts.crumbPath
+      : [t('tui.app.menuModels')];
   return {
     title: t('tui.verify.report.title'),
-    crumbPath: [t('tui.app.menuModels'), t('tui.verify.report.title')],
+    crumbPath: [...prefix, t('tui.verify.report.title')],
     summary,
     sections: [
       {
@@ -1525,7 +1542,10 @@ async function verifyReportFlow(config, opts) {
   let deep = !!opts.deep;
   for (;;) {
     const result = await runVerification(config, opts.targets, deep);
-    const outcome = await reportPage.showReportPage(config, verifyReportModel(config, result, deep));
+    const outcome = await reportPage.showReportPage(
+      config,
+      verifyReportModel(config, result, deep, { crumbPath: opts.crumbPath })
+    );
     if (outcome === 'recheck') continue;
     if (outcome === 'deep') {
       deep = true;
@@ -1572,7 +1592,7 @@ async function verifyFlow(config, opts = {}) {
   // Inside the shell the result is a page; without it the report is printed line by line.
   // 外壳接管时结果是一页；没有外壳时逐行打印。
   return present({
-    shell: () => verifyReportFlow(config, { targets, deep }),
+    shell: () => verifyReportFlow(config, { targets, deep, crumbPath: opts.crumbPath }),
     plain: async () => {
       // Verification hashes every file, which can take minutes: report each model as it starts and let
       // the heartbeat keep the screen alive in between.

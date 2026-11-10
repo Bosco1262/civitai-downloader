@@ -740,12 +740,13 @@ npm 用法（传参需要 -- 分隔）:
   // ---------------------------------------------------------------------------
   // TUI (terminal UI, src/tui/**)
   // Cursor marks (▸), progress-bar glyphs (█░), checkboxes ([×]/[ ]), tag brackets
-  // (e.g. [ OK ]) and separators (· / ｜ / spaces) stay in code; only user-readable
-  // text lives here.
+  // (e.g. [ OK ]) and separators stay in code; only user-readable text lives here.
+  // Fields are separated by ` | `, sub-items of one field by ` · ` (see core/layout.js).
   //
   // TUI（终端交互界面，src/tui/**）
   // 注意：光标符号（▸）、进度条字符（█░）、勾选框（[×]/[ ]）、标签括号（[ OK ] 等）
-  //       以及缩进/分隔符（· / ｜ / 空格）保留在代码里，文案表只放用户可读文字。
+  //       以及分隔符保留在代码里，文案表只放用户可读文字。
+  // 字段之间用 ` | `，同一字段内的子项用 ` · `（见 core/layout.js）。
   // ---------------------------------------------------------------------------
 
   // app.js: fixed header / info panel / main menu
@@ -1033,6 +1034,7 @@ npm 用法（传参需要 -- 分隔）:
   // run.js: download progress panel
   // run.js：下载进度面板
   'tui.run.downloading': '下载中',
+  'tui.run.stage': '正在执行：{name}',
   'tui.run.counts': '完成 {ok} | 跳过 {skipped} | 失败 {failed} / 共 {total} 项',
   'tui.run.remaining': '剩余 {eta}',
   'tui.run.fileLabel': '当前文件',
@@ -1060,6 +1062,7 @@ npm 用法（传参需要 -- 分隔）:
   'tui.download.metaExcluded': '有 {count} 项元数据获取失败，已从列表排除',
   'tui.download.noDownloadable': '没有任何可下载项',
   'tui.download.noDownloadableReason': '所有条目都没能取到文件信息（{count} 项失败）：{error}。按 L 查看完整日志。',
+  'tui.download.noDownloadableWithReason': '没有任何可下载项：{reason}',
   'tui.download.pinsApplied': '已为 {count} 个模型改用固定版本',
   'tui.download.doneCount': '其中 {count} 项已完成（默认不勾选；如需重下可在后面选择强制重下）',
   'tui.download.fileCount': '{count} 个文件',
@@ -1108,8 +1111,8 @@ npm 用法（传参需要 -- 分隔）:
   'tui.download.forceToggleDesc': '其中 {count} 项已完成，Enter切换处理方式',
   'tui.download.lowSpaceConfirm': '磁盘空间可能不足，仍然开始下载？',
   'tui.download.invalidCollectionId': '请输入数字 ID 或收藏集 URL',
-  'tui.download.collectionEmpty': '收藏集为空',
   'tui.download.collectionEmptyHint': '没读到任何条目：确认收藏集 ID 正确，并且已经登录（设置 → 登录 / 校验登录态）',
+  'tui.download.collectionEmptyWithHint': '收藏集为空：{hint}',
   'tui.download.collectionCount': '收藏集 {collectionId} 共 {count} 项',
   'tui.download.fetchMeta': '获取文件元数据（{count} 项，并发 {concurrency}）…',
   'tui.download.metaFailed': '有 {count} 项元数据获取失败（可稍后重跑，或先下载其它项）',
@@ -1273,6 +1276,7 @@ npm 用法（传参需要 -- 分隔）:
   'tui.login.modeLoginDesc': '打开浏览器完成登录并保存会话',
   'tui.login.modeCheck': '只校验当前登录态',
   'tui.login.modeCheckDesc': '不打开登录页，验证保存的会话是否仍有效',
+  'tui.login.checking': '正在校验登录态…',
   'tui.login.startConfirm': '将打开浏览器登录 {site}，现在开始？',
   'tui.login.activeDownloadConfirm': '有下载任务正在进行。打开登录窗口会重启浏览器，可能中断该任务的元数据请求。继续吗？',
   'tui.login.waitConfirm': '浏览器中完成登录后按 y 继续（n 放弃本次保存）',

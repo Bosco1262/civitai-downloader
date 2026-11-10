@@ -376,6 +376,36 @@ test('screen: 固定页眉 / 信息面板 / 页脚一直显示，Ctrl+T 切换�
   });
 });
 
+test('screen: 尾部固定两行，提示出现不改变正文行数', async () => {
+  await withFakeTerminal(async ({ frame, settle }) => {
+    assert.equal(screen.start({ onQuit: () => {} }), true);
+    screen.setInfo(() => [{ label: '站点', value: 'https://civitai.com' }]);
+    let rows = 0;
+    screen.setBase({
+      title: i18n.t('tui.app.menuTitle'),
+      render: (ctx) => {
+        rows = ctx.rows;
+        return ['▸ 第一项', '  第二项'];
+      },
+      hints: () => [i18n.t('tui.hint.main')],
+      onKey: () => true,
+    });
+    screen.render();
+    const bodyRows = rows;
+    const plain = frame();
+    assert.equal(plain[plain.length - 2].trim(), '', '没有状态时状态槽就是空行');
+
+    screen.notice('已删除 3 个版本');
+    await settle();
+    screen.render();
+    const withStatus = frame();
+    assert.equal(rows, bodyRows, '提示出现不改变正文行数');
+    assert.equal(withStatus.length, plain.length, '帧总行数不变');
+    assert.ok(withStatus[withStatus.length - 2].includes('已删除 3 个版本'), '状态槽紧贴页脚上方');
+    assert.equal(withStatus[withStatus.length - 1].trim(), i18n.t('tui.hint.main'));
+  });
+});
+
 test('screen: 进入下载流程不会把菜单标题显示成常驻成功状态', async (t) => {
   const config = testConfig(t);
   await withFakeTerminal(async ({ frame, key, settle }) => {
@@ -397,7 +427,7 @@ test('screen: 进入下载流程不会把菜单标题显示成常驻成功状态
   });
 });
 
-test('screen: 操作提示固定在页脚上方，页脚前始终保留空行', async () => {
+test('screen: 操作提示固定在页脚正上方，尾部恒为两行', async () => {
   await withFakeTerminal(async ({ frame, settle }) => {
     assert.equal(screen.start({ onQuit: () => {} }), true);
     screen.setBase({
@@ -409,8 +439,7 @@ test('screen: 操作提示固定在页脚上方，页脚前始终保留空行', 
     await settle();
     screen.render();
     const lines = frame();
-    assert.ok(lines[lines.length - 3].includes('已保存：并发数 = 4'), lines.slice(-4).join('\n'));
-    assert.equal(lines[lines.length - 2].trim(), '', '状态槽与页脚之间必须有一个空行');
+    assert.ok(lines[lines.length - 2].includes('已保存：并发数 = 4'), lines.slice(-3).join('\n'));
     assert.equal(lines[lines.length - 1].trim(), '主菜单提示');
   });
 });
@@ -1652,4 +1681,59 @@ test('screen: 窄终端下框架不去掉页眉，且行宽不超列数', async 
     },
     { columns: 60, rows: 16 }
   );
+});
+
+test('screen: 面包屑重复前缀合并，settle 只弹自己新增的段', async () => {
+  await withFakeTerminal(async ({ key, settle }) => {
+    assert.equal(screen.start({ onQuit: () => {} }), true);
+    screen.setBase({ title: '主菜单', render: () => ['主菜单'], hints: () => ['页脚'] });
+
+    const outer = screen.prompt({
+      title: 'Niji semi realism',
+      crumbPath: ['本地模型管理', 'Niji semi realism'],
+      render: () => ['外层'],
+      hints: () => ['页脚'],
+    });
+    await settle();
+    assert.deepEqual(screen.getCrumbs(), ['主菜单', '本地模型管理', 'Niji semi realism']);
+
+    const inner = screen.prompt({
+      title: '管理版本',
+      crumbPath: ['本地模型管理', 'Niji semi realism', '管理版本'],
+      render: () => ['内层'],
+      hints: () => ['页脚'],
+    });
+    await settle();
+    assert.deepEqual(screen.getCrumbs(), ['主菜单', '本地模型管理', 'Niji semi realism', '管理版本']);
+
+    key('escape');
+    await settle();
+    await inner;
+    assert.deepEqual(screen.getCrumbs(), ['主菜单', '本地模型管理', 'Niji semi realism']);
+
+    key('escape');
+    await settle();
+    await outer;
+    assert.deepEqual(screen.getCrumbs(), ['主菜单']);
+  });
+});
+
+test('screen: 状态行按成功/警告/错误/信息使用不同图标', async () => {
+  await withFakeTerminal(async ({ frame }) => {
+    assert.equal(screen.start({ onQuit: () => {} }), true);
+    screen.setBase({ title: '主菜单', render: () => ['主菜单'], hints: () => ['页脚'] });
+    const glyphs = layout.glyphs();
+    const cases = [
+      [layout.colors.green, glyphs.statusOk],
+      [layout.colors.yellow, glyphs.statusWarn],
+      [layout.colors.red, glyphs.statusError],
+      [layout.colors.cyan, glyphs.statusInfo],
+    ];
+    for (const [color, glyph] of cases) {
+      screen.notice(`状态 ${glyph}`, color);
+      screen.render();
+      const lines = frame();
+      assert.ok(lines[lines.length - 2].includes(`${glyph} 状态`), lines.slice(-3).join('\n'));
+    }
+  });
 });

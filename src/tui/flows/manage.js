@@ -220,6 +220,7 @@ async function openMembers(config, collectionId) {
       t('tui.app.menuCollections'),
       t('tui.manage.collectionLabel', { id: collectionId }),
       t('tui.manage.membersAction'),
+      String(chosen.name || chosen.modelId),
     ],
   });
 }
@@ -306,12 +307,23 @@ function snapshotReportModel(config, collectionId) {
       {
         label: t('tui.app.menuCheck'),
         description: t('tui.app.menuCheckDesc'),
-        run: () => require('./check').checkCollectionsFlow(config, [String(collectionId)]),
+        run: () =>
+          require('./check').checkCollectionsFlow(config, [String(collectionId)], {
+            crumbPath: [t('tui.app.menuCollections'), title],
+          }),
       },
       {
         label: t('tui.app.menuDownload'),
         description: t('tui.manage.downloadActionDesc'),
-        run: () => require('./download').downloadFlow(config, { collectionId: String(collectionId) }),
+        run: () =>
+          require('./download').downloadFlow(config, {
+            collectionId: String(collectionId),
+            crumbPath: [
+              t('tui.app.menuCollections'),
+              title,
+              t('tui.app.menuDownload'),
+            ],
+          }),
       },
       {
         label: t('tui.manage.membersAction'),

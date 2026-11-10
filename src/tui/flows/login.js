@@ -21,7 +21,9 @@ async function loginFlow(config) {
   if (mode === null || mode === 'back') return;
 
   if (mode === 'check') {
-    const probe = await checkLogin(config, { log: view.log });
+    const probe = await pages.withSpinner(t('tui.login.checking'), () =>
+      checkLogin(config, { log: view.log })
+    );
     view.notice(
       probe && probe.ok
         ? t('loginFlow.checkOk')

@@ -69,7 +69,7 @@ function taskOverviewLine(allTasks, width = 100) {
   if (cancelled) parts.push(t('tui.screen.infoCancelledCount', { count: cancelled }));
   const tail = parts.join(color.muted(layout.glyphs().separator));
   const barWidth = Math.max(8, Math.min(24, width - displayWidth(head) - displayWidth(tail) - 10));
-  return `${head}  ${progressBar(pct, barWidth)} ${pct.toFixed(1)}%  ${color.muted(layout.glyphs().bullet)} ${tail}`;
+  return `${head}  ${progressBar(pct, barWidth)} ${pct.toFixed(1)}%${color.muted(layout.glyphs().separator)}${tail}`;
 }
 
 /**

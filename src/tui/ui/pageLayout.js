@@ -121,7 +121,7 @@ function rowText(row, width, labelWidth, narrow) {
   const paint = row.color || ((text) => text);
   const label = paint(padTo(truncateTo(row.label, labelWidth), labelWidth));
   const extra = narrow ? '' : row.extra;
-  const description = [row.detail, extra].filter(Boolean).join(` ${layout.glyphs().bullet} `);
+  const description = [row.detail, extra].filter(Boolean).join(layout.glyphs().separator);
   const room = Math.max(0, Math.floor(width) - labelWidth - 4);
   if (!description || room < 6) return `  ${label}`;
   return `  ${label}  ${colors.dim(truncateTo(description, room))}`;

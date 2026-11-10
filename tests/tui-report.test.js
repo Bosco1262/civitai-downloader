@@ -752,3 +752,43 @@ test('report: 面包屑保留上级路径', async () => {
     await pending;
   });
 });
+test('report: 动作执行期间保留页面面包屑', async () => {
+  await withFakeTerminal(async ({ key, settle }) => {
+    assert.equal(screen.start({ onQuit: () => {} }), true);
+    screen.setBase({
+      title: i18n.t('tui.app.menuTitle'),
+      render: () => ['主菜单'],
+      hints: () => [i18n.t('tui.hint.main')],
+    });
+    let captured = null;
+    const page = report.showReportPage({}, {
+      title: 'Niji semi realism',
+      crumbPath: [i18n.t('tui.app.menuModels'), 'Niji semi realism'],
+      summary: [],
+      sections: [],
+      actions: [
+        {
+          label: '删除模型记录',
+          run: async () => {
+            captured = screen.getCrumbs().slice();
+            return report.BACK;
+          },
+        },
+        { label: '返回', run: () => report.BACK },
+      ],
+    });
+    await settle();
+    screen.render();
+    key('tab');
+    await settle();
+    key('return');
+    await settle();
+    await page;
+    assert.deepEqual(captured, [
+      i18n.t('tui.app.menuTitle'),
+      i18n.t('tui.app.menuModels'),
+      'Niji semi realism',
+    ]);
+    assert.deepEqual(screen.getCrumbs(), [i18n.t('tui.app.menuTitle')]);
+  });
+});

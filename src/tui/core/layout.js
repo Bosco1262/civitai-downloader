@@ -51,7 +51,10 @@ const ANSI_SHOW_CURSOR = '\u001b[?25h';
 const ANSI_ERASE_LINE_END = '\u001b[K';
 
 /**
+ * Separator convention: ` | ` between the fields of one row, ` · ` between sub-items of one field.
  * Glyphs of the Unicode variant (default on modern terminals).
+ *
+ * 分隔符约定：一行里的字段之间用 ` | `，同一字段内的子项用 ` · `。
  * Unicode 变体的字符（现代终端的默认选择）。
  */
 const GLYPHS_UNICODE = {
@@ -73,6 +76,10 @@ const GLYPHS_UNICODE = {
   bullet: '·',
   arrow: '›',
   notice: '✔',
+  statusOk: '✔',
+  statusWarn: '!',
+  statusError: '✖',
+  statusInfo: '·',
 };
 
 /**
@@ -98,6 +105,10 @@ const GLYPHS_ASCII = {
   bullet: '*',
   arrow: '>',
   notice: '+',
+  statusOk: '+',
+  statusWarn: '!',
+  statusError: 'x',
+  statusInfo: '*',
 };
 
 /**

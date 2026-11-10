@@ -213,8 +213,8 @@ test('workspace: 行说明保留版本名，且版本名排在最前（窄终端
     },
   ]);
   assert.equal(groups.length, 1);
-  const bullet = require('../src/tui/layout').glyphs().bullet;
-  assert.equal(groups[0].detail, ['v1/v2', 'SDXL', '30 B'].join(` ${bullet} `));
+  const separator = require('../src/tui/layout').glyphs().separator;
+  assert.equal(groups[0].detail, ['v1/v2', 'SDXL', '30 B'].join(separator));
   assert.ok(groups[0].detail.includes('v1'), groups[0].detail);
   assert.ok(groups[0].detail.includes('30 B'), groups[0].detail);
 });
@@ -505,8 +505,7 @@ test('workspace: 耗时提示位于页脚上方，而不是页面顶部', async 
     const lines = frame();
     const statusIndex = lines.findIndex((line) => line.includes(i18n.t('tui.workspace.resolving')));
     assert.ok(statusIndex > 0, lines.join('\n'));
-    assert.ok(statusIndex >= lines.length - 3, `状态槽应在页脚上方：\n${lines.join('\n')}`);
-    assert.equal(lines[lines.length - 2].trim(), '', '状态槽与页脚之间必须有空行');
+    assert.equal(statusIndex, lines.length - 2, `状态槽紧贴页脚上方：\n${lines.join('\n')}`);
     assert.ok(!lines[0].includes(i18n.t('tui.workspace.resolving')), '提示不应出现在页面顶部');
     release([]);
     await settle();
